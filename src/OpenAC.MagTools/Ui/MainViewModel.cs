@@ -1,4 +1,5 @@
 using OpenAC.MagTools.Settings;
+using ChatLoggerFeature = OpenAC.MagTools.Loggers.Chat.ChatLogger;
 
 namespace OpenAC.MagTools.Ui;
 
@@ -29,16 +30,17 @@ public sealed class MainViewModel
     private bool _corpseOptions;
     private bool _playerOptions;
 
-    public MainViewModel(SettingsManager settings)
+    public MainViewModel(SettingsManager settings, ChatLoggerFeature chatLogger)
     {
         ArgumentNullException.ThrowIfNull(settings);
+        ArgumentNullException.ThrowIfNull(chatLogger);
 
         Mana = new ManaPageViewModel(settings);
         Combat = new CombatPageViewModel(settings);
         Corpse = new CorpsePageViewModel(settings);
         Player = new PlayerPageViewModel(settings);
         InventoryItems = new InventoryItemsPageViewModel();
-        ChatLogger = new ChatLoggerPageViewModel(settings);
+        ChatLogger = new ChatLoggerPageViewModel(settings, chatLogger);
         InventoryTools = new InventoryToolsPageViewModel();
         Tinkering = new TinkeringPageViewModel();
         CharacterCommands = new ScopedCommandsPageViewModel();

@@ -3,6 +3,7 @@ using System.Xml.Linq;
 using OpenAC.MagTools.Settings;
 using OpenAC.MagTools.Tests.Fakes;
 using OpenAC.MagTools.Ui;
+using ChatLoggerFeature = OpenAC.MagTools.Loggers.Chat.ChatLogger;
 
 namespace OpenAC.MagTools.Tests;
 
@@ -169,7 +170,7 @@ public sealed class MarkupContractTests
     {
         var host = new FakeHost();
         var settings = new SettingsManager(new SettingsFile(host.Storage));
-        var model = new MainViewModel(settings);
+        var model = new MainViewModel(settings, new ChatLoggerFeature(host, settings));
 
         Assert.Equal(24, model.OptionCaptions.Count);
         Assert.Equal(model.OptionCaptions.Count, model.OptionChecks.Count);
@@ -188,8 +189,9 @@ public sealed class MarkupContractTests
         // The root <panel visible="..."> binding is a host-side availability
         // gate (RetailUiRuntime.ShouldBeVisible), not the shown/hidden state,
         // and the Options page has to be reachable before a session exists.
-        var model = new MainViewModel(
-            new SettingsManager(new SettingsFile(new FakeHost().Storage)));
+        var host = new FakeHost();
+        var settings = new SettingsManager(new SettingsFile(host.Storage));
+        var model = new MainViewModel(settings, new ChatLoggerFeature(host, settings));
 
         Assert.True(model.WindowAvailable);
     }

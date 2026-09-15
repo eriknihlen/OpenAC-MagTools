@@ -59,19 +59,37 @@ public sealed class FakeGameState : IGameState
     public IReadOnlyList<WorldEntitySnapshot> Entities { get; set; } = [];
 }
 
-/// <summary>Drives <see cref="IEvents.Tick"/> from a test.</summary>
+/// <summary>Drives <see cref="IEvents"/> from a test.</summary>
 public sealed class FakeEvents : IEvents
 {
     public event Action<WorldEntitySnapshot>? EntitySpawned;
 
     public event Action<double>? Tick;
 
+    public event Action? LoginComplete;
+
+    public event Action? Logoff;
+
+    public event Action<string>? LocalPlayerDied;
+
     public int TickSubscriberCount => Tick?.GetInvocationList().Length ?? 0;
+
+    public int LoginCompleteSubscriberCount =>
+        LoginComplete?.GetInvocationList().Length ?? 0;
+
+    public int LogoffSubscriberCount => Logoff?.GetInvocationList().Length ?? 0;
 
     public void RaiseTick(double elapsedSeconds) => Tick?.Invoke(elapsedSeconds);
 
     public void RaiseEntitySpawned(WorldEntitySnapshot snapshot)
         => EntitySpawned?.Invoke(snapshot);
+
+    public void RaiseLoginComplete() => LoginComplete?.Invoke();
+
+    public void RaiseLogoff() => Logoff?.Invoke();
+
+    public void RaiseLocalPlayerDied(string deathMessage)
+        => LocalPlayerDied?.Invoke(deathMessage);
 
     event Action<WorldEntitySnapshot> IEvents.EntitySpawned
     {
@@ -83,6 +101,24 @@ public sealed class FakeEvents : IEvents
     {
         add => Tick += value;
         remove => Tick -= value;
+    }
+
+    event Action IEvents.LoginComplete
+    {
+        add => LoginComplete += value;
+        remove => LoginComplete -= value;
+    }
+
+    event Action IEvents.Logoff
+    {
+        add => Logoff += value;
+        remove => Logoff -= value;
+    }
+
+    event Action<string> IEvents.LocalPlayerDied
+    {
+        add => LocalPlayerDied += value;
+        remove => LocalPlayerDied -= value;
     }
 }
 
@@ -183,7 +219,12 @@ public sealed class MemoryStorage : IPluginStorage
 
     public bool IsAvailable { get; set; } = true;
 
+    public string? RootPath { get; set; } = "memory://storage";
+
     public int WriteCount { get; private set; }
+
+    /// <summary>Makes the next (and every subsequent) write throw.</summary>
+    public bool ThrowOnWrite { get; set; }
 
     public string? ReadText(string key)
         => _files.TryGetValue(key, out string? value) ? value : null;
@@ -194,6 +235,9 @@ public sealed class MemoryStorage : IPluginStorage
 
     public void WriteText(string key, string content)
     {
+        if (ThrowOnWrite)
+            throw new InvalidOperationException("Storage write failed (test fault).");
+
         _files[key] = content;
         WriteCount++;
     }

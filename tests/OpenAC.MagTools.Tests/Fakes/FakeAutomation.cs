@@ -50,6 +50,7 @@ public sealed class FakeCharacter : ICharacterInfo
     public bool IsInWorld { get; set; }
     public string Name { get; set; } = string.Empty;
     public string WorldName { get; set; } = string.Empty;
+    public int ServerPopulation { get; set; } = -1;
     public string AccountName { get; set; } = string.Empty;
     public uint ObjectId { get; set; }
     public uint CurrentHealth { get; set; }
@@ -70,24 +71,91 @@ public sealed class FakeCharacter : ICharacterInfo
     }
 }
 
-/// <summary>Records every posted line and every submitted command.</summary>
+/// <summary>
+/// Records every posted line and every submitted command, and can raise
+/// <see cref="Received"/> and drive registered filters the way the real host
+/// does — before a line is added to <see cref="Posted"/> or delivered to
+/// <see cref="Received"/>, every registered filter gets a chance to eat it.
+/// </summary>
 public sealed class RecordingChat : IPluginChat
 {
+    private readonly List<Func<PluginChatMessage, bool>> _filters = [];
+    private ulong _nextSequence = 1;
+
     public List<string> Posted { get; } = [];
 
     public List<string> Submitted { get; } = [];
+
+    public List<(string Text, int LogTextType)> PostedTyped { get; } = [];
+
+    /// <summary>Every message offered to <see cref="Deliver"/>, filtered or not.</summary>
+    public List<PluginChatMessage> Offered { get; } = [];
+
+    /// <summary>Messages that survived every filter and reached <see cref="Received"/>.</summary>
+    public List<PluginChatMessage> Delivered { get; } = [];
 
     public IReadOnlyList<PluginChatMessage> Messages { get; set; } = [];
 
     public IReadOnlyList<PluginChatMessage> CaptureMessages(ulong afterSequence)
         => [.. Messages.Where(message => message.Sequence > afterSequence)];
 
+    public event Action<PluginChatMessage>? Received;
+
+    public IDisposable RegisterFilter(Func<PluginChatMessage, bool> suppress)
+    {
+        _filters.Add(suppress);
+        return new FilterRegistration(this, suppress);
+    }
+
+    /// <summary>Builds and offers a message the way the real client would, honoring filters.</summary>
+    public PluginChatMessage Deliver(
+        string text,
+        int kind = 0,
+        string sender = "",
+        string channelName = "",
+        int logTextType = 0,
+        int combatKind = 0)
+    {
+        var message = new PluginChatMessage(
+            _nextSequence++, 0u, kind, sender, text, channelName)
+        {
+            LogTextType = logTextType,
+            CombatKind = combatKind,
+            Received = DateTimeOffset.UtcNow,
+        };
+
+        Offered.Add(message);
+
+        foreach (Func<PluginChatMessage, bool> filter in _filters)
+        {
+            if (filter(message))
+                return message;
+        }
+
+        Delivered.Add(message);
+        Received?.Invoke(message);
+        return message;
+    }
+
     public void PostSystemMessage(string text) => Posted.Add(text);
+
+    public void PostMessage(string text, int logTextType)
+    {
+        Posted.Add(text);
+        PostedTyped.Add((text, logTextType));
+    }
 
     public bool Submit(string text)
     {
         Submitted.Add(text);
         return true;
+    }
+
+    private sealed class FilterRegistration(
+        RecordingChat owner,
+        Func<PluginChatMessage, bool> filter) : IDisposable
+    {
+        public void Dispose() => owner._filters.Remove(filter);
     }
 }
 
@@ -97,10 +165,13 @@ public sealed class FakeSpellCatalog : ISpellCatalog
     public IReadOnlyList<PluginSpellInfo> KnownAttackSpells { get; set; } = [];
     public IReadOnlyList<PluginSpellInfo> KnownCombatSpells { get; set; } = [];
 
+    /// <summary>The full spell table, independent of what the character knows.</summary>
+    public IReadOnlyList<PluginSpellInfo> All { get; set; } = [];
+
     public bool TryGet(uint spellId, out PluginSpellInfo info)
     {
         foreach (PluginSpellInfo spell in KnownSelfBuffs
-            .Concat(KnownAttackSpells).Concat(KnownCombatSpells))
+            .Concat(KnownAttackSpells).Concat(KnownCombatSpells).Concat(All))
         {
             if (spell.SpellId != spellId)
                 continue;
@@ -109,6 +180,36 @@ public sealed class FakeSpellCatalog : ISpellCatalog
         }
 
         info = default;
+        return false;
+    }
+
+    public bool TryFindByName(string name, bool partialMatch, out PluginSpellInfo spell)
+    {
+        spell = default;
+        if (string.IsNullOrWhiteSpace(name))
+            return false;
+
+        foreach (PluginSpellInfo candidate in All)
+        {
+            if (string.Equals(candidate.Name, name, StringComparison.OrdinalIgnoreCase))
+            {
+                spell = candidate;
+                return true;
+            }
+        }
+
+        if (!partialMatch)
+            return false;
+
+        foreach (PluginSpellInfo candidate in All)
+        {
+            if (candidate.Name.Contains(name, StringComparison.OrdinalIgnoreCase))
+            {
+                spell = candidate;
+                return true;
+            }
+        }
+
         return false;
     }
 

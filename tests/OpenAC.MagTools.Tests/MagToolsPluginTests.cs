@@ -57,8 +57,12 @@ public sealed class MagToolsPluginTests
     }
 
     [Fact]
-    public void DisableAndReenableRefiresTheLoginEdge()
+    public void DisableAndReenableRefiresTheLoginBanner()
     {
+        // A plugin reload with no underlying reconnect: the host will not
+        // raise LoginComplete a second time for a session that never went
+        // away, so SessionContext.Subscribe re-fires it itself on Enable
+        // when the automation surface is still in-world.
         var host = new FakeHost { HasUi = false };
         var plugin = new MagToolsPlugin();
 
@@ -67,11 +71,10 @@ public sealed class MagToolsPluginTests
 
         host.Automation.IsAvailable = true;
         host.Automation.Character.IsInWorld = true;
-        host.Events.RaiseTick(0.016d);
+        host.Events.RaiseLoginComplete();
 
         plugin.Disable();
         plugin.Enable();
-        host.Events.RaiseTick(0.016d);
 
         Assert.Equal(
             2,
@@ -101,7 +104,7 @@ public sealed class MagToolsPluginTests
     }
 
     [Fact]
-    public void TheTickPollsTheSessionEdge()
+    public void LoginCompleteEventPrintsTheOnlineBanner()
     {
         var host = new FakeHost { HasUi = false };
         var plugin = new MagToolsPlugin();
@@ -111,10 +114,43 @@ public sealed class MagToolsPluginTests
 
         host.Automation.IsAvailable = true;
         host.Automation.Character.IsInWorld = true;
-        host.Events.RaiseTick(0.016d);
+        host.Events.RaiseLoginComplete();
 
         Assert.Contains(
             ChatOutput.Prefix + "Plugin now online.",
             host.ChatLines);
+    }
+
+    [Fact]
+    public void ATickExceptionIsLoggedEveryTimeButPostedToChatOnlyOnce()
+    {
+        // A recurring exception (broken invariant, not a one-off) must not
+        // flood chat every frame; the log gets every occurrence.
+        var host = new FakeHost { HasUi = false };
+        host.Storage.ThrowOnWrite = true;
+        var plugin = new MagToolsPlugin();
+
+        plugin.Initialize(host);
+        plugin.Enable();
+
+        // Two separate settings writes -> two separate debounced flush
+        // attempts, each failing with the same exception shape.
+        host.Commands.Handlers["mt"](
+            new AcDream.Plugin.Abstractions.PluginCommand(
+                "mt", "opt set Filters.AttackEvades true", "/mt opt set Filters.AttackEvades true"));
+        host.Events.RaiseTick(1.0d);
+
+        host.Commands.Handlers["mt"](
+            new AcDream.Plugin.Abstractions.PluginCommand(
+                "mt", "opt set Filters.AttackEvades false", "/mt opt set Filters.AttackEvades false"));
+        host.Events.RaiseTick(1.0d);
+
+        Assert.Equal(
+            2,
+            ((RecordingLogger)host.Log).Messages.Count(message =>
+                message.StartsWith("error: Mag-Tools tick failed", StringComparison.Ordinal)));
+        Assert.Single(
+            host.ChatLines,
+            line => line.Contains("Exception caught", StringComparison.Ordinal));
     }
 }

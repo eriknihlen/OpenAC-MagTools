@@ -7,15 +7,21 @@ namespace OpenAC.MagTools;
 /// plugin prints keeps the original's <c>&lt;{Mag-Tools}&gt;: </c> prefix.
 /// </summary>
 /// <remarks>
-/// The original chose a colour and a target window per line (plugin text 5,
-/// item info 14, window from Misc/OutputTargetWindow). The contract only has
-/// <see cref="IPluginChat.PostSystemMessage"/> today, so every line lands in
-/// the default window. Colour and window routing arrive with the chat slice of
-/// the plugin API; isolating them here means nothing else has to change.
+/// The original chose a colour and a target window per line: plugin text used
+/// colour id 5, item info used colour id 14 (window came from
+/// <c>Misc/OutputTargetWindow</c>, still unrouted — see the TODO below). Those
+/// colour ids ARE the client's log-text-type ids, so
+/// <see cref="IPluginChat.PostMessage"/> takes the same numbers unchanged.
 /// </remarks>
 public sealed class ChatOutput
 {
     public const string Prefix = "<{Mag-Tools}>: ";
+
+    /// <summary>The original's plugin-text colour id, now a log-text-type id.</summary>
+    private const int PluginTextLogType = 5;
+
+    /// <summary>The original's item-info colour id, now a log-text-type id.</summary>
+    private const int ItemInfoLogType = 14;
 
     private readonly IPluginHost _host;
 
@@ -25,14 +31,23 @@ public sealed class ChatOutput
         _host = host;
     }
 
-    /// <summary>Writes one line with the plugin prefix.</summary>
+    /// <summary>Writes one line with the plugin prefix, in the plugin-text colour.</summary>
     public void Write(string text) => WriteRaw(Prefix + text);
 
-    /// <summary>Writes one line exactly as given, with no prefix.</summary>
+    /// <summary>Writes one line exactly as given, with no prefix, in the plugin-text colour.</summary>
     public void WriteRaw(string text)
     {
         ArgumentNullException.ThrowIfNull(text);
-        _host.Automation.Chat.PostSystemMessage(text);
+        // TODO(P-misc): route to Misc/OutputTargetWindow once the contract
+        // exposes a target-window concept for PostMessage.
+        _host.Automation.Chat.PostMessage(text, PluginTextLogType);
+    }
+
+    /// <summary>Writes item-info text (e.g. an appraisal report) in its own colour.</summary>
+    public void WriteItemInfo(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        _host.Automation.Chat.PostMessage(text, ItemInfoLogType);
     }
 
     /// <summary>

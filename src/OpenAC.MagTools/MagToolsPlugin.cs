@@ -1,4 +1,5 @@
 using AcDream.Plugin.Abstractions;
+using OpenAC.MagTools.Chat;
 using OpenAC.MagTools.Commands;
 using OpenAC.MagTools.Settings;
 using OpenAC.MagTools.Ui;
@@ -21,7 +22,11 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
     private MtCommandRouter? _router;
     private TickScheduler? _scheduler;
     private SessionContext? _session;
+    private ChatFilter? _chatFilter;
+    private Loggers.Chat.ChatLogger? _chatLogger;
     private Action<double>? _tick;
+    private Action? _onSessionLoginComplete;
+    private Action? _onSessionLogoff;
     private IDisposable? _commandRegistration;
     private IDisposable? _mainPanelRegistration;
     private IDisposable? _hudPanelRegistration;
@@ -34,7 +39,9 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _chat = new ChatOutput(host);
         _settingsFile = new SettingsFile(host.Storage);
         _settings = new SettingsManager(_settingsFile);
-        _main = new MainViewModel(_settings);
+        _chatFilter = new ChatFilter(host, _settings);
+        _chatLogger = new Loggers.Chat.ChatLogger(host, _settings);
+        _main = new MainViewModel(_settings, _chatLogger);
         _hud = new HudViewModel(host);
         _router = new MtCommandRouter(host, _chat, _settings);
         _session = new SessionContext(host, _chat);
@@ -83,6 +90,14 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _tick = OnTick;
         _host.Events.Tick += _tick;
 
+        _chatFilter?.Enable();
+
+        _onSessionLoginComplete = OnSessionLoginComplete;
+        _onSessionLogoff = OnSessionLogoff;
+        _session.LoginComplete += _onSessionLoginComplete;
+        _session.Logoff += _onSessionLogoff;
+        _session.Subscribe();
+
         _host.Log.Info(
             _host.Automation.IsAvailable
                 ? "Mag-Tools enabled"
@@ -106,6 +121,23 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _scheduler?.Dispose();
         _scheduler = null;
 
+        _chatFilter?.Disable();
+
+        // In case we are still mid-session when the plugin is disabled: stop
+        // the logger and flush what it has before we go, same as a real
+        // logoff would.
+        _chatLogger?.Stop();
+
+        if (_session is not null)
+        {
+            if (_onSessionLoginComplete is not null)
+                _session.LoginComplete -= _onSessionLoginComplete;
+            if (_onSessionLogoff is not null)
+                _session.Logoff -= _onSessionLogoff;
+        }
+        _onSessionLoginComplete = null;
+        _onSessionLogoff = null;
+
         // Anything the debounce still owes is written before we go.
         _settingsFile?.Flush();
 
@@ -114,19 +146,41 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         // in-world state and never re-fire the login edge.
         _session?.Reset();
 
+        _reportedTickExceptions.Clear();
+
         _host?.Log.Info("Mag-Tools disabled");
     }
+
+    private void OnSessionLoginComplete()
+    {
+        if (_session is null || _scheduler is null)
+            return;
+        _chatLogger?.Start(_scheduler, _session.WorldName, _session.CharacterName);
+    }
+
+    private void OnSessionLogoff() => _chatLogger?.Stop();
+
+    private readonly HashSet<string> _reportedTickExceptions = new(StringComparer.Ordinal);
 
     private void OnTick(double elapsedSeconds)
     {
         try
         {
-            _session?.Poll();
             _settingsFile?.Tick(elapsedSeconds);
         }
         catch (Exception exception)
         {
-            _chat?.WriteException(exception);
+            // A tick fires many times a second, so an exception that recurs
+            // every frame (a broken invariant, not a one-off) must not flood
+            // the chat window with the same report on every single frame. The
+            // log gets every occurrence — that is where a real investigation
+            // belongs — but chat gets the report only once per distinct
+            // exception shape.
+            _host?.Log.Error("Mag-Tools tick failed: " + exception.Message, exception);
+
+            string key = exception.GetType().FullName + "|" + exception.Message;
+            if (_reportedTickExceptions.Add(key))
+                _chat?.WriteException(exception);
         }
     }
 }

@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/OpenAC.MagTools/OpenAC.MagTools.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/OpenAC.MagTools.Tests/OpenAC.MagTools.Tests.csproj" />
+  </Folder>
+</Solution>

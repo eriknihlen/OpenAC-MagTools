@@ -1,0 +1,18 @@
+<Project>
+  <PropertyGroup>
+    <!-- Repository-wide language and warning policy, matching OpenAC. -->
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Deterministic>true</Deterministic>
+    <Version>0.1.0</Version>
+
+    <!-- The OpenAC checkout this plugin compiles against. The default assumes
+         OpenAC sits beside this repository's parent, i.e.
+         <parent>/acdream/OpenAC. Override with -p:OpenAcRoot=<path>. -->
+    <OpenAcRoot Condition="'$(OpenAcRoot)' == ''">$(MSBuildThisFileDirectory)..\acdream\OpenAC\</OpenAcRoot>
+  </PropertyGroup>
+</Project>

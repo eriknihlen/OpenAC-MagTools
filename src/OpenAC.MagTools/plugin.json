@@ -1,0 +1,1 @@
+{ "id": "openac.magtools", "displayName": "Mag-Tools", "version": "0.1.0", "entryDll": "OpenAC.MagTools.dll", "apiVersion": 1, "kinds": ["Gameplay"] }

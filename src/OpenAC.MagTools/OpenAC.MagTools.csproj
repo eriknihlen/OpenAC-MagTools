@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>OpenAC.MagTools</RootNamespace>
+    <AssemblyName>OpenAC.MagTools</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="OpenAC.MagTools.Tests" />
+  </ItemGroup>
+
+  <!-- The host supplies the abstractions assembly; a copy beside the plugin
+       would give every interface two incompatible identities. -->
+  <ItemGroup>
+    <ProjectReference Include="$(OpenAcRoot)src\AcDream.Plugin.Abstractions\AcDream.Plugin.Abstractions.csproj">
+      <Private>false</Private>
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </ProjectReference>
+  </ItemGroup>
+
+  <!-- Markup and the manifest ship flat beside the assembly, because the plugin
+       resolves them relative to its own location and the host discovers
+       plugin.json in the plugin directory root. -->
+  <ItemGroup>
+    <None Update="Views\magtools.xml">
+      <Link>magtools.xml</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Views\magtools-hud.xml">
+      <Link>magtools-hud.xml</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="plugin.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+</Project>

@@ -10,9 +10,14 @@ Mag-Plugins contributors. See [LICENSE.md](LICENSE.md).
 
 ## Build
 
-The plugin compiles against an OpenAC checkout. `Directory.Build.props` points
-`OpenAcRoot` at `../acdream/OpenAC/` by default; override it if yours lives
-elsewhere.
+The plugin compiles against an OpenAC checkout. As of slice P2 it needs the
+extended plugin contract added on OpenAC branch `magtools-api-a1` (chat
+`Received`/`RegisterFilter`/`PostMessage`, `IEvents.LoginComplete`/`Logoff`,
+`ISpellCatalog.All`/`TryFindByName`, `ICharacterInfo.ServerPopulation`), which
+has not merged to OpenAC `main` yet. Until it does, `Directory.Build.props`
+points `OpenAcRoot` at a frozen detached worktree snapshot of that branch's
+head; override it with `-p:OpenAcRoot=<path>` if yours lives elsewhere (and
+once the API branch merges, point the default back at `main`).
 
 ```powershell
 dotnet build -c Release

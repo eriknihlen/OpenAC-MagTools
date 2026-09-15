@@ -1,0 +1,465 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Mag-Tools main window. The tab tree follows the original's notebooks:
+     four top-level tabs, a second row per top-level tab, and a third row for
+     the Combat / Corpse / Player inner notebooks. -->
+<panel x="40" y="40" w="320" h="460" title="Mag-Tools"
+       visible="{WindowVisible}" resizable="true" minw="320" minh="460">
+
+  <!-- top row -->
+  <tab x="6"   y="22" w="62" h="18" text="Trackers"
+       selected="{TrackersSelected}" onclick="{ShowTrackers}" />
+  <tab x="68"  y="22" w="58" h="18" text="Loggers"
+       selected="{LoggersSelected}" onclick="{ShowLoggers}" />
+  <tab x="126" y="22" w="48" h="18" text="Tools"
+       selected="{ToolsSelected}" onclick="{ShowTools}" />
+  <tab x="174" y="22" w="44" h="18" text="Misc"
+       selected="{MiscSelected}" onclick="{ShowMisc}" />
+
+  <!-- second row: Trackers -->
+  <tab x="6"   y="42" w="46" h="18" text="Mana" visible="{TrackersTabsVisible}"
+       selected="{ManaSelected}" onclick="{ShowMana}" />
+  <tab x="52"  y="42" w="54" h="18" text="Combat" visible="{TrackersTabsVisible}"
+       selected="{CombatSelected}" onclick="{ShowCombat}" />
+  <tab x="106" y="42" w="54" h="18" text="Corpse" visible="{TrackersTabsVisible}"
+       selected="{CorpseSelected}" onclick="{ShowCorpse}" />
+  <tab x="160" y="42" w="50" h="18" text="Player" visible="{TrackersTabsVisible}"
+       selected="{PlayerSelected}" onclick="{ShowPlayer}" />
+  <tab x="210" y="42" w="72" h="18" text="Inv. Items" visible="{TrackersTabsVisible}"
+       selected="{InventoryItemsSelected}" onclick="{ShowInventoryItems}" />
+
+  <!-- second row: Loggers -->
+  <tab x="6"   y="42" w="90" h="18" text="Chat Group 1" visible="{LoggersTabsVisible}"
+       selected="{ChatGroup1Selected}" onclick="{ShowChatGroup1}" />
+  <tab x="96"  y="42" w="90" h="18" text="Chat Group 2" visible="{LoggersTabsVisible}"
+       selected="{ChatGroup2Selected}" onclick="{ShowChatGroup2}" />
+  <tab x="186" y="42" w="56" h="18" text="Options" visible="{LoggersTabsVisible}"
+       selected="{LoggerOptionsSelected}" onclick="{ShowLoggerOptions}" />
+
+  <!-- second row: Tools -->
+  <tab x="6"   y="42" w="66" h="18" text="Inventory" visible="{ToolsTabsVisible}"
+       selected="{InventoryToolsSelected}" onclick="{ShowInventoryTools}" />
+  <tab x="72"  y="42" w="64" h="18" text="Tinkering" visible="{ToolsTabsVisible}"
+       selected="{TinkeringSelected}" onclick="{ShowTinkering}" />
+  <tab x="136" y="42" w="66" h="18" text="Character" visible="{ToolsTabsVisible}"
+       selected="{CharacterSelected}" onclick="{ShowCharacter}" />
+  <tab x="202" y="42" w="52" h="18" text="Server" visible="{ToolsTabsVisible}"
+       selected="{ServerSelected}" onclick="{ShowServer}" />
+
+  <!-- second row: Misc -->
+  <tab x="6"   y="42" w="56" h="18" text="Options" visible="{MiscTabsVisible}"
+       selected="{MiscOptionsSelected}" onclick="{ShowMiscOptions}" />
+  <tab x="62"  y="42" w="50" h="18" text="Filters" visible="{MiscTabsVisible}"
+       selected="{FiltersSelected}" onclick="{ShowFilters}" />
+  <tab x="112" y="42" w="48" h="18" text="About" visible="{MiscTabsVisible}"
+       selected="{AboutSelected}" onclick="{ShowAbout}" />
+
+  <!-- third row: Combat / Corpse / Player inner notebooks -->
+  <tab x="6"   y="62" w="56" h="18" text="Current" visible="{CombatTabsVisible}"
+       selected="{CombatCurrentSelected}" onclick="{ShowCombatCurrent}" />
+  <tab x="62"  y="62" w="68" h="18" text="Persistent" visible="{CombatTabsVisible}"
+       selected="{CombatPersistentSelected}" onclick="{ShowCombatPersistent}" />
+  <tab x="130" y="62" w="56" h="18" text="Options" visible="{CombatTabsVisible}"
+       selected="{CombatOptionsSelected}" onclick="{ShowCombatOptions}" />
+
+  <tab x="6"   y="62" w="58" h="18" text="Tracked" visible="{CorpseTabsVisible}"
+       selected="{CorpseListSelected}" onclick="{ShowCorpseList}" />
+  <tab x="64"  y="62" w="56" h="18" text="Options" visible="{CorpseTabsVisible}"
+       selected="{CorpseOptionsSelected}" onclick="{ShowCorpseOptions}" />
+
+  <tab x="6"   y="62" w="58" h="18" text="Tracked" visible="{PlayerTabsVisible}"
+       selected="{PlayerListSelected}" onclick="{ShowPlayerList}" />
+  <tab x="64"  y="62" w="56" h="18" text="Options" visible="{PlayerTabsVisible}"
+       selected="{PlayerOptionsSelected}" onclick="{ShowPlayerOptions}" />
+
+  <!-- ==================== Trackers -> Mana ==================== -->
+  <group x="4" y="84" w="312" h="372" visible="{ManaVisible}"
+         anchor="left top right bottom">
+    <list x="0" y="0" w="312" h="300" rowheight="18" selectionband="true"
+          anchor="left top right bottom"
+          selected="{ManaSelectedRow}" onchange="{SelectManaRow}">
+      <column type="icon" width="16" values="{ManaItemIcons}"
+              iconkind="did" onclick="{ManaIconClicked}" />
+      <column type="text" width="120" items="{ManaItemNames}" />
+      <column type="icon" width="16" values="{ManaStateIcons}"
+              iconkind="did" onclick="{ManaIconClicked}" />
+      <column type="text" width="72" items="{ManaItemMana}" />
+      <column type="text" width="*" items="{ManaItemTime}" />
+    </list>
+    <label x="2" y="308" text="{ManaTotalText}" anchor="left bottom" />
+    <toggle x="120" y="306" w="72" h="18" text="Recharge" anchor="left bottom"
+            checked="{ManaRechargeEnabled}" onclick="{ToggleManaRecharge}" />
+    <label x="198" y="308" text="{ManaUnretainedTotalText}" anchor="left bottom" />
+  </group>
+
+  <!-- ============ Trackers -> Combat -> Current Session Stats ============ -->
+  <group x="4" y="84" w="312" h="372" visible="{CombatCurrentVisible}"
+         anchor="left top right bottom">
+    <list x="0" y="0" w="312" h="180" rowheight="18" selectionband="true"
+          anchor="left top right" items="{CombatCurrentMonsterRows}"
+          selected="{CombatCurrentMonsterSelectedRow}"
+          onchange="{SelectCombatCurrentMonster}" />
+    <list x="0" y="186" w="312" h="186" rowheight="18" selectionband="true"
+          anchor="left top right bottom" items="{CombatCurrentDamageRows}"
+          selected="{CombatCurrentDamageSelectedRow}"
+          onchange="{SelectCombatCurrentDamage}" />
+  </group>
+
+  <!-- ================ Trackers -> Combat -> Persistent Stats ============== -->
+  <group x="4" y="84" w="312" h="372" visible="{CombatPersistentVisible}"
+         anchor="left top right bottom">
+    <list x="0" y="0" w="312" h="180" rowheight="18" selectionband="true"
+          anchor="left top right" items="{CombatPersistentMonsterRows}"
+          selected="{CombatPersistentMonsterSelectedRow}"
+          onchange="{SelectCombatPersistentMonster}" />
+    <list x="0" y="186" w="312" h="186" rowheight="18" selectionband="true"
+          anchor="left top right bottom" items="{CombatPersistentDamageRows}"
+          selected="{CombatPersistentDamageSelectedRow}"
+          onchange="{SelectCombatPersistentDamage}" />
+  </group>
+
+  <!-- ===================== Trackers -> Combat -> Options ================== -->
+  <group x="4" y="84" w="312" h="372" visible="{CombatOptionsVisible}"
+         anchor="left top right bottom">
+    <button x="10" y="10" w="130" h="20" text="Clear Current Stats"
+            onclick="{ClearCombatCurrentStats}" />
+    <button x="10" y="40" w="130" h="20" text="Export Current Stats"
+            onclick="{ExportCombatCurrentStats}" />
+    <button x="150" y="10" w="140" h="20" text="Clear Persistent Stats"
+            onclick="{ClearCombatPersistentStats}" />
+    <toggle x="10" y="80" w="200" h="18" text="Export Current Stats On LogOff"
+            checked="{CombatExportOnLogOff}" onclick="{ToggleCombatExportOnLogOff}" />
+    <toggle x="10" y="100" w="200" h="18" text="Keep Persistent Stats"
+            checked="{CombatPersistent}" onclick="{ToggleCombatPersistent}" />
+    <toggle x="10" y="140" w="200" h="18" text="Sort Alphabetically"
+            checked="{CombatSortAlphabetically}"
+            onclick="{ToggleCombatSortAlphabetically}" />
+  </group>
+
+  <!-- ================== Trackers -> Corpse -> Tracked Corpses ============= -->
+  <group x="4" y="84" w="312" h="372" visible="{CorpseListVisible}"
+         anchor="left top right bottom">
+    <list x="0" y="0" w="312" h="372" rowheight="18" selectionband="true"
+          anchor="left top right bottom"
+          selected="{CorpseSelectedRow}" onchange="{SelectCorpseRow}">
+      <column type="text" width="53" items="{CorpseTimes}" />
+      <column type="text" width="162" items="{CorpseNames}" />
+      <column type="text" width="*" items="{CorpseCoordinates}" />
+    </list>
+  </group>
+
+  <!-- ===================== Trackers -> Corpse -> Options ================== -->
+  <group x="4" y="84" w="312" h="372" visible="{CorpseOptionsVisible}"
+         anchor="left top right bottom">
+    <button x="10" y="10" w="130" h="20" text="Clear History"
+            onclick="{ClearCorpseHistory}" />
+    <toggle x="10" y="40" w="200" h="18" text="Corpse Tracker Enabled"
+            checked="{CorpseEnabled}" onclick="{ToggleCorpseEnabled}" />
+    <toggle x="10" y="60" w="200" h="18" text="Keep Persistent Stats"
+            checked="{CorpsePersistent}" onclick="{ToggleCorpsePersistent}" />
+    <toggle x="10" y="90" w="200" h="18" text="Track All Corpses"
+            checked="{CorpseTrackAll}" onclick="{ToggleCorpseTrackAll}" />
+    <toggle x="10" y="110" w="200" h="18" text="Track Fellow Corpses"
+            checked="{CorpseTrackFellow}" onclick="{ToggleCorpseTrackFellow}" />
+    <toggle x="10" y="130" w="200" h="18" text="Track Permitted Corpses"
+            checked="{CorpseTrackPermitted}" onclick="{ToggleCorpseTrackPermitted}" />
+  </group>
+
+  <!-- ================== Trackers -> Player -> Tracked Players ============= -->
+  <group x="4" y="84" w="312" h="372" visible="{PlayerListVisible}"
+         anchor="left top right bottom">
+    <list x="0" y="0" w="312" h="372" rowheight="18" selectionband="true"
+          anchor="left top right bottom"
+          selected="{PlayerSelectedRow}" onchange="{SelectPlayerRow}">
+      <column type="text" width="75" items="{PlayerTimes}" />
+      <column type="text" width="140" items="{PlayerNames}" />
+      <column type="text" width="*" items="{PlayerCoordinates}" />
+    </list>
+  </group>
+
+  <!-- ===================== Trackers -> Player -> Options ================== -->
+  <group x="4" y="84" w="312" h="372" visible="{PlayerOptionsVisible}"
+         anchor="left top right bottom">
+    <button x="10" y="10" w="130" h="20" text="Clear History"
+            onclick="{ClearPlayerHistory}" />
+    <toggle x="10" y="40" w="200" h="18" text="Player Tracker Enabled"
+            checked="{PlayerEnabled}" onclick="{TogglePlayerEnabled}" />
+    <toggle x="10" y="60" w="200" h="18" text="Keep Persistent Stats"
+            checked="{PlayerPersistent}" onclick="{TogglePlayerPersistent}" />
+  </group>
+
+  <!-- ======================= Trackers -> Inv. Items ======================= -->
+  <group x="4" y="84" w="312" h="372" visible="{InventoryItemsVisible}"
+         anchor="left top right bottom">
+    <label x="20" y="0" text="Name" />
+    <label x="102" y="0" text="Count" />
+    <label x="144" y="0" text="Avg/h ~5m" />
+    <label x="206" y="0" text="Avg/h ~1h" />
+    <label x="268" y="0" text="(Hrs)" />
+    <list x="0" y="18" w="312" h="354" rowheight="18" selectionband="true"
+          anchor="left top right bottom"
+          selected="{InventoryItemSelectedRow}" onchange="{SelectInventoryItemRow}">
+      <column type="icon" width="16" values="{InventoryItemIcons}"
+              iconkind="did" onclick="{InventoryItemIconClicked}" />
+      <column type="text" width="80" items="{InventoryItemNames}" />
+      <column type="text" width="40" items="{InventoryItemCounts}" />
+      <column type="text" width="60" items="{InventoryItemAverage5m}" />
+      <column type="text" width="60" items="{InventoryItemAverage1h}" />
+      <column type="text" width="*" items="{InventoryItemHours}" />
+    </list>
+  </group>
+
+  <!-- ======================= Loggers -> Chat Group 1 ====================== -->
+  <group x="4" y="84" w="312" h="372" visible="{ChatGroup1Visible}"
+         anchor="left top right bottom">
+    <list x="0" y="0" w="312" h="372" rowheight="18" selectionband="true"
+          anchor="left top right bottom"
+          selected="{ChatGroup1SelectedRow}" onchange="{SelectChatGroup1Row}">
+      <column type="text" width="75" items="{ChatGroup1Times}" />
+      <column type="text" width="*" items="{ChatGroup1Messages}" />
+    </list>
+  </group>
+
+  <!-- ======================= Loggers -> Chat Group 2 ====================== -->
+  <group x="4" y="84" w="312" h="372" visible="{ChatGroup2Visible}"
+         anchor="left top right bottom">
+    <list x="0" y="0" w="312" h="372" rowheight="18" selectionband="true"
+          anchor="left top right bottom"
+          selected="{ChatGroup2SelectedRow}" onchange="{SelectChatGroup2Row}">
+      <column type="text" width="75" items="{ChatGroup2Times}" />
+      <column type="text" width="*" items="{ChatGroup2Messages}" />
+    </list>
+  </group>
+
+  <!-- ========================= Loggers -> Options ========================= -->
+  <group x="4" y="84" w="312" h="372" visible="{LoggerOptionsVisible}"
+         anchor="left top right bottom">
+    <button x="10" y="10" w="130" h="20" text="Clear History"
+            onclick="{ClearChatLoggerHistory}" />
+    <toggle x="10" y="40" w="200" h="18" text="Keep Persistent Logs"
+            checked="{ChatLoggerPersistent}" onclick="{ToggleChatLoggerPersistent}" />
+    <label x="10" y="64" text="Chat Group 1" />
+    <list x="10" y="82" w="180" h="120" rowheight="18" selectionband="true"
+          selected="{ChatGroup1OptionSelectedRow}"
+          onchange="{SelectChatGroup1Option}">
+      <column type="check" width="20" values="{ChatGroup1OptionChecks}"
+              onchange="{ToggleChatGroup1Option}" />
+      <column type="text" width="*" items="{ChatGroup1OptionCaptions}" />
+    </list>
+    <label x="10" y="212" text="Chat Group 2" />
+    <list x="10" y="230" w="180" h="120" rowheight="18" selectionband="true"
+          selected="{ChatGroup2OptionSelectedRow}"
+          onchange="{SelectChatGroup2Option}">
+      <column type="check" width="20" values="{ChatGroup2OptionChecks}"
+              onchange="{ToggleChatGroup2Option}" />
+      <column type="text" width="*" items="{ChatGroup2OptionCaptions}" />
+    </list>
+  </group>
+
+  <!-- ========================= Tools -> Inventory ========================= -->
+  <group x="4" y="84" w="312" h="372" visible="{InventoryToolsVisible}"
+         anchor="left top right bottom">
+    <button x="4" y="4" w="146" h="20" text="Clipboard Worn Equipment"
+            onclick="{ClipboardWornEquipment}" />
+    <button x="158" y="4" w="146" h="20" text="Clipboard Inventory Info"
+            onclick="{ClipboardInventoryInfo}" />
+    <field x="4" y="32" w="300" h="16" maxlength="128" anchor="left top right"
+           text="{InventorySearchText}" onchange="{SetInventorySearchText}" />
+    <list x="0" y="56" w="312" h="196" rowheight="18" selectionband="true"
+          anchor="left top right"
+          selected="{InventorySearchSelectedRow}"
+          onchange="{SelectInventorySearchRow}">
+      <column type="icon" width="16" values="{InventorySearchIcons}"
+              iconkind="item" onclick="{InventorySearchIconClicked}" />
+      <column type="text" width="*" items="{InventorySearchNames}" />
+    </list>
+    <label x="4" y="258" text="{InventoryItemText}" anchor="left bottom" />
+  </group>
+
+  <!-- ========================= Tools -> Tinkering ========================= -->
+  <group x="4" y="84" w="312" h="372" visible="{TinkeringVisible}"
+         anchor="left top right bottom">
+    <button x="4" y="4" w="146" h="20" text="Add Selected Item"
+            onclick="{AddSelectedTinkerItem}" />
+    <menu x="158" y="4" w="146" h="20" rows="7"
+          items="{TinkeringMaterials}" selected="{SelectedTinkeringMaterial}"
+          onchange="{SelectTinkeringMaterial}" />
+    <label x="4" y="32" text="Minimum Percent:" />
+    <field x="110" y="32" w="40" h="16" maxlength="4"
+           text="{TinkeringMinimumPercentText}"
+           onchange="{SetTinkeringMinimumPercent}" />
+    <label x="4" y="54" text="Target Total Tinks:" />
+    <field x="110" y="54" w="40" h="16" maxlength="4"
+           text="{TinkeringTargetTotalTinksText}"
+           onchange="{SetTinkeringTargetTotalTinks}" />
+    <button x="36" y="80" w="100" h="20" text="Start" onclick="{StartTinkering}" />
+    <button x="176" y="80" w="100" h="20" text="Stop" onclick="{StopTinkering}" />
+    <list x="0" y="110" w="312" h="262" rowheight="18" selectionband="true"
+          anchor="left top right bottom"
+          selected="{TinkeringSelectedRow}" onchange="{SelectTinkeringRow}">
+      <column type="text" width="16" items="{TinkeringCurrentMarks}" />
+      <column type="icon" width="16" values="{TinkeringIcons}"
+              iconkind="item" onclick="{TinkeringIconClicked}" />
+      <column type="text" width="184" items="{TinkeringNames}" />
+      <column type="text" width="30" items="{TinkeringWork}" />
+      <column type="text" width="30" items="{TinkeringTinks}" />
+      <column type="icon" width="*" values="{TinkeringDeleteIcons}"
+              iconkind="did" onclick="{DeleteTinkeringRow}" />
+    </list>
+  </group>
+
+  <!-- ========================= Tools -> Character ========================= -->
+  <group x="4" y="84" w="312" h="372" visible="{CharacterVisible}"
+         anchor="left top right bottom">
+    <label x="4" y="4" text="On Login:" />
+    <field x="64" y="4" w="200" h="16" maxlength="255"
+           text="{CharacterLoginText}" onchange="{SetCharacterLoginText}" />
+    <button x="268" y="2" w="40" h="20" text="Add"
+            onclick="{AddCharacterLoginCommand}" />
+    <list x="0" y="26" w="312" h="80" rowheight="18" selectionband="true"
+          selected="{CharacterLoginSelectedRow}"
+          onchange="{SelectCharacterLoginRow}">
+      <column type="text" width="224" items="{CharacterLoginCommands}" />
+      <column type="icon" width="16" values="{CharacterLoginUpIcons}"
+              iconkind="did" onclick="{MoveCharacterLoginCommandUp}" />
+      <column type="icon" width="16" values="{CharacterLoginDownIcons}"
+              iconkind="did" onclick="{MoveCharacterLoginCommandDown}" />
+      <column type="icon" width="*" values="{CharacterLoginDeleteIcons}"
+              iconkind="did" onclick="{DeleteCharacterLoginCommand}" />
+    </list>
+    <label x="4" y="112" text="On Login Complete:" />
+    <field x="114" y="112" w="150" h="16" maxlength="255"
+           text="{CharacterLoginCompleteText}"
+           onchange="{SetCharacterLoginCompleteText}" />
+    <button x="268" y="110" w="40" h="20" text="Add"
+            onclick="{AddCharacterLoginCompleteCommand}" />
+    <list x="0" y="134" w="312" h="80" rowheight="18" selectionband="true"
+          selected="{CharacterLoginCompleteSelectedRow}"
+          onchange="{SelectCharacterLoginCompleteRow}">
+      <column type="text" width="224" items="{CharacterLoginCompleteCommands}" />
+      <column type="icon" width="16" values="{CharacterLoginCompleteUpIcons}"
+              iconkind="did" onclick="{MoveCharacterLoginCompleteCommandUp}" />
+      <column type="icon" width="16" values="{CharacterLoginCompleteDownIcons}"
+              iconkind="did" onclick="{MoveCharacterLoginCompleteCommandDown}" />
+      <column type="icon" width="*" values="{CharacterLoginCompleteDeleteIcons}"
+              iconkind="did" onclick="{DeleteCharacterLoginCompleteCommand}" />
+    </list>
+    <label x="4" y="220"
+           text="Periodic Command, Interval (min), Offset (min):" />
+    <field x="4" y="238" w="180" h="16" maxlength="255"
+           text="{CharacterPeriodicText}" onchange="{SetCharacterPeriodicText}" />
+    <field x="190" y="238" w="34" h="16" maxlength="4"
+           text="{CharacterPeriodicIntervalText}"
+           onchange="{SetCharacterPeriodicInterval}" />
+    <field x="228" y="238" w="34" h="16" maxlength="4"
+           text="{CharacterPeriodicOffsetText}"
+           onchange="{SetCharacterPeriodicOffset}" />
+    <button x="268" y="236" w="40" h="20" text="Add"
+            onclick="{AddCharacterPeriodicCommand}" />
+    <list x="0" y="260" w="312" h="112" rowheight="18" selectionband="true"
+          anchor="left top right bottom"
+          selected="{CharacterPeriodicSelectedRow}"
+          onchange="{SelectCharacterPeriodicRow}">
+      <column type="text" width="216" items="{CharacterPeriodicCommands}" />
+      <column type="text" width="30" items="{CharacterPeriodicIntervals}" />
+      <column type="text" width="30" items="{CharacterPeriodicOffsets}" />
+      <column type="icon" width="*" values="{CharacterPeriodicDeleteIcons}"
+              iconkind="did" onclick="{DeleteCharacterPeriodicCommand}" />
+    </list>
+  </group>
+
+  <!-- ========================== Tools -> Server =========================== -->
+  <group x="4" y="84" w="312" h="372" visible="{ServerVisible}"
+         anchor="left top right bottom">
+    <label x="4" y="4" text="On Login:" />
+    <field x="64" y="4" w="200" h="16" maxlength="255"
+           text="{ServerLoginText}" onchange="{SetServerLoginText}" />
+    <button x="268" y="2" w="40" h="20" text="Add"
+            onclick="{AddServerLoginCommand}" />
+    <list x="0" y="26" w="312" h="80" rowheight="18" selectionband="true"
+          selected="{ServerLoginSelectedRow}" onchange="{SelectServerLoginRow}">
+      <column type="text" width="224" items="{ServerLoginCommands}" />
+      <column type="icon" width="16" values="{ServerLoginUpIcons}"
+              iconkind="did" onclick="{MoveServerLoginCommandUp}" />
+      <column type="icon" width="16" values="{ServerLoginDownIcons}"
+              iconkind="did" onclick="{MoveServerLoginCommandDown}" />
+      <column type="icon" width="*" values="{ServerLoginDeleteIcons}"
+              iconkind="did" onclick="{DeleteServerLoginCommand}" />
+    </list>
+    <label x="4" y="112" text="On Login Complete:" />
+    <field x="114" y="112" w="150" h="16" maxlength="255"
+           text="{ServerLoginCompleteText}"
+           onchange="{SetServerLoginCompleteText}" />
+    <button x="268" y="110" w="40" h="20" text="Add"
+            onclick="{AddServerLoginCompleteCommand}" />
+    <list x="0" y="134" w="312" h="80" rowheight="18" selectionband="true"
+          selected="{ServerLoginCompleteSelectedRow}"
+          onchange="{SelectServerLoginCompleteRow}">
+      <column type="text" width="224" items="{ServerLoginCompleteCommands}" />
+      <column type="icon" width="16" values="{ServerLoginCompleteUpIcons}"
+              iconkind="did" onclick="{MoveServerLoginCompleteCommandUp}" />
+      <column type="icon" width="16" values="{ServerLoginCompleteDownIcons}"
+              iconkind="did" onclick="{MoveServerLoginCompleteCommandDown}" />
+      <column type="icon" width="*" values="{ServerLoginCompleteDeleteIcons}"
+              iconkind="did" onclick="{DeleteServerLoginCompleteCommand}" />
+    </list>
+    <label x="4" y="220"
+           text="Periodic Command, Interval (min), Offset (min):" />
+    <field x="4" y="238" w="180" h="16" maxlength="255"
+           text="{ServerPeriodicText}" onchange="{SetServerPeriodicText}" />
+    <field x="190" y="238" w="34" h="16" maxlength="4"
+           text="{ServerPeriodicIntervalText}"
+           onchange="{SetServerPeriodicInterval}" />
+    <field x="228" y="238" w="34" h="16" maxlength="4"
+           text="{ServerPeriodicOffsetText}"
+           onchange="{SetServerPeriodicOffset}" />
+    <button x="268" y="236" w="40" h="20" text="Add"
+            onclick="{AddServerPeriodicCommand}" />
+    <list x="0" y="260" w="312" h="112" rowheight="18" selectionband="true"
+          anchor="left top right bottom"
+          selected="{ServerPeriodicSelectedRow}"
+          onchange="{SelectServerPeriodicRow}">
+      <column type="text" width="216" items="{ServerPeriodicCommands}" />
+      <column type="text" width="30" items="{ServerPeriodicIntervals}" />
+      <column type="text" width="30" items="{ServerPeriodicOffsets}" />
+      <column type="icon" width="*" values="{ServerPeriodicDeleteIcons}"
+              iconkind="did" onclick="{DeleteServerPeriodicCommand}" />
+    </list>
+  </group>
+
+  <!-- =========================== Misc -> Options ========================== -->
+  <group x="4" y="84" w="312" h="372" visible="{MiscOptionsVisible}"
+         anchor="left top right bottom">
+    <list x="0" y="0" w="214" h="372" rowheight="18" selectionband="true"
+          anchor="left top bottom"
+          selected="{OptionSelectedRow}" onchange="{SelectOption}">
+      <column type="check" width="20" values="{OptionChecks}"
+              onchange="{ToggleOption}" />
+      <column type="text" width="*" items="{OptionCaptions}" />
+    </list>
+    <label x="220" y="2" text="Target Output" />
+    <label x="220" y="18" text="Window:" />
+    <field x="274" y="18" w="32" h="16" maxlength="2"
+           text="{OutputWindowText}" onchange="{SetOutputWindow}" />
+  </group>
+
+  <!-- =========================== Misc -> Filters ========================== -->
+  <group x="4" y="84" w="312" h="372" visible="{FiltersVisible}"
+         anchor="left top right bottom">
+    <list x="0" y="0" w="214" h="372" rowheight="18" selectionband="true"
+          anchor="left top bottom"
+          selected="{FilterSelectedRow}" onchange="{SelectFilter}">
+      <column type="check" width="20" values="{FilterChecks}"
+              onchange="{ToggleFilter}" />
+      <column type="text" width="*" items="{FilterCaptions}" />
+    </list>
+  </group>
+
+  <!-- ============================ Misc -> About =========================== -->
+  <group x="4" y="84" w="312" h="372" visible="{AboutVisible}"
+         anchor="left top right bottom">
+    <label x="4" y="240" text="{AboutThanksText}" />
+    <label x="4" y="272" text="{AboutThanksUrl}" />
+    <label x="4" y="300" text="{AboutWebsite}" />
+    <label x="4" y="324" text="{AboutVersionText}" />
+  </group>
+</panel>

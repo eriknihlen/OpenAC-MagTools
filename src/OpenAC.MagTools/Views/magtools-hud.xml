@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The 14 status rows the original handed to the Virindi HUDs status bar, in
+     the same order. Values are blank until the trackers that produce them
+     ship. -->
+<panel x="40" y="520" w="200" h="300" title="Mag-Tools HUD"
+       visible="{WindowVisible}" resizable="true" minw="160" minh="140">
+  <list x="4" y="22" w="192" h="274" rowheight="18"
+        anchor="left top right bottom"
+        selected="{SelectedRow}" onchange="{Select}">
+    <column type="text" width="110" items="{Names}" />
+    <column type="text" width="*" items="{Values}" />
+  </list>
+</panel>

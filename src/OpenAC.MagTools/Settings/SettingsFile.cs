@@ -34,6 +34,7 @@ public sealed class SettingsFile
     public static readonly TimeSpan SaveDebounce = TimeSpan.FromMilliseconds(250);
 
     private readonly IPluginStorage _storage;
+    private readonly HashSet<string> _dirtyPaths = new(StringComparer.Ordinal);
     private XDocument _document;
     private bool _dirty;
     private double _secondsSinceChange;
@@ -56,6 +57,7 @@ public sealed class SettingsFile
     {
         _document = LoadDocument();
         _dirty = false;
+        _dirtyPaths.Clear();
         _secondsSinceChange = 0d;
     }
 
@@ -73,7 +75,7 @@ public sealed class SettingsFile
     {
         XElement element = CreateElement(xpath);
         element.Value = SettingValueCodec.Format(value);
-        MarkDirty();
+        MarkDirty(xpath);
     }
 
     /// <summary>The inner texts of a node's children, in document order.</summary>
@@ -105,7 +107,7 @@ public sealed class SettingsFile
         element.RemoveAll();
         foreach (string innerText in innerTexts)
             element.Add(new XElement(childName, innerText));
-        MarkDirty();
+        MarkDirty(xpath);
     }
 
     /// <summary>
@@ -129,18 +131,27 @@ public sealed class SettingsFile
             element.Add(child);
         }
 
-        MarkDirty();
+        MarkDirty(xpath);
     }
 
     /// <summary>The element at <paramref name="xpath"/>, optionally created.</summary>
     public XElement? GetNode(string xpath, bool createIfMissing = false)
         => createIfMissing ? CreateElement(xpath) : FindElement(xpath);
 
-    /// <summary>Records that the document changed and needs a write.</summary>
-    public void MarkDirty()
+    /// <summary>
+    /// Records that the subtree at <paramref name="xpath"/> changed and needs
+    /// a write. <see cref="Flush"/> re-reads storage and grafts only the
+    /// recorded paths onto it, so a caller that mutates an
+    /// <see cref="XElement"/> obtained from <see cref="GetNode"/> directly
+    /// (rather than through one of the setters above) must call this with
+    /// that same path afterwards.
+    /// </summary>
+    public void MarkDirty(string xpath)
     {
+        ArgumentException.ThrowIfNullOrEmpty(xpath);
         _dirty = true;
         _secondsSinceChange = 0d;
+        _dirtyPaths.Add(xpath);
     }
 
     /// <summary>Advances the debounce and writes once the quiet period passed.</summary>
@@ -156,7 +167,16 @@ public sealed class SettingsFile
             Flush();
     }
 
-    /// <summary>Writes the document now if anything is pending.</summary>
+    /// <summary>
+    /// Writes the document now if anything is pending.
+    /// </summary>
+    /// <remarks>
+    /// Reloads storage first and replays only the paths this instance
+    /// actually changed onto that fresh copy, so a concurrent write from
+    /// another <see cref="SettingsFile"/> instance over the same storage (two
+    /// plugin sessions, or a settings-panel session and a headless bot) is
+    /// not clobbered by an in-memory snapshot that predates it.
+    /// </remarks>
     public void Flush()
     {
         if (!_dirty)
@@ -165,7 +185,19 @@ public sealed class SettingsFile
         _dirty = false;
         _secondsSinceChange = 0d;
         if (!_storage.IsAvailable)
+        {
+            _dirtyPaths.Clear();
             return;
+        }
+
+        if (_dirtyPaths.Count > 0)
+        {
+            XDocument fresh = LoadDocument();
+            foreach (string xpath in _dirtyPaths)
+                GraftPath(fresh, xpath, _document);
+            _document = fresh;
+            _dirtyPaths.Clear();
+        }
 
         _storage.WriteText(StorageKey, Serialize(_document));
         SaveCount++;
@@ -198,9 +230,13 @@ public sealed class SettingsFile
     private XElement Root => _document.Root
         ?? throw new InvalidOperationException("The settings document has no root.");
 
-    private XElement? FindElement(string xpath)
+    private XElement? FindElement(string xpath) => FindElementIn(Root, xpath);
+
+    private XElement CreateElement(string xpath) => CreateElementIn(Root, xpath);
+
+    private static XElement? FindElementIn(XElement root, string xpath)
     {
-        XElement? current = Root;
+        XElement? current = root;
         foreach (string segment in SplitPath(xpath))
         {
             current = current.Element(segment);
@@ -211,9 +247,9 @@ public sealed class SettingsFile
         return current;
     }
 
-    private XElement CreateElement(string xpath)
+    private static XElement CreateElementIn(XElement root, string xpath)
     {
-        XElement current = Root;
+        XElement current = root;
         foreach (string segment in SplitPath(xpath))
         {
             XElement? child = current.Element(segment);
@@ -227,6 +263,59 @@ public sealed class SettingsFile
         }
 
         return current;
+    }
+
+    /// <summary>
+    /// Copies the subtree at <paramref name="xpath"/> from
+    /// <paramref name="sourceDocument"/> onto <paramref name="destinationDocument"/>,
+    /// creating ancestor elements as needed and replacing anything already
+    /// there at that path. A path with nothing at it in the source removes
+    /// the destination's node instead (the setter that put it there in
+    /// <paramref name="sourceDocument"/> is the only place a node is ever
+    /// deleted, and that deletion has to survive the graft too).
+    /// </summary>
+    private static void GraftPath(
+        XDocument destinationDocument,
+        string xpath,
+        XDocument sourceDocument)
+    {
+        XElement sourceRoot = sourceDocument.Root
+            ?? throw new InvalidOperationException(
+                "The settings document has no root.");
+        XElement destinationRoot = destinationDocument.Root
+            ?? throw new InvalidOperationException(
+                "The settings document has no root.");
+
+        XElement? sourceElement = FindElementIn(sourceRoot, xpath);
+
+        string[] segments = SplitPath(xpath);
+        XElement parent = destinationRoot;
+        for (int index = 0; index < segments.Length - 1; index++)
+        {
+            string segment = segments[index];
+            XElement? child = parent.Element(segment);
+            if (child is null)
+            {
+                child = new XElement(segment);
+                parent.Add(child);
+            }
+
+            parent = child;
+        }
+
+        string leaf = segments[^1];
+        XElement? existing = parent.Element(leaf);
+        if (sourceElement is null)
+        {
+            existing?.Remove();
+            return;
+        }
+
+        var clone = new XElement(sourceElement);
+        if (existing is not null)
+            existing.ReplaceWith(clone);
+        else
+            parent.Add(clone);
     }
 
     private static string[] SplitPath(string xpath)

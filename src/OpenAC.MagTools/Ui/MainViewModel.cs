@@ -106,8 +106,15 @@ public sealed class MainViewModel
 
     // ---- window --------------------------------------------------------------
 
-    /// <summary>The panel starts hidden; the shelf button reveals it.</summary>
-    public bool WindowVisible { get; set; }
+    /// <summary>
+    /// The root <c>visible</c> binding is an availability gate, not the
+    /// current shown/hidden state (the host tracks that itself and never
+    /// reads this back). The main window's Options page has to be reachable
+    /// before login, so it is always available; only the shelf button and the
+    /// panel's own start-hidden default govern whether it is actually on
+    /// screen.
+    /// </summary>
+    public bool WindowAvailable => true;
 
     // ---- top row -------------------------------------------------------------
 
@@ -349,7 +356,9 @@ public sealed class MainViewModel
     public IReadOnlyList<string> InventorySearchNames => InventoryTools.ResultNames;
     public int InventorySearchSelectedRow => InventoryTools.SelectedRow;
     public Action<int> SelectInventorySearchRow => InventoryTools.Select;
-    public string InventoryItemText => InventoryTools.ItemText;
+    public IReadOnlyList<string> InventoryItemInfoLines => InventoryTools.ItemInfoLines;
+    public int InventoryItemInfoSelectedRow => InventoryTools.ItemInfoSelectedRow;
+    public Action<int> SelectInventoryItemInfoLine => InventoryTools.SelectItemInfoLine;
 
     // ---- Tools -> Tinkering --------------------------------------------------
 

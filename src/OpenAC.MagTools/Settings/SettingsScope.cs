@@ -23,6 +23,13 @@ public static class SettingsScope
         ArgumentNullException.ThrowIfNull(server);
         ArgumentNullException.ThrowIfNull(character);
 
+        // DELIBERATE DEVIATION: the original concatenated the raw account
+        // name into the element name unescaped, which produces invalid XML
+        // for any account name containing characters XML forbids in a name
+        // (spaces, most punctuation). XmlConvert.EncodeName is the identity
+        // transform for an ordinary alphanumeric name, so this only changes
+        // behaviour for the account names that would otherwise have broken
+        // the document.
         return "_" + XmlConvert.EncodeName(account)
             + "_" + XmlConvert.EncodeName(server)
             + "/" + XmlConvert.EncodeName(character);

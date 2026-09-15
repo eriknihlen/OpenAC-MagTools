@@ -104,7 +104,7 @@ public sealed class ScopedCommandStore
             index++;
         }
 
-        _file.MarkDirty();
+        _file.MarkDirty(path);
     }
 
     private static double ReadMinutes(XElement element, string attributeName)

@@ -38,7 +38,6 @@ public sealed class MtCommandRouter
         "exit",
         "get xy",
         "client minimize",
-        "fellow create",
     ];
 
     private const string SpellDumpStorageKey = "mt spelldump.txt";
@@ -210,6 +209,18 @@ public sealed class MtCommandRouter
     {
         IFellowshipAutomation fellowship = _host.Automation.Fellowship;
 
+        if (Matches(argument, "create"))
+        {
+            string createName = Remainder(argument, "create");
+            if (createName.Length == 0)
+            {
+                _chat.Write("Usage: /mt fellow create <name>");
+                return false;
+            }
+
+            return Accepted(fellowship.Create(createName, shareExperience: true));
+        }
+
         if (argument == "open")
             return Accepted(fellowship.SetOpen(true));
         if (argument == "close")
@@ -232,7 +243,8 @@ public sealed class MtCommandRouter
             return Accepted(fellowship.Recruit(id));
         }
 
-        _chat.Write("Usage: /mt fellow open|close|disband|quit|recruit <player>");
+        _chat.Write(
+            "Usage: /mt fellow create <name>|open|close|disband|quit|recruit <player>");
         return false;
 
         static bool Accepted(PluginFellowshipCommandResult result)
@@ -250,7 +262,12 @@ public sealed class MtCommandRouter
 
         if (!TryResolveSpell(spellText, partial, out uint spellId))
         {
-            _chat.Write("No spell found named: " + spellText);
+            // TODO(E-SPELLS): ISpellCatalog.TryFindByName would search the
+            // whole spell table; today only the known lists are reachable, so
+            // this failure may just mean the spell isn't cast/known yet.
+            _chat.Write(
+                "No known spell named: " + spellText
+                + " (full-table lookup arrives with the spell catalog API)");
             return false;
         }
 
@@ -302,12 +319,25 @@ public sealed class MtCommandRouter
 
         if (targetName.Length > 0)
         {
-            uint sourceId = ResolveUseTarget(itemName, scope, partial);
-            uint targetId = ResolveUseTarget(targetName, scope, partial);
-            if (sourceId == 0 || targetId == 0)
+            // The original resolved the "use A on B" form without keyword
+            // matching at all: A is always inventory-only, and B is resolved
+            // in the command's scope but is never allowed to match A itself.
+            uint sourceId = FindIdForName(
+                itemName,
+                searchInventory: true,
+                searchOpenContainer: false,
+                searchEnvironment: false,
+                partial);
+            if (sourceId == 0)
             {
-                _chat.Write("Nothing found named: "
-                    + (sourceId == 0 ? itemName : targetName));
+                _chat.Write("Nothing found named: " + itemName);
+                return false;
+            }
+
+            uint targetId = ResolveScopedTarget(targetName, scope, partial, sourceId);
+            if (targetId == 0)
+            {
+                _chat.Write("Nothing found named: " + targetName);
                 return false;
             }
 
@@ -328,9 +358,21 @@ public sealed class MtCommandRouter
     private uint ResolveUseTarget(string name, UseScope scope, bool partial)
     {
         uint keyword = ResolveKeyword(name);
-        if (keyword != 0)
-            return keyword;
+        return keyword != 0 ? keyword : ResolveScopedTarget(name, scope, partial);
+    }
 
+    /// <summary>
+    /// The scope's search set, with no keyword matching. The original never
+    /// searched the open container for <c>use</c>/<c>usei</c>/<c>usel</c>; it
+    /// searched only the packs (and the landscape, unless restricted to
+    /// inventory).
+    /// </summary>
+    private uint ResolveScopedTarget(
+        string name,
+        UseScope scope,
+        bool partial,
+        uint idToSkip = 0)
+    {
         return scope switch
         {
             UseScope.Inventory => FindIdForName(
@@ -338,19 +380,22 @@ public sealed class MtCommandRouter
                 searchInventory: true,
                 searchOpenContainer: false,
                 searchEnvironment: false,
-                partial),
+                partial,
+                idToSkip),
             UseScope.Landscape => FindIdForName(
                 name,
                 searchInventory: false,
                 searchOpenContainer: false,
                 searchEnvironment: true,
-                partial),
+                partial,
+                idToSkip),
             _ => FindIdForName(
                 name,
                 searchInventory: true,
-                searchOpenContainer: true,
+                searchOpenContainer: false,
                 searchEnvironment: true,
-                partial),
+                partial,
+                idToSkip),
         };
     }
 
@@ -489,12 +534,28 @@ public sealed class MtCommandRouter
         }
 
         _host.Selection.Select(target);
-        PluginCombatCommandResult result = combat.BeginPhysicalAttack(
-            target,
-            PluginAttackHeight.Medium,
-            1f);
-        return result.Status is PluginCombatCommandStatus.Started
-            or PluginCombatCommandStatus.AlreadyReady;
+
+        // The original fired a single Delete keypress, which the retail
+        // client's own input handling turned into one complete press+release
+        // attack. BeginPhysicalAttack/ReleasePhysicalAttack are OpenAC's two
+        // halves of that same gesture; calling only the first leaves the
+        // attack gate charging (and Busy) forever.
+        PluginCombatSnapshot snapshot = combat.Snapshot;
+        PluginAttackHeight height = snapshot.AttackHeight == default
+            ? PluginAttackHeight.Medium
+            : snapshot.AttackHeight;
+        float power = snapshot.DesiredPower <= 0f ? 1f : snapshot.DesiredPower;
+
+        PluginCombatCommandResult begin =
+            combat.BeginPhysicalAttack(target, height, power);
+        if (begin.Status is not (PluginCombatCommandStatus.Started
+            or PluginCombatCommandStatus.AlreadyReady))
+        {
+            return false;
+        }
+
+        PluginCombatCommandResult release = combat.ReleasePhysicalAttack();
+        return release.Status == PluginCombatCommandStatus.Released;
     }
 
     private bool IsMonster(uint objectId)
@@ -510,6 +571,8 @@ public sealed class MtCommandRouter
             return false;
         }
 
+        // TODO(E-SPELLS): ISpellCatalog has no full-table enumeration yet;
+        // only the known-spell lists are reachable from a plugin.
         var seen = new HashSet<uint>();
         var builder = new StringBuilder();
         builder.AppendLine("SpellId,Name,Family,Tier,Difficulty,ManaCost,School");
@@ -538,7 +601,9 @@ public sealed class MtCommandRouter
         }
 
         _host.Storage.WriteText(SpellDumpStorageKey, builder.ToString());
-        _chat.Write("Spell dump written to: " + SpellDumpStorageKey);
+        _chat.Write(
+            "Spell dump written (known spells only until the spell catalog "
+            + "API lands): " + SpellDumpStorageKey);
         return true;
 
         static string Csv(string value)
@@ -626,7 +691,10 @@ public sealed class MtCommandRouter
             SettingDescriptor? descriptor = _settings.Find(name);
             if (descriptor is null || !descriptor.Setting.TrySetFromText(value))
             {
-                _chat.Write("Failed to Set " + name + " to " + value);
+                // Matches the other three failure messages' shape
+                // ("Failed to Get|Remember|Restore|Set <Option>"); it does not
+                // echo the value that failed to parse.
+                _chat.Write("Failed to Set " + name);
                 return false;
             }
 

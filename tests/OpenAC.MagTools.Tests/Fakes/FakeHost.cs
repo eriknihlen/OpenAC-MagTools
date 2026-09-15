@@ -133,6 +133,28 @@ public sealed class FakeUiRegistry : IUiRegistry
         string markupPath,
         object binding)
         => Panels.Add(new RegisteredPanel(descriptor, markupPath, binding));
+
+    public IDisposable RegisterPanel(
+        PluginPanelDescriptor descriptor,
+        string markupPath,
+        object binding)
+    {
+        var panel = new RegisteredPanel(descriptor, markupPath, binding);
+        Panels.Add(panel);
+        return new PanelRegistration(this, panel);
+    }
+
+    private sealed class PanelRegistration(FakeUiRegistry owner, RegisteredPanel panel)
+        : IDisposable
+    {
+        public bool Disposed { get; private set; }
+
+        public void Dispose()
+        {
+            Disposed = true;
+            owner.Panels.Remove(panel);
+        }
+    }
 }
 
 public sealed class FakeCommandRegistry : IPluginCommandRegistry

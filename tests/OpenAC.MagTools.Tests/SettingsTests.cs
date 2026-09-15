@@ -1,5 +1,6 @@
 using OpenAC.MagTools.Settings;
 using OpenAC.MagTools.Tests.Fakes;
+using OpenAC.MagTools.Ui;
 
 namespace OpenAC.MagTools.Tests;
 
@@ -161,6 +162,53 @@ public sealed class SettingsFileTests
         var file = new SettingsFile(storage);
         Assert.True(file.GetSetting("ManaManagement/AutoRecharge", true));
     }
+
+    [Fact]
+    public void TwoInstancesOverOneStorageBothKeepTheirWrites()
+    {
+        // Two live plugin sessions (or a settings panel and a headless bot)
+        // sharing one storage backend. Without a reload-before-write, the
+        // second Flush would serialize its own stale in-memory copy and wipe
+        // out the first instance's already-persisted change.
+        var storage = new MemoryStorage();
+        var first = new SettingsFile(storage);
+        var second = new SettingsFile(storage);
+
+        first.PutSetting("Filters/AttackEvades", true);
+        first.Flush();
+
+        second.PutSetting("Filters/DefenseEvades", true);
+        second.Flush();
+
+        var final = new SettingsFile(storage);
+        Assert.True(final.GetSetting("Filters/AttackEvades", false));
+        Assert.True(final.GetSetting("Filters/DefenseEvades", false));
+    }
+
+    [Fact]
+    public void FlushPreservesUnrelatedNodesWrittenAfterConstruction()
+    {
+        // The scenario the reload-before-write exists for: this instance was
+        // constructed before another session (or a hand-imported file) added
+        // Misc/WindowPositions; without a reload, this instance's Flush would
+        // never have seen it and would overwrite it away.
+        var storage = new MemoryStorage();
+        var file = new SettingsFile(storage);
+
+        var writtenElsewhere = new SettingsFile(storage);
+        writtenElsewhere.SetNodeChildren(
+            "Misc/WindowPositions", "Window", ["Main:10,10", "Hud:20,20"]);
+        writtenElsewhere.Flush();
+
+        file.PutSetting("Filters/AttackEvades", true);
+        file.Flush();
+
+        var final = new SettingsFile(storage);
+        Assert.Equal(
+            ["Main:10,10", "Hud:20,20"],
+            final.GetChildrenInnerTexts("Misc/WindowPositions"));
+        Assert.True(final.GetSetting("Filters/AttackEvades", false));
+    }
 }
 
 public sealed class SettingTests
@@ -278,6 +326,70 @@ public sealed class SettingsManagerTests
     {
         SettingsManager settings = NewManager();
         Assert.Equal("Looting/AutoLootMyCorpse", settings.Looting.AutoLootMyCorpses.XPath);
+    }
+
+    [Fact]
+    public void AllListsGroupsInAFixedExplicitOrder()
+    {
+        // Not GetProperties() order: that is a runtime metadata-layout
+        // artifact, not a documented contract. Reflection order happens to
+        // match declaration order today, but nothing guarantees it stays
+        // that way; this test pins the explicit order instead.
+        SettingsManager settings = NewManager();
+
+        string[] groupOrder = [.. settings.All
+            .Select(descriptor => descriptor.GroupName)
+            .Distinct()];
+
+        Assert.Equal(
+            [
+                "ManaManagement", "AutoBuySell", "AutoTradeAdd",
+                "AutoTradeAccept", "Looting", "Tinkering",
+                "InventoryManagement", "ItemInfoOnIdent", "CombatTracker",
+                "CorpseTracker", "PlayerTracker", "ChatLogger", "Misc",
+                "Filters",
+            ],
+            groupOrder);
+
+        // Every group's settings stay contiguous (no interleaving), which is
+        // what "explicit order" promises callers of Find() and /mt opt list.
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        string? previous = null;
+        foreach (SettingDescriptor descriptor in settings.All)
+        {
+            if (descriptor.GroupName != previous)
+            {
+                Assert.True(
+                    seen.Add(descriptor.GroupName),
+                    $"Group {descriptor.GroupName} is not contiguous.");
+                previous = descriptor.GroupName;
+            }
+        }
+    }
+}
+
+public sealed class OptionListViewModelTests
+{
+    [Fact]
+    public void ChecksReflectASettingChangedFromOutsideTheList()
+    {
+        var settings = new SettingsManager(new SettingsFile(new MemoryStorage()));
+        settings.ItemInfoOnIdent.Enabled.Value = false;
+
+        var options = new OptionListViewModel(
+        [
+            settings.ItemInfoOnIdent.Enabled,
+            settings.ItemInfoOnIdent.AutoClipboard,
+        ]);
+
+        Assert.Equal([false, false], options.Checks);
+
+        // AutoClipboard's parent-forcing wiring flips Enabled, not the list
+        // itself. Without a Changed subscription, Checks stays the stale
+        // snapshot taken at construction.
+        settings.ItemInfoOnIdent.AutoClipboard.Value = true;
+
+        Assert.Equal([true, true], options.Checks);
     }
 }
 

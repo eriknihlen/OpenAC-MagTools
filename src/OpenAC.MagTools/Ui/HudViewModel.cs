@@ -1,3 +1,5 @@
+using AcDream.Plugin.Abstractions;
+
 namespace OpenAC.MagTools.Ui;
 
 /// <summary>
@@ -33,15 +35,23 @@ public sealed class HudViewModel
     ];
 
     private readonly string[] _values = new string[RowNames.Count];
+    private readonly IPluginHost _host;
 
-    public HudViewModel()
+    public HudViewModel(IPluginHost host)
     {
+        ArgumentNullException.ThrowIfNull(host);
+        _host = host;
         Array.Fill(_values, string.Empty);
         Select = index => SelectedRow = index;
     }
 
-    /// <summary>The panel starts hidden; the shelf button reveals it.</summary>
-    public bool WindowVisible { get; set; }
+    /// <summary>
+    /// The root <c>visible</c> binding is an availability gate, not the
+    /// current shown/hidden state. Unlike the main window, the HUD's rows are
+    /// all live-session numbers, so it follows the same gate MossTank uses:
+    /// there is nothing to show before an automation session exists.
+    /// </summary>
+    public bool WindowAvailable => _host.Automation.IsAvailable;
 
     public IReadOnlyList<string> Names => RowNames;
 

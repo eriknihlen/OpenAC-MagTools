@@ -287,6 +287,13 @@ public sealed class FakeFellowship : IFellowshipAutomation
 
     public bool IsInFellowship { get; set; }
 
+    public PluginFellowshipCommandResult Create(string name, bool shareExperience)
+    {
+        Calls.Add("create:" + name + ":" + shareExperience);
+        return new PluginFellowshipCommandResult(
+            PluginFellowshipCommandStatus.Accepted);
+    }
+
     public PluginFellowshipCommandResult SetOpen(bool isOpen)
     {
         Calls.Add("setopen:" + isOpen);
@@ -317,6 +324,10 @@ public sealed class FakeCombat : ICombatAutomation
 
     public List<string> Calls { get; } = [];
 
+    /// <summary>Every BeginPhysicalAttack call, with the height/power it used.</summary>
+    public List<(uint TargetObjectId, PluginAttackHeight Height, float Power)>
+        BeginAttacks { get; } = [];
+
     public PluginCombatCommandResult EnterDefaultMode()
     {
         Calls.Add("mode:default");
@@ -337,6 +348,7 @@ public sealed class FakeCombat : ICombatAutomation
         float power)
     {
         Calls.Add("attack:" + targetObjectId);
+        BeginAttacks.Add((targetObjectId, height, power));
         return new PluginCombatCommandResult(PluginCombatCommandStatus.Started);
     }
 

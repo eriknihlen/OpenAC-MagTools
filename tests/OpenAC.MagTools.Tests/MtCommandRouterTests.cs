@@ -37,7 +37,6 @@ public sealed class MtCommandRouterTests
     [InlineData("quit")]
     [InlineData("get xy")]
     [InlineData("client minimize")]
-    [InlineData("fellow create Bob")]
     public void TheWin32CommandsReportThatTheyDoNotApply(string command)
     {
         Assert.True(_router.Execute(command));
@@ -88,6 +87,29 @@ public sealed class MtCommandRouterTests
     {
         Assert.True(_router.Execute("fellow quit"));
         Assert.Equal(["quit:False"], _host.Automation.Fellowship.Calls);
+    }
+
+    [Fact]
+    public void FellowCreateIsPortableAndCallsTheAutomation()
+    {
+        Assert.DoesNotContain("fellow create", MtCommandRouter.NotApplicable);
+
+        Assert.True(_router.Execute("fellow create Bob's Fellowship"));
+        // The router lower-cases the whole command line before dispatch, so
+        // the name arrives lower-cased too (matching every other command's
+        // name-argument handling in this class).
+        Assert.Equal(
+            ["create:bob's fellowship:True"],
+            _host.Automation.Fellowship.Calls);
+    }
+
+    [Fact]
+    public void FellowCreateWithNoNameReportsUsage()
+    {
+        Assert.False(_router.Execute("fellow create"));
+        Assert.Empty(_host.Automation.Fellowship.Calls);
+        Assert.Contains(Chat, line => line.Contains(
+            "Usage: /mt fellow create", StringComparison.Ordinal));
     }
 
     // ---- native commands -----------------------------------------------------
@@ -202,6 +224,45 @@ public sealed class MtCommandRouterTests
         Assert.Equal(("use", 9u, 0u), Assert.Single(_host.Automation.Items.Calls));
     }
 
+    [Fact]
+    public void PlainUseNeverSearchesTheOpenContainer()
+    {
+        // The original's plain "use" only ever searched the packs and the
+        // landscape; an item sitting in an opened chest must not resolve.
+        _host.Automation.Loot.Contents.Add(FakeItems.Item(5u, "Lockpick"));
+
+        Assert.False(_router.Execute("use lockpick"));
+        Assert.Empty(_host.Automation.Items.Calls);
+    }
+
+    [Fact]
+    public void UseAOnBNeverResolvesBToTheSameObjectAsA()
+    {
+        // Two items share a name; "use X on X" must apply the first found
+        // instance to the *other* one, never to itself.
+        _host.Automation.Items.Owned.AddRange(
+        [
+            FakeItems.Item(3u, "Mana Stone"),
+            FakeItems.Item(4u, "Mana Stone"),
+        ]);
+
+        Assert.True(_router.Execute("use mana stone on mana stone"));
+        Assert.Equal(("apply", 3u, 4u), Assert.Single(_host.Automation.Items.Calls));
+    }
+
+    [Fact]
+    public void UseAOnBResolvesTheSourceFromInventoryOnly()
+    {
+        // The source side of "A on B" never searches the landscape, even for
+        // the unscoped "use" verb.
+        _host.Automation.Objects.Objects.Add(
+            FakeObjects.Landscape(7u, "Lockpick", PluginObjectClass.Misc, 1d));
+        _host.Automation.Items.Owned.Add(FakeItems.Item(4u, "Chest Key"));
+
+        Assert.False(_router.Execute("use lockpick on chest key"));
+        Assert.Empty(_host.Automation.Items.Calls);
+    }
+
     [Theory]
     [InlineData("closestnpc", PluginObjectClass.Npc)]
     [InlineData("closestvendor", PluginObjectClass.Vendor)]
@@ -310,8 +371,40 @@ public sealed class MtCommandRouterTests
         ]);
 
         Assert.True(_router.Execute("attack_melee closest"));
-        Assert.Equal(["attack:31"], _host.Automation.Combat.Calls);
+        Assert.Equal(["attack:31", "release"], _host.Automation.Combat.Calls);
         Assert.Equal(31u, _host.Selection.SelectedObjectId);
+    }
+
+    [Fact]
+    public void AttackMeleeUsesTheSnapshotHeightAndPower()
+    {
+        _host.Automation.Combat.Snapshot = new PluginCombatSnapshot(
+            0u, PluginCombatMode.Melee, PluginAttackHeight.High, 0.5f, 0f,
+            false, false, false, false);
+        _host.Automation.Objects.Objects.Add(
+            FakeObjects.Landscape(31u, "Drudge", PluginObjectClass.Monster, 4d));
+
+        Assert.True(_router.Execute("attack_melee closest"));
+
+        Assert.Equal(
+            (31u, PluginAttackHeight.High, 0.5f),
+            Assert.Single(_host.Automation.Combat.BeginAttacks));
+    }
+
+    [Fact]
+    public void AttackMeleeFallsBackToMediumHeightAndFullPowerWhenUnset()
+    {
+        _host.Automation.Combat.Snapshot = new PluginCombatSnapshot(
+            0u, PluginCombatMode.Melee, default, 0f, 0f,
+            false, false, false, false);
+        _host.Automation.Objects.Objects.Add(
+            FakeObjects.Landscape(31u, "Drudge", PluginObjectClass.Monster, 4d));
+
+        Assert.True(_router.Execute("attack_melee closest"));
+
+        Assert.Equal(
+            (31u, PluginAttackHeight.Medium, 1f),
+            Assert.Single(_host.Automation.Combat.BeginAttacks));
     }
 
     [Fact]
@@ -340,6 +433,17 @@ public sealed class MtCommandRouterTests
     }
 
     [Fact]
+    public void CastReportsAnHonestFailureForAnUnknownSpellName()
+    {
+        Assert.False(_router.Execute("cast fireball"));
+        Assert.Equal(
+            Line(
+                "No known spell named: fireball "
+                + "(full-table lookup arrives with the spell catalog API)"),
+            Assert.Single(Chat));
+    }
+
+    [Fact]
     public void AutopackSaysItIsNotAvailableYet()
     {
         Assert.True(_router.Execute("autopack"));
@@ -360,7 +464,11 @@ public sealed class MtCommandRouterTests
         Assert.NotNull(csv);
         Assert.Contains("1,Strength Self VI", csv, StringComparison.Ordinal);
         Assert.Contains("2,Flame Bolt VI", csv, StringComparison.Ordinal);
-        Assert.Equal(Line("Spell dump written to: mt spelldump.txt"), Assert.Single(Chat));
+        Assert.Equal(
+            Line(
+                "Spell dump written (known spells only until the spell "
+                + "catalog API lands): mt spelldump.txt"),
+            Assert.Single(Chat));
     }
 
     [Fact]
@@ -441,9 +549,10 @@ public sealed class MtOptionCommandTests
     {
         Assert.False(_router.Execute("opt set Misc.OutputTargetWindow left"));
         Assert.Equal(1, _settings.Misc.OutputTargetWindow.Value);
-        Assert.Contains(
-            ChatOutput.Prefix + "Failed to Set Misc.OutputTargetWindow to left",
-            Chat);
+        // Matches the other three failures' shape: no echoed value.
+        Assert.Equal(
+            ChatOutput.Prefix + "Failed to Set Misc.OutputTargetWindow",
+            Assert.Single(Chat));
     }
 
     [Fact]

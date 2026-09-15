@@ -20,11 +20,6 @@ public sealed class MarkupContractTests
         "tab", "button", "toggle", "slider", "field", "menu", "list", "column",
     ];
 
-    private static readonly string[] SilentBindingAttributes =
-    [
-        "text", "tooltip", "cur", "max", "fill", "value",
-    ];
-
     public static TheoryData<string, Type> MarkupFiles => new()
     {
         { "magtools.xml", typeof(MainViewModel) },
@@ -142,10 +137,14 @@ public sealed class MarkupContractTests
         XElement root = LoadRoot("magtools.xml");
 
         Assert.Equal(
-            ["Current", "Persistent", "Options"],
+            ["Current Session Stats", "Persistent Stats", "Options"],
             SecondRow(root, "CombatTabsVisible"));
-        Assert.Equal(["Tracked", "Options"], SecondRow(root, "CorpseTabsVisible"));
-        Assert.Equal(["Tracked", "Options"], SecondRow(root, "PlayerTabsVisible"));
+        Assert.Equal(
+            ["Tracked Corpses", "Options"],
+            SecondRow(root, "CorpseTabsVisible"));
+        Assert.Equal(
+            ["Tracked Players", "Options"],
+            SecondRow(root, "PlayerTabsVisible"));
     }
 
     [Fact]
@@ -184,9 +183,33 @@ public sealed class MarkupContractTests
     }
 
     [Fact]
+    public void TheMainWindowIsAvailableBeforeLogin()
+    {
+        // The root <panel visible="..."> binding is a host-side availability
+        // gate (RetailUiRuntime.ShouldBeVisible), not the shown/hidden state,
+        // and the Options page has to be reachable before a session exists.
+        var model = new MainViewModel(
+            new SettingsManager(new SettingsFile(new FakeHost().Storage)));
+
+        Assert.True(model.WindowAvailable);
+    }
+
+    [Fact]
+    public void TheHudIsGatedOnAutomationAvailability()
+    {
+        var host = new FakeHost();
+        var model = new HudViewModel(host);
+
+        Assert.False(model.WindowAvailable);
+
+        host.Automation.IsAvailable = true;
+        Assert.True(model.WindowAvailable);
+    }
+
+    [Fact]
     public void HudRowsAreTheOriginalFourteenInOrder()
     {
-        var model = new HudViewModel();
+        var model = new HudViewModel(new FakeHost());
 
         Assert.Equal(14, model.Names.Count);
         Assert.Equal("Mana", model.Names[0]);
@@ -210,7 +233,21 @@ public sealed class MarkupContractTests
             AssertBindingType(file, element, "onchange", typeof(Action<int>), byName);
             AssertBindingType(file, element, "onclick", typeof(Action<int>), byName);
             AssertListBinding(file, element, "items", typeof(string), byName);
-            AssertListBinding(file, element, "values", null, byName);
+
+            string? columnType = (string?)element.Attribute("type");
+            switch (columnType)
+            {
+                case "check":
+                    AssertListBinding(file, element, "values", typeof(bool), byName);
+                    break;
+                case "icon":
+                    AssertIconListBinding(file, element, "values", byName);
+                    break;
+                default:
+                    AssertListBinding(file, element, "values", null, byName);
+                    break;
+            }
+
             return;
         }
 
@@ -297,14 +334,74 @@ public sealed class MarkupContractTests
         return Assert.IsType<XElement>(document.Root);
     }
 
-    [Fact]
-    public void SilentBindingAttributesAreDocumented()
+    [Theory]
+    [MemberData(nameof(MarkupFiles))]
+    public void EveryListColumnHasASaneWidth(string file, Type bindingType)
     {
-        // A reminder of which attributes fall back quietly rather than throwing
-        // when their binding is missing; the tests above still require them all
-        // to resolve.
-        Assert.Contains("text", SilentBindingAttributes);
-        Assert.Contains("tooltip", SilentBindingAttributes);
+        _ = bindingType;
+        XElement root = LoadRoot(file);
+
+        foreach (XElement list in root.Descendants("list"))
+        {
+            XElement[] columns = [.. list.Elements("column")];
+            if (columns.Length == 0)
+                continue;
+
+            for (int index = 0; index < columns.Length; index++)
+            {
+                string? width = (string?)columns[index].Attribute("width");
+                Assert.True(
+                    width is not null,
+                    $"{file}: <column> {index} has no width.");
+
+                bool isLast = index == columns.Length - 1;
+                bool isStar = width == "*";
+                bool isPositiveNumber =
+                    double.TryParse(
+                        width,
+                        System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        out double parsed)
+                    && parsed > 0d;
+
+                Assert.True(
+                    isStar || isPositiveNumber,
+                    $"{file}: <column width=\"{width}\"> at index {index} is "
+                    + "neither a positive number nor \"*\".");
+
+                if (!isLast)
+                {
+                    Assert.True(
+                        isStar || isPositiveNumber,
+                        $"{file}: non-last <column width=\"{width}\"> at index "
+                        + $"{index} must be a positive number or \"*\".");
+                }
+            }
+        }
+    }
+
+    private static void AssertIconListBinding(
+        string file,
+        XElement element,
+        string attributeName,
+        IReadOnlyDictionary<string, PropertyInfo> byName)
+    {
+        string? value = (string?)element.Attribute(attributeName);
+        if (value is null || !value.StartsWith('{'))
+            return;
+
+        PropertyInfo property = byName[value[1..^1]];
+        Type type = property.PropertyType;
+        Assert.True(
+            typeof(System.Collections.IEnumerable).IsAssignableFrom(type),
+            $"{file}: <{element.Name.LocalName} {attributeName}=\"{value}\"> is "
+            + $"{type.Name}, expected a list.");
+
+        Type? bound = type.IsGenericType ? type.GetGenericArguments()[0] : null;
+        Assert.True(
+            bound == typeof(uint) || bound == typeof(int),
+            $"{file}: <{element.Name.LocalName} {attributeName}=\"{value}\"> holds "
+            + $"{bound?.Name ?? "?"}, expected uint or int.");
     }
 
     private static IReadOnlyDictionary<string, PropertyInfo> PropertiesOf(Type type)

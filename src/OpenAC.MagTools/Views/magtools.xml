@@ -3,7 +3,7 @@
      four top-level tabs, a second row per top-level tab, and a third row for
      the Combat / Corpse / Player inner notebooks. -->
 <panel x="40" y="40" w="320" h="460" title="Mag-Tools"
-       visible="{WindowVisible}" resizable="true" minw="320" minh="460">
+       visible="{WindowAvailable}" resizable="true" minw="320" minh="460">
 
   <!-- top row -->
   <tab x="6"   y="22" w="62" h="18" text="Trackers"
@@ -54,21 +54,25 @@
        selected="{AboutSelected}" onclick="{ShowAbout}" />
 
   <!-- third row: Combat / Corpse / Player inner notebooks -->
-  <tab x="6"   y="62" w="56" h="18" text="Current" visible="{CombatTabsVisible}"
+  <tab x="6"   y="62" w="140" h="18" text="Current Session Stats"
+       visible="{CombatTabsVisible}"
        selected="{CombatCurrentSelected}" onclick="{ShowCombatCurrent}" />
-  <tab x="62"  y="62" w="68" h="18" text="Persistent" visible="{CombatTabsVisible}"
+  <tab x="150" y="62" w="100" h="18" text="Persistent Stats"
+       visible="{CombatTabsVisible}"
        selected="{CombatPersistentSelected}" onclick="{ShowCombatPersistent}" />
-  <tab x="130" y="62" w="56" h="18" text="Options" visible="{CombatTabsVisible}"
+  <tab x="254" y="62" w="56" h="18" text="Options" visible="{CombatTabsVisible}"
        selected="{CombatOptionsSelected}" onclick="{ShowCombatOptions}" />
 
-  <tab x="6"   y="62" w="58" h="18" text="Tracked" visible="{CorpseTabsVisible}"
+  <tab x="6"   y="62" w="100" h="18" text="Tracked Corpses"
+       visible="{CorpseTabsVisible}"
        selected="{CorpseListSelected}" onclick="{ShowCorpseList}" />
-  <tab x="64"  y="62" w="56" h="18" text="Options" visible="{CorpseTabsVisible}"
+  <tab x="110" y="62" w="56" h="18" text="Options" visible="{CorpseTabsVisible}"
        selected="{CorpseOptionsSelected}" onclick="{ShowCorpseOptions}" />
 
-  <tab x="6"   y="62" w="58" h="18" text="Tracked" visible="{PlayerTabsVisible}"
+  <tab x="6"   y="62" w="100" h="18" text="Tracked Players"
+       visible="{PlayerTabsVisible}"
        selected="{PlayerListSelected}" onclick="{ShowPlayerList}" />
-  <tab x="64"  y="62" w="56" h="18" text="Options" visible="{PlayerTabsVisible}"
+  <tab x="110" y="62" w="56" h="18" text="Options" visible="{PlayerTabsVisible}"
        selected="{PlayerOptionsSelected}" onclick="{ShowPlayerOptions}" />
 
   <!-- ==================== Trackers -> Mana ==================== -->
@@ -264,7 +268,7 @@
             onclick="{ClipboardInventoryInfo}" />
     <field x="4" y="32" w="300" h="16" maxlength="128" anchor="left top right"
            text="{InventorySearchText}" onchange="{SetInventorySearchText}" />
-    <list x="0" y="56" w="312" h="196" rowheight="18" selectionband="true"
+    <list x="0" y="56" w="312" h="186" rowheight="18" selectionband="true"
           anchor="left top right"
           selected="{InventorySearchSelectedRow}"
           onchange="{SelectInventorySearchRow}">
@@ -272,7 +276,12 @@
               iconkind="item" onclick="{InventorySearchIconClicked}" />
       <column type="text" width="*" items="{InventorySearchNames}" />
     </list>
-    <label x="4" y="258" text="{InventoryItemText}" anchor="left bottom" />
+    <!-- The original's item info box was multi-line text; there is no
+         multiline label in this markup, so a plain-text list stands in. -->
+    <list x="1" y="248" w="310" h="120" rowheight="14" anchor="left bottom"
+          items="{InventoryItemInfoLines}"
+          selected="{InventoryItemInfoSelectedRow}"
+          onchange="{SelectInventoryItemInfoLine}" />
   </group>
 
   <!-- ========================= Tools -> Tinkering ========================= -->
@@ -436,9 +445,8 @@
               onchange="{ToggleOption}" />
       <column type="text" width="*" items="{OptionCaptions}" />
     </list>
-    <label x="220" y="2" text="Target Output" />
-    <label x="220" y="18" text="Window:" />
-    <field x="274" y="18" w="32" h="16" maxlength="2"
+    <label x="220" y="2" w="90" text="Target Output Window:" />
+    <field x="220" y="36" w="32" h="16" maxlength="2"
            text="{OutputWindowText}" onchange="{SetOutputWindow}" />
   </group>
 

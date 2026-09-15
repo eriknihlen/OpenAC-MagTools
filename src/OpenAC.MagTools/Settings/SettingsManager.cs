@@ -97,24 +97,38 @@ public sealed class SettingsManager
 
     private IReadOnlyList<SettingDescriptor> BuildDescriptors()
     {
+        // Explicit, not reflection-discovered: GetProperties()'s order is an
+        // implementation detail of the runtime's metadata layout, not a
+        // documented contract, so it is not something `/mt opt list`'s output
+        // order should depend on.
+        (string Name, object Group)[] groups =
+        [
+            (nameof(ManaManagement), ManaManagement),
+            (nameof(AutoBuySell), AutoBuySell),
+            (nameof(AutoTradeAdd), AutoTradeAdd),
+            (nameof(AutoTradeAccept), AutoTradeAccept),
+            (nameof(Looting), Looting),
+            (nameof(Tinkering), Tinkering),
+            (nameof(InventoryManagement), InventoryManagement),
+            (nameof(ItemInfoOnIdent), ItemInfoOnIdent),
+            (nameof(CombatTracker), CombatTracker),
+            (nameof(CorpseTracker), CorpseTracker),
+            (nameof(PlayerTracker), PlayerTracker),
+            (nameof(ChatLogger), ChatLogger),
+            (nameof(Misc), Misc),
+            (nameof(Filters), Filters),
+        ];
+
         var descriptors = new List<SettingDescriptor>();
-
-        foreach (PropertyInfo groupProperty in GetType()
-            .GetProperties(BindingFlags.Instance | BindingFlags.Public))
+        foreach ((string groupName, object group) in groups)
         {
-            object? group = groupProperty.GetValue(this);
-            if (group is null || group is SettingsFile || group is ScopedCommandStore)
-                continue;
-            if (group is System.Collections.IEnumerable)
-                continue;
-
             foreach (PropertyInfo settingProperty in group.GetType()
                 .GetProperties(BindingFlags.Instance | BindingFlags.Public))
             {
                 if (settingProperty.GetValue(group) is not ISetting setting)
                     continue;
                 descriptors.Add(new SettingDescriptor(
-                    groupProperty.Name,
+                    groupName,
                     settingProperty.Name,
                     setting));
             }

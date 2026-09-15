@@ -12,6 +12,7 @@ public sealed class InventoryToolsPageViewModel : ListPageViewModel
         ClipboardWornEquipment = static () => { };
         ClipboardInventoryInfo = static () => { };
         SetSearchText = text => SearchText = text;
+        SelectItemInfoLine = index => ItemInfoSelectedRow = index;
     }
 
     public Action ClipboardWornEquipment { get; }
@@ -25,7 +26,16 @@ public sealed class InventoryToolsPageViewModel : ListPageViewModel
     public IReadOnlyList<uint> ResultIcons { get; } = [];
     public IReadOnlyList<string> ResultNames { get; } = [];
 
-    public string ItemText => string.Empty;
+    /// <summary>
+    /// The selected item's info, one line per row. The original's item info
+    /// box was multi-line text; the markup has no multiline label, so this is
+    /// bound to a plain-text <c>&lt;list&gt;</c> instead.
+    /// </summary>
+    public IReadOnlyList<string> ItemInfoLines { get; } = [];
+
+    public int ItemInfoSelectedRow { get; private set; } = -1;
+
+    public Action<int> SelectItemInfoLine { get; }
 }
 
 /// <summary>

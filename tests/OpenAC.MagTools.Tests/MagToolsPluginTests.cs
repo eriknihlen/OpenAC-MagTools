@@ -53,6 +53,30 @@ public sealed class MagToolsPluginTests
 
         Assert.Empty(host.Commands.Handlers);
         Assert.Equal(0, host.Events.TickSubscriberCount);
+        Assert.Empty(host.Ui.Panels);
+    }
+
+    [Fact]
+    public void DisableAndReenableRefiresTheLoginEdge()
+    {
+        var host = new FakeHost { HasUi = false };
+        var plugin = new MagToolsPlugin();
+
+        plugin.Initialize(host);
+        plugin.Enable();
+
+        host.Automation.IsAvailable = true;
+        host.Automation.Character.IsInWorld = true;
+        host.Events.RaiseTick(0.016d);
+
+        plugin.Disable();
+        plugin.Enable();
+        host.Events.RaiseTick(0.016d);
+
+        Assert.Equal(
+            2,
+            host.ChatLines.Count(line =>
+                line == ChatOutput.Prefix + "Plugin now online."));
     }
 
     [Fact]

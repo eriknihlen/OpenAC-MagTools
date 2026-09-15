@@ -59,4 +59,31 @@ plan and [docs/live-results.md](docs/live-results.md) for live verification.
 ## Parity checklist
 
 <!-- One row per Mag-Tools feature, filled in as each slice lands. -->
-_To be filled in as the slices land._
+_Shipped-feature rows are filled in starting with slice P8; see
+[docs/2026-09-16-port-design.md §6](docs/2026-09-16-port-design.md) for the
+slice plan._
+
+### Not applicable (Decal / Win32 only)
+
+The original drove the retail client through Decal hooks and synthetic Win32
+input against its own window. Nothing in OpenAC plays that role, so these
+have no equivalent to port — not a gap, a different architecture. Full detail
+and reasoning: [docs/2026-09-16-port-design.md §7](docs/2026-09-16-port-design.md).
+
+| Mag-Tools feature | Why not applicable | OpenAC-native equivalent |
+|---|---|---|
+| Remove window frame | Win32 style hack against the retail window | client Options → display/fullscreen |
+| Window position (set/del) | `MoveWindow` on the retail HWND | client window placement persistence |
+| No-focus FPS / Max FPS | `Thread.Sleep` inside Decal's render hook | client frame limiter option (file an OpenAC issue if absent) |
+| Maximize/Minimize chat, maximize on login | blind pixel clicks on the retail chat glyph | chat window is a native retained window |
+| `/mt send *`, `/mt click *`, `/mt jump*`, `/mt movement`, `/mt quit`, `/mt client minimize`, `/mt get xy` | synthetic `PostMessage` input | `/mt face`, movement via the navigation automation; jump has no automation surface (recorded) |
+| VCS/VHS/VHUD connectors, Decal proxy | Virindi/Decal presence probes | plugin command bus, markup panels |
+| Tinkering "click yes" by pixel | dialog-button pixel offsets | E-CONFIRM answers the dialog on the wire |
+
+### Dropped settings
+
+Five settings from the original's Options page controlled exactly the Win32
+behaviours above and have no OpenAC-side toggle to bind to, so they are not
+ported: `RemoveWindowFrame`, `WindowPositions`, `NoFocusFPS`, `MaxFPS`,
+`MaximizeChatOnLogin`. The original's Misc → Client tab (the tab that hosted
+these window/FPS controls) is dropped in full for the same reason.

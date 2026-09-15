@@ -71,4 +71,19 @@ public sealed class SessionContext
         WorldName = string.Empty;
         AccountName = string.Empty;
     }
+
+    /// <summary>
+    /// Clears the edge state without raising <see cref="Logoff"/>. The plugin
+    /// calls this from <c>Disable()</c> so a Disable/Enable cycle (a plugin
+    /// reload with no underlying reconnect) polls from a clean slate and
+    /// re-fires <see cref="LoginComplete"/> instead of staying silent because
+    /// <see cref="IsInWorld"/> was already true.
+    /// </summary>
+    public void Reset()
+    {
+        IsInWorld = false;
+        CharacterName = string.Empty;
+        WorldName = string.Empty;
+        AccountName = string.Empty;
+    }
 }

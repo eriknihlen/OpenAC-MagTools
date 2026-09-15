@@ -23,7 +23,17 @@ public sealed class OptionListViewModel
         Checks = ReadChecks();
         Toggle = ToggleRow;
         Select = index => SelectedRow = index;
+
+        // A setting can change from outside a click on this list's own
+        // rows — most visibly the parent/child cascade (turning a child on
+        // turns its parent on too), but also /mt opt set and a settled
+        // reload. Without this, Checks stays a stale snapshot from
+        // construction until something happens to call Refresh() again.
+        foreach (ISetting setting in _settings)
+            setting.Changed += OnSettingChanged;
     }
+
+    private void OnSettingChanged(ISetting setting) => Refresh();
 
     public IReadOnlyList<string> Captions { get; }
 

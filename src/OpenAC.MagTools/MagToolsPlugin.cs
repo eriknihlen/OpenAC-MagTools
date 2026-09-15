@@ -23,6 +23,8 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
     private SessionContext? _session;
     private Action<double>? _tick;
     private IDisposable? _commandRegistration;
+    private IDisposable? _mainPanelRegistration;
+    private IDisposable? _hudPanelRegistration;
 
     public void Initialize(IPluginHost host)
     {
@@ -33,7 +35,7 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _settingsFile = new SettingsFile(host.Storage);
         _settings = new SettingsManager(_settingsFile);
         _main = new MainViewModel(_settings);
-        _hud = new HudViewModel();
+        _hud = new HudViewModel(host);
         _router = new MtCommandRouter(host, _chat, _settings);
         _session = new SessionContext(host, _chat);
 
@@ -55,7 +57,7 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
 
         if (_host.HasUi)
         {
-            _host.Ui.AddPanel(
+            _mainPanelRegistration = _host.Ui.RegisterPanel(
                 new PluginPanelDescriptor("main", "Mag-Tools")
                 {
                     IconText = "MT",
@@ -65,7 +67,7 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
                 Path.Combine(directory, "magtools.xml"),
                 _main);
 
-            _host.Ui.AddPanel(
+            _hudPanelRegistration = _host.Ui.RegisterPanel(
                 new PluginPanelDescriptor("hud", "Mag-Tools HUD")
                 {
                     IconText = "MH",
@@ -96,18 +98,35 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _commandRegistration?.Dispose();
         _commandRegistration = null;
 
+        _mainPanelRegistration?.Dispose();
+        _mainPanelRegistration = null;
+        _hudPanelRegistration?.Dispose();
+        _hudPanelRegistration = null;
+
         _scheduler?.Dispose();
         _scheduler = null;
 
         // Anything the debounce still owes is written before we go.
         _settingsFile?.Flush();
 
+        // The session survives Initialize (it is built once), so without
+        // this an Enable that follows a Disable would still see the previous
+        // in-world state and never re-fire the login edge.
+        _session?.Reset();
+
         _host?.Log.Info("Mag-Tools disabled");
     }
 
     private void OnTick(double elapsedSeconds)
     {
-        _session?.Poll();
-        _settingsFile?.Tick(elapsedSeconds);
+        try
+        {
+            _session?.Poll();
+            _settingsFile?.Tick(elapsedSeconds);
+        }
+        catch (Exception exception)
+        {
+            _chat?.WriteException(exception);
+        }
     }
 }

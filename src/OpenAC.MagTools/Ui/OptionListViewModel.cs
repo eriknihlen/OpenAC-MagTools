@@ -11,9 +11,10 @@ namespace OpenAC.MagTools.Ui;
 /// Check cells are not two-way in the markup. The host reports the row index
 /// and this class flips the setting itself and rebuilds the bound list.
 /// </remarks>
-public sealed class OptionListViewModel
+public sealed class OptionListViewModel : IDisposable
 {
     private readonly IReadOnlyList<ISetting> _settings;
+    private bool _disposed;
 
     public OptionListViewModel(IReadOnlyList<ISetting> settings)
     {
@@ -31,6 +32,23 @@ public sealed class OptionListViewModel
         // construction until something happens to call Refresh() again.
         foreach (ISetting setting in _settings)
             setting.Changed += OnSettingChanged;
+    }
+
+    /// <summary>
+    /// Unsubscribes from every setting's <see cref="ISetting.Changed"/> event.
+    /// Without this, a view-model that outlives its bound page (or is rebuilt
+    /// on every panel mount) leaks a subscription per setting per instance,
+    /// each of which keeps firing <see cref="Refresh"/> for a list nobody
+    /// reads anymore.
+    /// </summary>
+    public void Dispose()
+    {
+        if (_disposed)
+            return;
+        _disposed = true;
+
+        foreach (ISetting setting in _settings)
+            setting.Changed -= OnSettingChanged;
     }
 
     private void OnSettingChanged(ISetting setting) => Refresh();

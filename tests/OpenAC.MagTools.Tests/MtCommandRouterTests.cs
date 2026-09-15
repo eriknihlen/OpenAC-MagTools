@@ -410,7 +410,7 @@ public sealed class MtCommandRouterTests
     [Fact]
     public void CastAcceptsASpellIdAndASpellName()
     {
-        _host.Automation.Spells.KnownSelfBuffs =
+        _host.Automation.Spells.All =
             [FakeSpellCatalog.Spell(1234u, "Strength Self VI")];
 
         Assert.True(_router.Execute("cast 1234"));
@@ -423,7 +423,7 @@ public sealed class MtCommandRouterTests
     [Fact]
     public void CastOnATargetResolvesTheTargetFromTheLandscape()
     {
-        _host.Automation.Spells.KnownAttackSpells =
+        _host.Automation.Spells.All =
             [FakeSpellCatalog.Spell(99u, "Flame Bolt VI")];
         _host.Automation.Objects.Objects.Add(
             FakeObjects.Landscape(40u, "Drudge", PluginObjectClass.Monster, 8d));
@@ -437,9 +437,7 @@ public sealed class MtCommandRouterTests
     {
         Assert.False(_router.Execute("cast fireball"));
         Assert.Equal(
-            Line(
-                "No known spell named: fireball "
-                + "(full-table lookup arrives with the spell catalog API)"),
+            Line("No spell named: fireball"),
             Assert.Single(Chat));
     }
 
@@ -451,12 +449,13 @@ public sealed class MtCommandRouterTests
     }
 
     [Fact]
-    public void DumpSpellsWritesTheKnownListsToStorage()
+    public void DumpSpellsWritesTheFullSpellTableToStorage()
     {
-        _host.Automation.Spells.KnownSelfBuffs =
-            [FakeSpellCatalog.Spell(1u, "Strength Self VI")];
-        _host.Automation.Spells.KnownAttackSpells =
-            [FakeSpellCatalog.Spell(2u, "Flame Bolt VI")];
+        _host.Automation.Spells.All =
+        [
+            FakeSpellCatalog.Spell(1u, "Strength Self VI"),
+            FakeSpellCatalog.Spell(2u, "Flame Bolt VI"),
+        ];
 
         Assert.True(_router.Execute("dumpspells"));
 
@@ -465,9 +464,7 @@ public sealed class MtCommandRouterTests
         Assert.Contains("1,Strength Self VI", csv, StringComparison.Ordinal);
         Assert.Contains("2,Flame Bolt VI", csv, StringComparison.Ordinal);
         Assert.Equal(
-            Line(
-                "Spell dump written (known spells only until the spell "
-                + "catalog API lands): mt spelldump.txt"),
+            Line("Spell dump written: mt spelldump.txt"),
             Assert.Single(Chat));
     }
 

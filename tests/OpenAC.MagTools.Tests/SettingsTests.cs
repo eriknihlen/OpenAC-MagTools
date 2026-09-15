@@ -420,6 +420,27 @@ public sealed class OptionListViewModelTests
 
         Assert.Equal([true, true], options.Checks);
     }
+
+    [Fact]
+    public void DisposeUnsubscribesFromEverySetting()
+    {
+        var settings = new SettingsManager(new SettingsFile(new MemoryStorage()));
+        settings.ItemInfoOnIdent.Enabled.Value = false;
+
+        var options = new OptionListViewModel(
+        [
+            settings.ItemInfoOnIdent.Enabled,
+            settings.ItemInfoOnIdent.AutoClipboard,
+        ]);
+
+        options.Dispose();
+
+        // Without the subscription, Checks stays the snapshot from before
+        // Dispose — a settings change no longer reaches a disposed list.
+        settings.ItemInfoOnIdent.AutoClipboard.Value = true;
+
+        Assert.Equal([false, false], options.Checks);
+    }
 }
 
 public sealed class SettingsScopeTests

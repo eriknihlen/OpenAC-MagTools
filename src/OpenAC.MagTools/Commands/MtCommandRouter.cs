@@ -262,12 +262,7 @@ public sealed class MtCommandRouter
 
         if (!TryResolveSpell(spellText, partial, out uint spellId))
         {
-            // TODO(E-SPELLS): ISpellCatalog.TryFindByName would search the
-            // whole spell table; today only the known lists are reachable, so
-            // this failure may just mean the spell isn't cast/known yet.
-            _chat.Write(
-                "No known spell named: " + spellText
-                + " (full-table lookup arrives with the spell catalog API)");
+            _chat.Write("No spell named: " + spellText);
             return false;
         }
 
@@ -571,39 +566,23 @@ public sealed class MtCommandRouter
             return false;
         }
 
-        // TODO(E-SPELLS): ISpellCatalog has no full-table enumeration yet;
-        // only the known-spell lists are reachable from a plugin.
-        var seen = new HashSet<uint>();
         var builder = new StringBuilder();
         builder.AppendLine("SpellId,Name,Family,Tier,Difficulty,ManaCost,School");
 
-        ISpellCatalog spells = _host.Automation.Spells;
-        foreach (IReadOnlyList<PluginSpellInfo> list in new[]
+        foreach (PluginSpellInfo spell in _host.Automation.Spells.All)
         {
-            spells.KnownSelfBuffs,
-            spells.KnownAttackSpells,
-            spells.KnownCombatSpells,
-        })
-        {
-            foreach (PluginSpellInfo spell in list)
-            {
-                if (!seen.Add(spell.SpellId))
-                    continue;
-                builder.Append(spell.SpellId.ToString(CultureInfo.InvariantCulture))
-                    .Append(',').Append(Csv(spell.Name))
-                    .Append(',').Append(spell.Family.ToString(CultureInfo.InvariantCulture))
-                    .Append(',').Append(spell.Tier.ToString(CultureInfo.InvariantCulture))
-                    .Append(',').Append(spell.Difficulty.ToString(CultureInfo.InvariantCulture))
-                    .Append(',').Append(spell.ManaCost.ToString(CultureInfo.InvariantCulture))
-                    .Append(',').Append(spell.School.ToString(CultureInfo.InvariantCulture))
-                    .AppendLine();
-            }
+            builder.Append(spell.SpellId.ToString(CultureInfo.InvariantCulture))
+                .Append(',').Append(Csv(spell.Name))
+                .Append(',').Append(spell.Family.ToString(CultureInfo.InvariantCulture))
+                .Append(',').Append(spell.Tier.ToString(CultureInfo.InvariantCulture))
+                .Append(',').Append(spell.Difficulty.ToString(CultureInfo.InvariantCulture))
+                .Append(',').Append(spell.ManaCost.ToString(CultureInfo.InvariantCulture))
+                .Append(',').Append(spell.School.ToString(CultureInfo.InvariantCulture))
+                .AppendLine();
         }
 
         _host.Storage.WriteText(SpellDumpStorageKey, builder.ToString());
-        _chat.Write(
-            "Spell dump written (known spells only until the spell catalog "
-            + "API lands): " + SpellDumpStorageKey);
+        _chat.Write("Spell dump written: " + SpellDumpStorageKey);
         return true;
 
         static string Csv(string value)
@@ -868,26 +847,10 @@ public sealed class MtCommandRouter
                 out spellId))
             return true;
 
-        // TODO(E-SPELLS): ISpellCatalog.TryFindByName would search the whole
-        // spell table; today only the known lists are reachable.
-        ISpellCatalog spells = _host.Automation.Spells;
-        foreach (bool substring in partial ? new[] { false, true } : new[] { false })
+        if (_host.Automation.Spells.TryFindByName(text, partial, out PluginSpellInfo spell))
         {
-            foreach (IReadOnlyList<PluginSpellInfo> list in new[]
-            {
-                spells.KnownSelfBuffs,
-                spells.KnownAttackSpells,
-                spells.KnownCombatSpells,
-            })
-            {
-                foreach (PluginSpellInfo spell in list)
-                {
-                    if (!NameMatches(spell.Name, text, substring))
-                        continue;
-                    spellId = spell.SpellId;
-                    return true;
-                }
-            }
+            spellId = spell.SpellId;
+            return true;
         }
 
         spellId = 0;

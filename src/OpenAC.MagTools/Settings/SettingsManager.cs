@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Text.RegularExpressions;
 
 namespace OpenAC.MagTools.Settings;
@@ -97,42 +96,114 @@ public sealed class SettingsManager
 
     private IReadOnlyList<SettingDescriptor> BuildDescriptors()
     {
-        // Explicit, not reflection-discovered: GetProperties()'s order is an
-        // implementation detail of the runtime's metadata layout, not a
-        // documented contract, so it is not something `/mt opt list`'s output
-        // order should depend on.
-        (string Name, object Group)[] groups =
-        [
-            (nameof(ManaManagement), ManaManagement),
-            (nameof(AutoBuySell), AutoBuySell),
-            (nameof(AutoTradeAdd), AutoTradeAdd),
-            (nameof(AutoTradeAccept), AutoTradeAccept),
-            (nameof(Looting), Looting),
-            (nameof(Tinkering), Tinkering),
-            (nameof(InventoryManagement), InventoryManagement),
-            (nameof(ItemInfoOnIdent), ItemInfoOnIdent),
-            (nameof(CombatTracker), CombatTracker),
-            (nameof(CorpseTracker), CorpseTracker),
-            (nameof(PlayerTracker), PlayerTracker),
-            (nameof(ChatLogger), ChatLogger),
-            (nameof(Misc), Misc),
-            (nameof(Filters), Filters),
-        ];
-
+        // Fully explicit — both the group order and, within each group, the
+        // field order — because GetProperties()'s order is an implementation
+        // detail of the runtime's metadata layout, not a documented contract,
+        // and `/mt opt list`'s output order should not depend on it.
         var descriptors = new List<SettingDescriptor>();
-        foreach ((string groupName, object group) in groups)
+
+        void Add(string groupName, params (string FieldName, ISetting Setting)[] fields)
         {
-            foreach (PropertyInfo settingProperty in group.GetType()
-                .GetProperties(BindingFlags.Instance | BindingFlags.Public))
-            {
-                if (settingProperty.GetValue(group) is not ISetting setting)
-                    continue;
-                descriptors.Add(new SettingDescriptor(
-                    groupName,
-                    settingProperty.Name,
-                    setting));
-            }
+            foreach ((string fieldName, ISetting setting) in fields)
+                descriptors.Add(new SettingDescriptor(groupName, fieldName, setting));
         }
+
+        Add(nameof(ManaManagement),
+            (nameof(ManaManagementSettings.AutoRecharge), ManaManagement.AutoRecharge));
+
+        Add(nameof(AutoBuySell),
+            (nameof(AutoBuySellSettings.Enabled), AutoBuySell.Enabled),
+            (nameof(AutoBuySellSettings.TestMode), AutoBuySell.TestMode));
+
+        Add(nameof(AutoTradeAdd),
+            (nameof(AutoTradeAddSettings.Enabled), AutoTradeAdd.Enabled));
+
+        Add(nameof(AutoTradeAccept),
+            (nameof(AutoTradeAcceptSettings.Enabled), AutoTradeAccept.Enabled));
+
+        Add(nameof(Looting),
+            (nameof(LootingSettings.AutoLootChests), Looting.AutoLootChests),
+            (nameof(LootingSettings.AutoLootCorpses), Looting.AutoLootCorpses),
+            (nameof(LootingSettings.AutoLootMyCorpses), Looting.AutoLootMyCorpses),
+            (nameof(LootingSettings.LootSalvage), Looting.LootSalvage));
+
+        Add(nameof(Tinkering),
+            (nameof(TinkeringSettings.AutoClickYes), Tinkering.AutoClickYes));
+
+        Add(nameof(InventoryManagement),
+            (nameof(InventoryManagementSettings.InventoryLogger), InventoryManagement.InventoryLogger),
+            (nameof(InventoryManagementSettings.AetheriaRevealer), InventoryManagement.AetheriaRevealer),
+            (nameof(InventoryManagementSettings.HeartCarver), InventoryManagement.HeartCarver),
+            (nameof(InventoryManagementSettings.ShatteredKeyFixer), InventoryManagement.ShatteredKeyFixer),
+            (nameof(InventoryManagementSettings.KeyRinger), InventoryManagement.KeyRinger),
+            (nameof(InventoryManagementSettings.KeyDeringer), InventoryManagement.KeyDeringer));
+
+        Add(nameof(ItemInfoOnIdent),
+            (nameof(ItemInfoOnIdentSettings.Enabled), ItemInfoOnIdent.Enabled),
+            (nameof(ItemInfoOnIdentSettings.ShowBuffedValues), ItemInfoOnIdent.ShowBuffedValues),
+            (nameof(ItemInfoOnIdentSettings.ShowValueAndBurden), ItemInfoOnIdent.ShowValueAndBurden),
+            (nameof(ItemInfoOnIdentSettings.LeftClickIdent), ItemInfoOnIdent.LeftClickIdent),
+            (nameof(ItemInfoOnIdentSettings.AutoClipboard), ItemInfoOnIdent.AutoClipboard));
+
+        Add(nameof(CombatTracker),
+            (nameof(CombatTrackerSettings.Persistent), CombatTracker.Persistent),
+            (nameof(CombatTrackerSettings.ExportOnLogOff), CombatTracker.ExportOnLogOff),
+            (nameof(CombatTrackerSettings.SortAlphabetically), CombatTracker.SortAlphabetically));
+
+        Add(nameof(CorpseTracker),
+            (nameof(CorpseTrackerSettings.Enabled), CorpseTracker.Enabled),
+            (nameof(CorpseTrackerSettings.Persistent), CorpseTracker.Persistent),
+            (nameof(CorpseTrackerSettings.TrackAllCorpses), CorpseTracker.TrackAllCorpses),
+            (nameof(CorpseTrackerSettings.TrackFellowCorpses), CorpseTracker.TrackFellowCorpses),
+            (nameof(CorpseTrackerSettings.TrackPermittedCorpses), CorpseTracker.TrackPermittedCorpses));
+
+        Add(nameof(PlayerTracker),
+            (nameof(PlayerTrackerSettings.Enabled), PlayerTracker.Enabled),
+            (nameof(PlayerTrackerSettings.Persistent), PlayerTracker.Persistent));
+
+        // Group1/Group2 are nested settings objects, not ISetting themselves,
+        // so (as with the old reflection pass) only Persistent is reachable
+        // as a top-level Group.Field setting here.
+        Add(nameof(ChatLogger),
+            (nameof(ChatLoggerSettings.Persistent), ChatLogger.Persistent));
+
+        Add(nameof(Misc),
+            (nameof(MiscSettings.OpenMainPackOnLogin), Misc.OpenMainPackOnLogin),
+            (nameof(MiscSettings.LogOutOnDeath), Misc.LogOutOnDeath),
+            (nameof(MiscSettings.DebuggingEnabled), Misc.DebuggingEnabled),
+            (nameof(MiscSettings.VerboseDebuggingEnabled), Misc.VerboseDebuggingEnabled),
+            (nameof(MiscSettings.OutputTargetWindow), Misc.OutputTargetWindow));
+
+        Add(nameof(Filters),
+            (nameof(FilterSettings.AttackEvades), Filters.AttackEvades),
+            (nameof(FilterSettings.DefenseEvades), Filters.DefenseEvades),
+            (nameof(FilterSettings.AttackResists), Filters.AttackResists),
+            (nameof(FilterSettings.DefenseResists), Filters.DefenseResists),
+            (nameof(FilterSettings.NPKFails), Filters.NPKFails),
+            (nameof(FilterSettings.DirtyFighting), Filters.DirtyFighting),
+            (nameof(FilterSettings.MonsterDeaths), Filters.MonsterDeaths),
+            (nameof(FilterSettings.SpellCastingMine), Filters.SpellCastingMine),
+            (nameof(FilterSettings.SpellCastingOthers), Filters.SpellCastingOthers),
+            (nameof(FilterSettings.SpellCastFizzles), Filters.SpellCastFizzles),
+            (nameof(FilterSettings.CompUsage), Filters.CompUsage),
+            (nameof(FilterSettings.SpellExpires), Filters.SpellExpires),
+            (nameof(FilterSettings.HealingKitSuccess), Filters.HealingKitSuccess),
+            (nameof(FilterSettings.HealingKitFail), Filters.HealingKitFail),
+            (nameof(FilterSettings.Salvaging), Filters.Salvaging),
+            (nameof(FilterSettings.SalvagingFails), Filters.SalvagingFails),
+            (nameof(FilterSettings.AuraOfCraftman), Filters.AuraOfCraftman),
+            (nameof(FilterSettings.ManaStoneUsage), Filters.ManaStoneUsage),
+            (nameof(FilterSettings.TradeBuffBotSpam), Filters.TradeBuffBotSpam),
+            (nameof(FilterSettings.FailedAssess), Filters.FailedAssess),
+            (nameof(FilterSettings.KillTaskComplete), Filters.KillTaskComplete),
+            (nameof(FilterSettings.VendorTells), Filters.VendorTells),
+            (nameof(FilterSettings.MonsterTell), Filters.MonsterTell),
+            (nameof(FilterSettings.NpcChatter), Filters.NpcChatter),
+            (nameof(FilterSettings.MasterArbitratorSpam), Filters.MasterArbitratorSpam),
+            (nameof(FilterSettings.AllMasterArbitratorChat), Filters.AllMasterArbitratorChat),
+            (nameof(FilterSettings.StatusTextYoureTooBusy), Filters.StatusTextYoureTooBusy),
+            (nameof(FilterSettings.StatusTextCasting), Filters.StatusTextCasting),
+            (nameof(FilterSettings.StatusTextAll), Filters.StatusTextAll));
 
         return descriptors;
     }

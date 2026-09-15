@@ -1,3 +1,4 @@
+using System.Xml.Linq;
 using OpenAC.MagTools.Settings;
 using OpenAC.MagTools.Tests.Fakes;
 using OpenAC.MagTools.Ui;
@@ -208,6 +209,34 @@ public sealed class SettingsFileTests
             ["Main:10,10", "Hud:20,20"],
             final.GetChildrenInnerTexts("Misc/WindowPositions"));
         Assert.True(final.GetSetting("Filters/AttackEvades", false));
+    }
+
+    [Fact]
+    public void ANodeFetchedBeforeATickDrivenFlushStillWritesThroughAfterIt()
+    {
+        // The P1 review finding: Flush used to reload storage into a brand
+        // new XDocument and swap it in wholesale, so any XElement a caller
+        // held from GetNode (ScopedCommandStore does this) was silently
+        // detached — later writes to it never reached storage again. Flush
+        // must instead merge the reload into the existing document.
+        var storage = new MemoryStorage();
+        var file = new SettingsFile(storage);
+
+        XElement node = file.GetNode("ChatLogger/Group1/Custom", createIfMissing: true)!;
+        node.Value = "first";
+        file.MarkDirty("ChatLogger/Group1/Custom");
+
+        file.Tick(SettingsFile.SaveDebounce.TotalSeconds);
+        Assert.Equal(1, file.SaveCount);
+        Assert.True(node.Parent is not null, "the node must still be attached");
+
+        // Write through the SAME element reference after the flush.
+        node.Value = "second";
+        file.MarkDirty("ChatLogger/Group1/Custom");
+        file.Tick(SettingsFile.SaveDebounce.TotalSeconds);
+
+        var reloaded = new SettingsFile(storage);
+        Assert.Equal("second", reloaded.GetSetting("ChatLogger/Group1/Custom", string.Empty));
     }
 }
 

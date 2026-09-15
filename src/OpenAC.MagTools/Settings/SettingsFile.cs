@@ -139,6 +139,16 @@ public sealed class SettingsFile
         => createIfMissing ? CreateElement(xpath) : FindElement(xpath);
 
     /// <summary>
+    /// Removes the node at <paramref name="xpath"/>, if present, and records
+    /// the path as dirty so the removal survives the next <see cref="Flush"/>.
+    /// </summary>
+    public void RemoveNode(string xpath)
+    {
+        FindElement(xpath)?.Remove();
+        MarkDirty(xpath);
+    }
+
+    /// <summary>
     /// Records that the subtree at <paramref name="xpath"/> changed and needs
     /// a write. <see cref="Flush"/> re-reads storage and grafts only the
     /// recorded paths onto it, so a caller that mutates an
@@ -171,11 +181,17 @@ public sealed class SettingsFile
     /// Writes the document now if anything is pending.
     /// </summary>
     /// <remarks>
-    /// Reloads storage first and replays only the paths this instance
-    /// actually changed onto that fresh copy, so a concurrent write from
-    /// another <see cref="SettingsFile"/> instance over the same storage (two
-    /// plugin sessions, or a settings-panel session and a headless bot) is
-    /// not clobbered by an in-memory snapshot that predates it.
+    /// Reloads storage first and merges the reloaded content into the
+    /// existing <see cref="_document"/> — never the other way around — so an
+    /// <see cref="XElement"/> a caller is holding (from <see cref="GetNode"/>,
+    /// typically) stays attached to the live document across a flush. Only
+    /// the subtrees this instance did NOT touch since the last flush are
+    /// synced from the reloaded copy; every path in <see cref="_dirtyPaths"/>
+    /// is left exactly as this instance already has it, so a concurrent write
+    /// from another <see cref="SettingsFile"/> instance over the same storage
+    /// (two plugin sessions, or a settings-panel session and a headless bot)
+    /// is picked up everywhere except where the two disagree, and this
+    /// instance's own pending changes always win there.
     /// </remarks>
     public void Flush()
     {
@@ -193,9 +209,9 @@ public sealed class SettingsFile
         if (_dirtyPaths.Count > 0)
         {
             XDocument fresh = LoadDocument();
-            foreach (string xpath in _dirtyPaths)
-                GraftPath(fresh, xpath, _document);
-            _document = fresh;
+            XElement? freshRoot = fresh.Root;
+            if (freshRoot is not null)
+                MergeNonDirty(Root, freshRoot, string.Empty);
             _dirtyPaths.Clear();
         }
 
@@ -266,56 +282,128 @@ public sealed class SettingsFile
     }
 
     /// <summary>
-    /// Copies the subtree at <paramref name="xpath"/> from
-    /// <paramref name="sourceDocument"/> onto <paramref name="destinationDocument"/>,
-    /// creating ancestor elements as needed and replacing anything already
-    /// there at that path. A path with nothing at it in the source removes
-    /// the destination's node instead (the setter that put it there in
-    /// <paramref name="sourceDocument"/> is the only place a node is ever
-    /// deleted, and that deletion has to survive the graft too).
+    /// Merges <paramref name="source"/> (freshly reloaded from storage) into
+    /// <paramref name="destination"/> (the live, possibly-referenced
+    /// <see cref="_document"/> subtree at <paramref name="currentPath"/>),
+    /// leaving every path this instance still owes a write for untouched.
     /// </summary>
-    private static void GraftPath(
-        XDocument destinationDocument,
-        string xpath,
-        XDocument sourceDocument)
+    /// <remarks>
+    /// A path in <see cref="_dirtyPaths"/> is a whole-subtree claim: whichever
+    /// setter recorded it (<see cref="PutSetting{T}"/>,
+    /// <see cref="SetNodeChildren(string, string, IReadOnlyList{string})"/>,
+    /// <see cref="RemoveNode"/>, or a direct <see cref="MarkDirty"/> after
+    /// mutating a <see cref="GetNode"/> result) always rewrites that node's
+    /// entire children, so same-named siblings never get individually dirtied
+    /// — only their shared parent path is. That means an exact-path match can
+    /// stop the recursion outright and only an ancestor of a dirty path needs
+    /// to recurse into its children instead of a wholesale sync.
+    /// </remarks>
+    private void MergeNonDirty(XElement destination, XElement source, string currentPath)
     {
-        XElement sourceRoot = sourceDocument.Root
-            ?? throw new InvalidOperationException(
-                "The settings document has no root.");
-        XElement destinationRoot = destinationDocument.Root
-            ?? throw new InvalidOperationException(
-                "The settings document has no root.");
+        if (_dirtyPaths.Contains(currentPath))
+            return;
 
-        XElement? sourceElement = FindElementIn(sourceRoot, xpath);
-
-        string[] segments = SplitPath(xpath);
-        XElement parent = destinationRoot;
-        for (int index = 0; index < segments.Length - 1; index++)
+        if (!HasDirtyDescendant(currentPath))
         {
-            string segment = segments[index];
-            XElement? child = parent.Element(segment);
-            if (child is null)
-            {
-                child = new XElement(segment);
-                parent.Add(child);
-            }
-
-            parent = child;
-        }
-
-        string leaf = segments[^1];
-        XElement? existing = parent.Element(leaf);
-        if (sourceElement is null)
-        {
-            existing?.Remove();
+            SyncChildrenWholesale(destination, source);
             return;
         }
 
-        var clone = new XElement(sourceElement);
-        if (existing is not null)
-            existing.ReplaceWith(clone);
-        else
-            parent.Add(clone);
+        // An ancestor of a dirty path: recurse per distinctly-named child so
+        // the dirty branch is skipped while its siblings still pick up the
+        // reloaded content.
+        foreach (string name in DistinctChildNames(destination, source))
+        {
+            string childPath = currentPath.Length == 0 ? name : currentPath + "/" + name;
+            XElement? sourceChild = source.Element(name);
+
+            if (_dirtyPaths.Contains(childPath))
+                continue;
+
+            if (!HasDirtyDescendant(childPath))
+            {
+                XElement? destinationChild = destination.Element(name);
+                if (sourceChild is null)
+                {
+                    destinationChild?.Remove();
+                    continue;
+                }
+
+                var clone = new XElement(sourceChild);
+                if (destinationChild is not null)
+                    destinationChild.ReplaceWith(clone);
+                else
+                    destination.Add(clone);
+                continue;
+            }
+
+            // This child is itself an ancestor of a (deeper) dirty path: keep
+            // its element identity and recurse into it, creating it locally
+            // first if only the reloaded copy has it so far.
+            XElement destinationGrandchild = destination.Element(name)
+                ?? AddNewChild(destination, name);
+            if (sourceChild is not null)
+                MergeNonDirty(destinationGrandchild, sourceChild, childPath);
+        }
+    }
+
+    /// <summary>
+    /// True when some dirty path lies strictly beneath <paramref name="path"/>
+    /// (every dirty path counts as beneath the root, since none is empty).
+    /// </summary>
+    private bool HasDirtyDescendant(string path)
+    {
+        if (path.Length == 0)
+            return _dirtyPaths.Count > 0;
+
+        string prefix = path + "/";
+        foreach (string dirtyPath in _dirtyPaths)
+        {
+            if (dirtyPath.StartsWith(prefix, StringComparison.Ordinal))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static XElement AddNewChild(XElement parent, string name)
+    {
+        var child = new XElement(name);
+        parent.Add(child);
+        return child;
+    }
+
+    private static IEnumerable<string> DistinctChildNames(XElement a, XElement b)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (XElement child in a.Elements())
+        {
+            if (seen.Add(child.Name.LocalName))
+                yield return child.Name.LocalName;
+        }
+
+        foreach (XElement child in b.Elements())
+        {
+            if (seen.Add(child.Name.LocalName))
+                yield return child.Name.LocalName;
+        }
+    }
+
+    /// <summary>
+    /// Replaces every child of <paramref name="destination"/> with a clone of
+    /// <paramref name="source"/>'s children. Safe only when no path under
+    /// this subtree is dirty, so there is nothing to preserve identity-wise.
+    /// </summary>
+    private static void SyncChildrenWholesale(XElement destination, XElement source)
+    {
+        if (XNode.DeepEquals(destination, source))
+            return;
+
+        destination.RemoveNodes();
+        foreach (XElement child in source.Elements())
+            destination.Add(new XElement(child));
+        foreach (XAttribute attribute in source.Attributes())
+            destination.SetAttributeValue(attribute.Name, attribute.Value);
     }
 
     private static string[] SplitPath(string xpath)

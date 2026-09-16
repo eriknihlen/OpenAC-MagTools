@@ -44,7 +44,9 @@ internal static class ChatFixtures
     /// <summary>
     /// Local (or, with <paramref name="ranged"/>, shouted) speech.
     /// <paramref name="mine"/> mirrors <c>ChatLog.OnLocalSpeech</c>'s own
-    /// echo: <c>Sender</c> becomes "You" and <c>SenderObjectId</c> is 0.
+    /// echo: only <c>Sender</c> becomes "You" — <c>SenderObjectId</c> still
+    /// carries the real speaker guid either way (<c>OnLocalSpeech</c> never
+    /// zeroes it, even for the local player's own echo).
     /// </summary>
     public static PluginChatMessage Say(
         this FakeHost host,
@@ -57,7 +59,7 @@ internal static class ChatFixtures
             text,
             kind: (int)(ranged ? ChatMessageKind.RangedSpeech : ChatMessageKind.LocalSpeech),
             sender: mine ? "You" : from,
-            senderObjectId: mine ? 0u : fromObjectId);
+            senderObjectId: fromObjectId);
 
     /// <summary>
     /// A named-channel line. A received broadcast never carries a sender

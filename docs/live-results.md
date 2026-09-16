@@ -68,27 +68,107 @@ the graphical primary session per the design doc's live-gate protocol (§8).
 | One-touch heal real heal | 2026-09-16 | same | -- | `MagToolsPlugin.cs:199` registers the One Touch Heal hotkey with a `default` (unbound) chord, there is no `/mt` verb for it, and the probe can neither type into the rebind UI nor inject a plugin hotkey chord | PENDING (hotkey cannot be bound or fired from a route) |
 | Log out on death | 2026-09-16 | same | -- | not attempted deliberately: the only ways to kill +Acdream on this server (dropping its health to zero, or letting a monster finish it) cost the character its vitae and dropped items. Needs the owner's go-ahead | PENDING (destructive; owner approval needed) |
 
+## Round 3 (A7 host e83d3a7 / plugin e5ea4a8)
+
+Run 2026-09-16 evening against the A7 host build with the D1/D2/D3 host
+fixes and the P9 plugin fixes deployed. Routes `r1`-`r15`, logs and
+screenshots in the session scratchpad under `live-r3/`. Partner: the
+headless `+Horan` bot (relaunched mid-round; see the environment note at
+the end of this section).
+
+| Feature | Steps | Observed | Verdict |
+|---|---|---|---|
+| On-Login / On-Login-Complete / Periodic -- CHARACTER scope | r1/r2: the three lists seeded under `_testaccount_sawato/_x002B_Acdream`, two logins | all three dispatch: `<{Mag-Tools}>: Filters.AttackEvades = True` (On-Login) then `Misc.OpenMainPackOnLogin = True` (On-Login-Complete) one tick later, and `ManaManagement.AutoRecharge = True` on each whole minute (three lines, one minute apart, in one session). The A7 `ICharacterInfo.Name` fix closes defect #1's headline symptom | PASS |
+| Chat logger file | r1/r7: `ChatLogger/Persistent` + `Group1/Area` on, `/say ChatLoggerProbe round3 alpha`, later `/say buffs here -t-` | `sawato/+Acdream.ChatLogger.txt` contains `260916205941,1,ChatLoggerProbe round3 alpha` and `260916212053,1,buffs here -t-` -- written, non-empty, character-prefixed name | PASS |
+| Inventory logger file | r1 (no file -> the request-id branch), r2/r3 (file exists -> immediate dump), ~60-130 s in world, graceful exit | the file is written every session with the right name and is always `<ArrayOfMyWorldObject />`, including the session where `Start` dumps immediately while the pack is visibly full. No `Requesting id information...` line in any session | FAIL -> defect 8 |
+| Inventory export to clipboard | r3/r4: Tools -> Inventory, `Clipboard Worn Equipment` then `Clipboard Inventory Info`; clipboard sampled every 2 s from a second process and read after exit | Worn Equipment prints both messages and the clipboard IS written (a pre-set sentinel disappears at the click) -- with an EMPTY string, in r3 and again in r4 with five equipped items listed in the Mana tab. Inventory Info prints only `Copying...` and never completes (no completion line 130 s later). So the host clipboard write works (D3 is fixed); the exporter selects nothing | FAIL -> defects 9, 10 |
+| Auto looting (corpse) | r9 with MossTank: `/vt loot load MTGateAll`, `@create drudgeprowler`, kill, then `/mt selectp corpse` + `input press UseSelected`, and afterwards `/mt uselp corpse` | the CLIENT's own use path opens the corpse (`Corpse of Drudge Prowler` container window) and the looter runs against it: `+(KeepAll) Bracelet`, `+(KeepAll) Flaming Stick, (-1.0/0 )`, `+(KeepAll) Atlatl, (-1.0 )`. The PLUGIN path resolves the corpse, prints no refusal (host returned `Started`) and opens nothing. Item movement into the pack was not observed -- the pack was full | PARTIAL (looter reached via the client path; plugin-issued use still dead) |
+| Auto buy/sell at a real vendor | r5: `@telepoi Holtburg`, `/mt usel closestvendor`, then `/mt vendor addbuy Bread 1`, `buy`, `addsellp phantom`, `sell` | `/mt usel closestvendor` resolves a Vendor-class object and prints no refusal (so `Started`), but there is no walk and no vendor panel in 20 s; the vendor verbs then correctly report `No vendor is open.` | FAIL -> defect 4 (host) |
+| Trade: open, add, accept | r13: `@teleto Horan`, `/mt select +Horan`, `input press UseSelected`, `/mt trade addp mana stone`, `accept`, `end` | the secure-trade window opens with `+Horan` on the left and `You` on the right; after the add, `Total Items: 1` on my side. `accept` prints no refusal; the trade cannot complete because the headless partner runs no plugin/UI to accept | PASS (open + add), PARTIAL (accept unconfirmed) |
+| Auto trade add / auto trade accept | r13 with `AutoTradeAdd.Enabled=True` and a `+Horan.utl` keep-everything profile | only the explicitly added item was staged, so nothing distinguishes AutoTradeAdd from the explicit `/mt trade addp`; AutoTradeAccept needs the partner to accept first | PENDING |
+| Mana auto recharge | r2/r3: `/mt selectp gauntlet` then `@givemana -284/-4/-3/-2` to leave 1-2 of 294 mana, 135 s idle, a `Mana Stone` in the pack (`@ci manastone` works) | the drain lands (`You give -284 points of mana to the Leather Gauntlets.`) and the Mana tab still reads `2 / 294`, `Mana needed: 292` many minutes later: the item never burns mana, so ACE's `Player_Tick.CheckLowMana` never runs and the warning line is never emitted | PENDING (trigger not producible on this character's gear) |
+| One-touch heal (hotkey) | r11: bound the hotkey by writing `%APPDATA%\acdream\plugin-hotkeys.json` = `{"openac.magtools:one-touch-heal": {"Key":"J","Ctrl":true}}`, `@setvital health 500`, five Ctrl+J presses from a second process | `The Health Philtre restores 100 points of your Health.` x4 -- the hotkey fired and OneTouchHeal's food fallback applied a `Heal`-named Food item. The healing-kit branch stays untested: `healingkit`/`crudehealingkit`/`treatedhealingkit` are all `not a valid weenie` on this build | PASS (heal), kit branch PENDING |
+| Character/Server command tabs -- Add | r12: Tools -> Character, click the On-Login field, type `/mt opt get Filters.MonsterDeaths`, click Add | the field takes the text, the row is appended to the list and persisted to `Mag-Tools.xml` under the character scope, and it DISPATCHED on the next login (`<{Mag-Tools}>: Filters.MonsterDeaths = False`) | PASS |
+| Chat filter `Filters.TradeBuffBotSpam` | r7: `/say buffs here -t-` with the filter off, then on | off: `You say, "buffs here -t-"` appears; on: the identical say produces no transcript line at all, while the chat logger still records it | PASS (2 of 32 rules now proven, with `MonsterDeaths`) |
+| Chat filters: the other 30 rules | r7/r8 attempts | `/mt castp strength` -> `Cast refused: NoTarget` (no cast, so no casting/fizzle/comp/status-text lines); `/mt usei mana stone` -> `Use refused: Refused` (so no Mana-Stone lines); an `@create olthoisoldier` standing next to the character with `@attackable on` never attacked in 60 s | PENDING |
+| Combat tracker `Dmg Rcvd` / `Dmg Givn` | r8: `@attackable on`, `@create olthoisoldier`, 60 s adjacent, Trackers -> Combat | the monster never attacked and was never attacked; the page renders with `All` and empty cells. The persistent file does record the r9 kills (`+Acdream.CombatTracker.xml`: `SourceName="Acdream" TargetName="Drudge Prowler" KillingBlows="2" TotalAttacks="2"`) | PENDING |
+| Log out on death | r8: `Misc.LogOutOnDeath true`, `@attackable off`, `@setvital health 0`, 27 s observation; r14 retry with `@smite` on the self-selection | health reaches `0/2999` and the world unloads into a transition, but no death chat line appears and no logout happens -- the only `graceful logout requested` in the log follows `UI probe script complete`, i.e. the route's own `close-client`. `@smite` on self does nothing. The death was reached; `IEvents.LocalPlayerDied` was never observed to fire | PARTIAL |
+| Player tracker live | r15: Trackers -> Player | the list shows `26/09/16 21:2x  +Horan  100.9S, 0.1E` and `sawato/+Acdream.PlayerTracker.xml` holds a real `+Horan` row with a live landblock/position, captured while standing next to the bot in r13 | PASS |
+| `/mt fellow create` | r15: `/mt fellow create R3Gate`, then `/mt fellow disband` | both silent, which after P9 means the host returned `Accepted` (a refusal now prints `Fellowship request refused: <status>`). No panel was opened to see the roster | PASS (accepted), roster unconfirmed |
+| Idle automation: heart carver / shattered-key fixer / key deringer | r1: `@ci intricatecarvingtool`, `@ci 42979` | `intricatecarvingtool is not a valid weenie`; `42979` creates a `Core Plating Integrator`. Still not creatable on this ACE build | PENDING |
+
+### New defects from round 3
+
+8. **Inventory logger always writes an empty document** (plugin). Both dump
+   points run when `Items.CaptureOwnedItems()` yields nothing: `Start` fires
+   at `SessionReady`, before the pack has streamed in, and `Stop` fires
+   during logoff teardown. The fresh-file branch never printed its
+   `Requesting id information...` message either. The file name is now
+   correct; only the contents are wrong.
+9. **The Worn Equipment export selects nothing** (plugin).
+   `src/OpenAC.MagTools/Inventory/InventoryExporter.cs:183-193`
+   (`IsEquippedByMe`) keeps the original's "if `Slot == -1` the container
+   must be the player" rule, but on this host EVERY equipped item has
+   `ContainerSlot == -1` and its `ContainerObjectId` is the old container or
+   0 -- the player id lives in `WielderObjectId`. Every equipped item is
+   rejected, so the export writes an empty string to a clipboard that
+   accepts it, and still prints the success line.
+10. **The Inventory export can hang forever** (plugin).
+    `InventoryExporter.Think` sets `waitingForIdData` for any selected item
+    with no appraisal data after the first request pass and never
+    re-requests or times out, so one never-appraised item stalls the export.
+11. **Defect 4 is confirmed host-side and narrowed.** A plugin-issued
+    `Items.Use` on a world object returns `Started` and does nothing (no
+    walk, no panel, no container); the same object used through the client's
+    own path (`input press UseSelected` on the selection) opens
+    immediately. Diagnosis is further blocked by
+    `SelectionInteractionController.PerformUse` logging the dispatched use
+    only when `log: true`, which the automation entry point never passes.
+12. **`/mt usei <owned item>` is refused** (host, minor): `/mt usei mana
+    stone` prints `Use refused: Refused` for an ordinary owned item.
+
+### Environment notes (round 3)
+
+- The Mag-Tools window is VISIBLE at every login (visibility does not
+  persist as hidden); the selected tab resets to Trackers -> Mana. With the
+  window at its saved 1177,228 (333x467): top tabs y=259 (Trackers 1213,
+  Loggers 1273, Tools 1327, Misc 1373); second row y=279 (Trackers page:
+  Mana 1206, Combat 1256, Corpse 1309, Player 1362, Inv. Items 1422; Tools
+  page: Inventory 1216, Tinkering 1281, Character 1346, Server 1405). Tools
+  -> Inventory clipboard buttons at (1258,326) and (1412,326); Tools ->
+  Character On-Login field (1345,324) and Add (1469,324).
+- The UI probe still cannot type, but two things it cannot do turned out to
+  be reachable from outside the client: a plugin hotkey can be BOUND by
+  writing `%APPDATA%\acdream\plugin-hotkeys.json` (key
+  `<pluginId>:<hotkeyId>`), and keystrokes can be delivered with
+  `WScript.Shell.AppActivate` + `System.Windows.Forms.SendKeys` from a
+  second PowerShell process. That closed both the hotkey and the Add-field
+  rows.
+- `@givemana <negative>` drains the last-appraised item's mana; `@ci
+  manastone` works; `@ci` for any healing kit or the Intricate Carving Tool
+  does not.
+- ACE intermittently stopped resolving the headless partner by name
+  (`@teleto +Horan` / `@teleto Horan` -> `Player ... was not found.`) while
+  the bot reported `InWorld` with 28 entities. A bot relaunch fixed it for
+  one session and it regressed again afterwards.
+
 ## Pending (owed before the port can be called fully live-gated)
 
-Every row below carries the exact blocker that stopped it on 2026-09-16, so a
-future session does not re-derive it. The gate round's harness and its limits
-are described under "Harness notes" at the bottom.
+Updated after round 3 (2026-09-16). Rows closed in round 3 are gone; every
+row below carries its current blocker.
 
 | Feature | Blocker | Verdict |
 |---|---|---|
-| Chat filters: the 31 rules other than `MonsterDeaths` | needs a character that can miss, be evaded, be hit, fizzle, resist, salvage and use comps, plus an NPC/vendor to talk. +Acdream one-shots everything and is never hit | PENDING |
-| Auto buy/sell at a real vendor | the vendor panel could not be opened from a route: `/mt usel closestvendor` resolves a Vendor-class object and issues `Items.Use` but produces no movement, no panel and no message, and the UI probe's `click at` only reaches retained UI, so a 3-D world pick is impossible | PENDING |
-| Auto add to trade / auto trade accept / `/mt trade *` full flows | `testaccount2` will not log in with `testpassword` (`CharacterList not received`, twice, with no other session on that account) -- the correct second-account password is unknown here. A world-selection-driven trade open is blocked too | PENDING |
-| Auto looting (chests, corpses, salvage) | the loot-classifier path is proven (`/vt loot load <name>` works, MossTank registers as `moss-tank`) and `Looter` triggers on `ContainerOpened`, but a corpse container cannot be opened from a route: `/mt uselp corpse` resolves the corpse and issues `Items.Use` with no container and no message following | PENDING |
-| Inventory packer: items land in their profile-assigned pack | the Started/Completed lifecycle is PASS; the per-item placement was not verified (no per-item message; pack contents not diffed before/after) | PENDING |
-| Idle automation: heart carver / shattered-key fixer / key deringer | `Intricate Carving Tool` is not creatable on this ACE build (`@ci intricatecarvingtool` -> not a valid weenie) and is absent from the weenie class-name table | PENDING |
-| Mana auto recharge | the trigger is a server line containing `Your` + ` is low on Mana.`; +Acdream's equipped items are at full mana so the server never emits it, and the port deliberately ignores a self-`/say` echo | PENDING |
-| One-touch heal real heal | the hotkey is registered unbound (`default` chord), there is no `/mt` verb for it, and the probe can neither type into the rebind UI nor inject a plugin chord | PENDING |
-| Log out on death | killing +Acdream costs the owner's character vitae and dropped items; not attempted without the owner's go-ahead | PENDING |
-| Character/Server command tabs: Add | the UI probe has no text-entry verb, so the command text box cannot be filled | PENDING |
-| Player tracker live tracking | blocked on the same `testaccount2` login failure -- no second character could be brought in-world | PENDING |
-| `/mt fellow create` | issued live and produced no plugin output and no server response; a fellowship was not observed to form. Needs a Fellowship-panel or second-party confirmation before it can be called FAIL | PENDING |
-| Combat tracker `Dmg Rcvd` / `Dmg Givn` cells | never provoked: every +Acdream hit is a one-shot kill (kill message only, no damage line) and no monster landed a hit even with `@attackable on` | PENDING |
+| Chat filters: the 30 rules other than `MonsterDeaths` and `TradeBuffBotSpam` | still needs a character that can miss, be evaded, be hit, fizzle, resist, salvage and use comps, plus an NPC/vendor to talk. Round 3 also found that `/mt castp <spell>` refuses with `NoTarget` (so no casting/fizzle/comp/status-text line can be produced) and `/mt usei mana stone` refuses with `Refused` (so no Mana-Stone line), and a monster spawned next to the character with `@attackable on` never attacked | PENDING |
+| Auto buy/sell at a real vendor | unchanged after the A7 walk-to-use fix: `/mt usel closestvendor` resolves a Vendor-class object, returns `Started` (no refusal is printed) and produces no walk, no panel and no message. Round 3 pinned this host-side -- the same kind of object opens instantly through the client's own use path | PENDING |
+| Auto trade add / auto trade accept | a trade now opens and `/mt trade addp` stages an item, but AutoTradeAdd cannot be distinguished from the explicit add (only one item staged) and AutoTradeAccept needs the partner to accept first -- the headless `+Horan` bot runs no plugin | PENDING |
+| Auto looting: items actually moving into the pack | the looter now runs (corpse opened through the client's use path, contents classified against the loaded profile), but no item was observed moving: the pack was full and the plugin prints no per-item loot message | PENDING |
+| Inventory packer: items land in their profile-assigned pack | not exercised in round 3; the Started/Completed lifecycle remains the only proven part | PENDING |
+| Idle automation: heart carver / shattered-key fixer / key deringer | `Intricate Carving Tool` still not creatable: `@ci intricatecarvingtool` is not a valid weenie and `@ci 42979` creates a `Core Plating Integrator` | PENDING |
+| Mana auto recharge | the trigger is ACE's `Your <item> is low on Mana.`, which `Player_Tick` only emits for an item that actively burns mana. The character's equipped items do not burn: drained to 2 of 294 with `@givemana`, the value was unchanged many minutes later, so the warning is never emitted | PENDING |
+| One-touch heal with a healing KIT | the hotkey itself is proven (bound via `plugin-hotkeys.json`, Ctrl+J applied a `Heal`-named food item four times). The kit branch needs a `HealingKit`-class item, and no healing-kit weenie name resolves on this ACE build | PENDING |
+| Log out on death | the character was taken to 0 health with `@setvital health 0` and the world unloaded into a transition, but no death chat line appeared and no plugin logout followed, so `IEvents.LocalPlayerDied` was never observed to fire. `@smite` on the self-selection does nothing. Needs a death that provably runs ACE's death pipeline | PENDING |
+| Combat tracker `Dmg Rcvd` / `Dmg Givn` cells | still unprovoked: the character one-shots everything it attacks, and a monster spawned adjacent with `@attackable on` did not attack in 60 s | PENDING |
 
 ## Defects found in the 2026-09-16 gate round
 

@@ -27,6 +27,14 @@ public sealed class ChatLogGroup
     /// <summary>Newest first.</summary>
     public IReadOnlyList<LoggedChatEntry> Rows => _rows;
 
+    /// <summary>
+    /// Bumped on every <see cref="Add"/> that actually inserts a row and on
+    /// every <see cref="Clear"/>, so a page view-model can cache its row
+    /// projections and only rebuild them when this changes instead of
+    /// re-projecting <see cref="Rows"/> on every read.
+    /// </summary>
+    public long Revision { get; private set; }
+
     public ChatClassifier.ChatChannels EnabledChannels()
     {
         var channels = ChatClassifier.ChatChannels.None;
@@ -45,10 +53,22 @@ public sealed class ChatLogGroup
         if ((EnabledChannels() & entry.ChatType) == 0)
             return;
 
-        _rows.Insert(0, entry);
+        // Trim BEFORE inserting the new row, so hitting the cap retains
+        // 9,001 rows (9,000 kept + the one just added), matching the
+        // original's exact hysteresis instead of trimming to 9,000 after.
         if (_rows.Count >= MaxRows)
             _rows.RemoveRange(TrimToRows, _rows.Count - TrimToRows);
+
+        _rows.Insert(0, entry);
+        Revision++;
     }
 
-    public void Clear() => _rows.Clear();
+    public void Clear()
+    {
+        if (_rows.Count == 0)
+            return;
+
+        _rows.Clear();
+        Revision++;
+    }
 }

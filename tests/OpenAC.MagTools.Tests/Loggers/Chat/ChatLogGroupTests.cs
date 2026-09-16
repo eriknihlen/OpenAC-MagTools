@@ -67,13 +67,16 @@ public sealed class ChatLogGroupTests
     }
 
     [Fact]
-    public void AddTrimsToNineThousandOnceTenThousandIsReached()
+    public void AddTrimsToNineThousandOneOnceTenThousandIsReached()
     {
+        // The original's exact hysteresis: trim happens BEFORE the insert
+        // that would push the list to 10,000, so the count that survives a
+        // trim is 9,001 (9,000 kept + the row just added) rather than 9,000.
         var settingsManager = new SettingsManager(new SettingsFile(new MemoryStorage()));
         settingsManager.ChatLogger.Group1.Area.Value = true;
         var chatGroup = new ChatLogGroup(settingsManager.ChatLogger.Group1);
 
-        for (int index = 0; index < 10_000; index++)
+        for (int index = 0; index < 10_001; index++)
         {
             chatGroup.Add(new LoggedChatEntry(
                 DateTimeOffset.UtcNow,
@@ -81,9 +84,9 @@ public sealed class ChatLogGroupTests
                 index.ToString(System.Globalization.CultureInfo.InvariantCulture)));
         }
 
-        Assert.Equal(9_000, chatGroup.Rows.Count);
-        // Newest ("9999") survives; the oldest rows were trimmed.
-        Assert.Equal("9999", chatGroup.Rows[0].Message);
+        Assert.Equal(9_001, chatGroup.Rows.Count);
+        // Newest ("10000") survives; the oldest rows were trimmed.
+        Assert.Equal("10000", chatGroup.Rows[0].Message);
     }
 
     [Fact]

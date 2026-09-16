@@ -40,7 +40,8 @@ public sealed class MainViewModel : IDisposable
         Trackers.Equipment.EquipmentTrackerHost? equipmentTrackerHost = null,
         Trackers.Inventory.InventoryTrackerHost? inventoryTrackerHost = null,
         Trackers.Corpse.CorpseTrackerHost? corpseTrackerHost = null,
-        Trackers.Player.PlayerTrackerHost? playerTrackerHost = null)
+        Trackers.Player.PlayerTrackerHost? playerTrackerHost = null,
+        Macros.TinkeringToolsHost? tinkeringToolsHost = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(chatLogger);
@@ -53,7 +54,7 @@ public sealed class MainViewModel : IDisposable
         ChatLogger = new ChatLoggerPageViewModel(settings, chatLogger);
         InventoryTools = new InventoryToolsPageViewModel(
             host, settings.ItemInfoOnIdent, host?.Automation.Spells);
-        Tinkering = new TinkeringPageViewModel();
+        Tinkering = new TinkeringPageViewModel(tinkeringToolsHost);
         CharacterCommands = new ScopedCommandsPageViewModel();
         ServerCommands = new ScopedCommandsPageViewModel();
         MiscOptions = new MiscOptionsPageViewModel(settings);

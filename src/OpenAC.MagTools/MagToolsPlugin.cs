@@ -41,6 +41,7 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
     private PlayerTrackerHost? _playerTrackerHost;
     private Loggers.Inventory.InventoryLogger? _inventoryLogger;
     private TinkeringAutoConfirm? _tinkeringAutoConfirm;
+    private TinkeringToolsHost? _tinkeringToolsHost;
     private IdleActionManager? _idleActionManager;
     private AutoRecharge? _autoRecharge;
     private HudUpdater? _hudUpdater;
@@ -79,11 +80,12 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _playerTrackerHost = new PlayerTrackerHost(host, _settings.PlayerTracker);
         _inventoryLogger = new Loggers.Inventory.InventoryLogger(host, _chat, _settings.InventoryManagement);
         _idleActionManager = new IdleActionManager(host, _settings.InventoryManagement);
+        _tinkeringToolsHost = new TinkeringToolsHost(host);
         _autoRecharge = new AutoRecharge(host, _settings);
         _main = new MainViewModel(
             _settings, _chatLogger, host, _combatTrackerHost,
             _equipmentTrackerHost, _inventoryTrackerHost,
-            _corpseTrackerHost, _playerTrackerHost);
+            _corpseTrackerHost, _playerTrackerHost, _tinkeringToolsHost);
         _tinkeringAutoConfirm = new TinkeringAutoConfirm(host, _settings.Tinkering, _main.Tinkering);
         _hud = new HudViewModel(host);
         _hudUpdater = new HudUpdater(
@@ -230,6 +232,7 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _playerTrackerHost?.Stop();
         _inventoryLogger?.Stop();
         _idleActionManager?.Stop();
+        _tinkeringToolsHost?.Detach();
         _autoRecharge?.Stop();
         _hudUpdater?.Stop();
         _chatDispatcher?.Stop();
@@ -274,6 +277,7 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _playerTrackerHost?.Start(_scheduler, _session.WorldName, _session.CharacterName);
         _inventoryLogger?.Start(_session.WorldName, _session.CharacterName);
         _idleActionManager?.Start(_scheduler);
+        _tinkeringToolsHost?.Attach(_scheduler);
         _autoRecharge?.Start(_scheduler);
         _hudUpdater?.Start(_scheduler);
     }
@@ -288,6 +292,7 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _playerTrackerHost?.Stop();
         _inventoryLogger?.Stop();
         _idleActionManager?.Stop();
+        _tinkeringToolsHost?.Detach();
         _autoRecharge?.Stop();
         _hudUpdater?.Stop();
         _chatDispatcher?.Stop();

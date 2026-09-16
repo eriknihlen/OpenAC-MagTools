@@ -178,20 +178,26 @@ public sealed class InventoryToolsPageViewModel : ListPageViewModel
 }
 
 /// <summary>
-/// Tools -&gt; Tinkering: the salvage-identification helper.
+/// Tools -&gt; Tinkering: Add Selected Item, the material picker, the
+/// unidentified-salvage-material scan (Start/Stop), and the row list, backed
+/// by P6's <see cref="Macros.TinkeringToolsHost"/>.
 /// </summary>
-/// <remarks>TODO(P6): the tinkering helper and its auto-confirm land together.</remarks>
 public sealed class TinkeringPageViewModel : ListPageViewModel
 {
-    public TinkeringPageViewModel()
+    private readonly Macros.TinkeringToolsHost? _tinkeringHost;
+
+    public TinkeringPageViewModel(Macros.TinkeringToolsHost? tinkeringHost = null)
+        : base(index => tinkeringHost?.SelectRow(index))
     {
-        AddSelectedItem = static () => { };
-        Start = static () => { };
-        Stop = static () => { };
+        _tinkeringHost = tinkeringHost;
+
+        AddSelectedItem = () => _tinkeringHost?.AddSelectedItem();
+        Start = () => _tinkeringHost?.StartScan(SelectedMaterial);
+        Stop = () => _tinkeringHost?.StopScan();
         SelectMaterial = material => SelectedMaterial = material;
         SetMinimumPercent = text => MinimumPercentText = text;
         SetTargetTotalTinks = text => TargetTotalTinksText = text;
-        DeleteRow = static _ => { };
+        DeleteRow = index => _tinkeringHost?.DeleteRow(index);
     }
 
     public Action AddSelectedItem { get; }
@@ -199,10 +205,9 @@ public sealed class TinkeringPageViewModel : ListPageViewModel
     public Action Stop { get; }
 
     /// <summary>The original's fixed material choice list.</summary>
-    public IReadOnlyList<string> Materials { get; } =
-        ["Brass", "Granite", "Green Garnet", "Iron", "Mahogany", "Steel", "Velvet"];
+    public IReadOnlyList<string> Materials { get; } = Macros.TinkeringToolsHost.Materials;
 
-    public string SelectedMaterial { get; private set; } = "Brass";
+    public string SelectedMaterial { get; private set; } = Macros.TinkeringToolsHost.Materials[0];
 
     public Action<string> SelectMaterial { get; }
 
@@ -210,16 +215,24 @@ public sealed class TinkeringPageViewModel : ListPageViewModel
 
     public Action<string> SetMinimumPercent { get; }
 
+    /// <summary>
+    /// Present in the original's layout but never read by any of its logic
+    /// (<c>tinkeringTargetTotalTinks</c> is assigned from the mainView field
+    /// and never referenced again in <c>TinkeringToolsView.cs</c>) — kept as
+    /// an inert text field to match.
+    /// </summary>
     public string TargetTotalTinksText { get; private set; } = string.Empty;
 
     public Action<string> SetTargetTotalTinks { get; }
 
-    public IReadOnlyList<string> CurrentMarks { get; } = [];
-    public IReadOnlyList<uint> Icons { get; } = [];
-    public IReadOnlyList<string> Names { get; } = [];
-    public IReadOnlyList<string> Work { get; } = [];
-    public IReadOnlyList<string> Tinks { get; } = [];
-    public IReadOnlyList<uint> DeleteIcons { get; } = [];
+    private IReadOnlyList<Macros.TinkeringRow> Rows => _tinkeringHost?.Rows ?? [];
+
+    public IReadOnlyList<string> CurrentMarks => Rows.Select(static _ => string.Empty).ToList();
+    public IReadOnlyList<uint> Icons => Rows.Select(row => row.IconId).ToList();
+    public IReadOnlyList<string> Names => Rows.Select(row => row.Name).ToList();
+    public IReadOnlyList<string> Work => Rows.Select(row => row.Work).ToList();
+    public IReadOnlyList<string> Tinks => Rows.Select(row => row.Tinks).ToList();
+    public IReadOnlyList<uint> DeleteIcons => Rows.Select(static _ => 0x60011F8u).ToList();
 
     public Action<int> DeleteRow { get; }
 }

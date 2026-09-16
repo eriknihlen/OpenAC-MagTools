@@ -2,20 +2,26 @@ using AcDream.Plugin.Abstractions;
 using OpenAC.MagTools.Macros;
 using OpenAC.MagTools.Settings;
 using OpenAC.MagTools.Trackers.Combat;
+using OpenAC.MagTools.Trackers.Corpse;
 using OpenAC.MagTools.Trackers.Equipment;
 using OpenAC.MagTools.Trackers.Inventory;
+using OpenAC.MagTools.Trackers.Player;
 
 namespace OpenAC.MagTools.Ui;
 
 /// <summary>
-/// Shared plumbing for a page whose list is filled by a tracker that has not
-/// shipped yet: an empty list, a remembered selection and a no-op row action.
+/// Shared plumbing for a page whose list is filled by a tracker: a remembered
+/// selection and a no-op row action by default.
 /// </summary>
 public abstract class ListPageViewModel
 {
-    protected ListPageViewModel()
+    protected ListPageViewModel(Action<int>? onRowSelected = null)
     {
-        Select = index => SelectedRow = index;
+        Select = index =>
+        {
+            SelectedRow = index;
+            onRowSelected?.Invoke(index);
+        };
         RowIconClicked = static _ => { };
     }
 
@@ -387,17 +393,30 @@ public sealed class CombatPageViewModel
     }
 }
 
-/// <summary>Trackers → Corpse. TODO(P6): the corpse tracker fills the list.</summary>
+/// <summary>Trackers → Corpse, filled by P6's <see cref="CorpseTrackerHost"/>.</summary>
 public sealed class CorpsePageViewModel : ListPageViewModel
 {
     private readonly CorpseTrackerSettings _settings;
+    private readonly CorpseTrackerHost? _corpseTrackerHost;
 
-    public CorpsePageViewModel(SettingsManager settings)
+    public CorpsePageViewModel(
+        SettingsManager settings,
+        CorpseTrackerHost? corpseTrackerHost = null,
+        IPluginHost? host = null)
+        : base(index =>
+        {
+            if (corpseTrackerHost is null || host is null)
+                return;
+            IReadOnlyList<CorpseRow> rows = CorpseTrackerRows.Build(corpseTrackerHost.Tracker);
+            if (index >= 0 && index < rows.Count)
+                host.Selection.Select(rows[index].ObjectId);
+        })
     {
         ArgumentNullException.ThrowIfNull(settings);
         _settings = settings.CorpseTracker;
+        _corpseTrackerHost = corpseTrackerHost;
 
-        ClearHistory = static () => { };
+        ClearHistory = () => _corpseTrackerHost?.Tracker.ClearStats();
         ToggleEnabled = () => _settings.Enabled.Value = !_settings.Enabled.Value;
         TogglePersistent = () =>
             _settings.Persistent.Value = !_settings.Persistent.Value;
@@ -410,9 +429,13 @@ public sealed class CorpsePageViewModel : ListPageViewModel
                 !_settings.TrackPermittedCorpses.Value;
     }
 
-    public IReadOnlyList<string> Times { get; } = [];
-    public IReadOnlyList<string> Names { get; } = [];
-    public IReadOnlyList<string> Coordinates { get; } = [];
+    /// <summary>Recomputed on every access -- newest first, opened corpses excluded (see CorpseTrackerRows).</summary>
+    private IReadOnlyList<CorpseRow> Rows
+        => _corpseTrackerHost is null ? [] : CorpseTrackerRows.Build(_corpseTrackerHost.Tracker);
+
+    public IReadOnlyList<string> Times => Rows.Select(row => row.Time).ToList();
+    public IReadOnlyList<string> Names => Rows.Select(row => row.Name).ToList();
+    public IReadOnlyList<string> Coordinates => Rows.Select(row => row.Coords).ToList();
 
     public Action ClearHistory { get; }
 
@@ -429,25 +452,51 @@ public sealed class CorpsePageViewModel : ListPageViewModel
     public Action ToggleTrackPermitted { get; }
 }
 
-/// <summary>Trackers → Player. TODO(P6): the player tracker fills the list.</summary>
+/// <summary>Trackers → Player, filled by P6's <see cref="PlayerTrackerHost"/>.</summary>
 public sealed class PlayerPageViewModel : ListPageViewModel
 {
     private readonly PlayerTrackerSettings _settings;
+    private readonly PlayerTrackerHost? _playerTrackerHost;
+    // Stateful across accesses: the 10-second rate-limited re-sort (see
+    // PlayerTrackerRowsBuilder) needs its own clock, not a fresh one per call.
+    private readonly PlayerTrackerRowsBuilder _rowsBuilder = new();
 
-    public PlayerPageViewModel(SettingsManager settings)
+    public PlayerPageViewModel(
+        SettingsManager settings,
+        PlayerTrackerHost? playerTrackerHost = null,
+        IPluginHost? host = null)
+        : base(index =>
+        {
+            if (playerTrackerHost is null || host is null)
+                return;
+            IReadOnlyList<PlayerRow> rows = PlayerTrackerRows(playerTrackerHost);
+            if (index >= 0 && index < rows.Count)
+                host.Selection.Select(rows[index].ObjectId);
+        })
     {
         ArgumentNullException.ThrowIfNull(settings);
         _settings = settings.PlayerTracker;
+        _playerTrackerHost = playerTrackerHost;
 
-        ClearHistory = static () => { };
+        ClearHistory = () => _playerTrackerHost?.Tracker.ClearStats();
         ToggleEnabled = () => _settings.Enabled.Value = !_settings.Enabled.Value;
         TogglePersistent = () =>
             _settings.Persistent.Value = !_settings.Persistent.Value;
     }
 
-    public IReadOnlyList<string> Times { get; } = [];
-    public IReadOnlyList<string> Names { get; } = [];
-    public IReadOnlyList<string> Coordinates { get; } = [];
+    // A static helper so the base-constructor's onRowSelected lambda (which
+    // runs before instance field initializers, including _rowsBuilder) has
+    // something safe to call -- it builds its own one-shot rows rather than
+    // sharing the rate-limited builder, which only matters for display order.
+    private static IReadOnlyList<PlayerRow> PlayerTrackerRows(PlayerTrackerHost trackerHost)
+        => new PlayerTrackerRowsBuilder().Build(trackerHost.Tracker);
+
+    private IReadOnlyList<PlayerRow> Rows
+        => _playerTrackerHost is null ? [] : _rowsBuilder.Build(_playerTrackerHost.Tracker);
+
+    public IReadOnlyList<string> Times => Rows.Select(row => row.Time).ToList();
+    public IReadOnlyList<string> Names => Rows.Select(row => row.Name).ToList();
+    public IReadOnlyList<string> Coordinates => Rows.Select(row => row.Coords).ToList();
 
     public Action ClearHistory { get; }
 

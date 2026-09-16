@@ -38,15 +38,17 @@ public sealed class MainViewModel : IDisposable
         IPluginHost? host = null,
         Trackers.Combat.CombatTrackerHost? combatTrackerHost = null,
         Trackers.Equipment.EquipmentTrackerHost? equipmentTrackerHost = null,
-        Trackers.Inventory.InventoryTrackerHost? inventoryTrackerHost = null)
+        Trackers.Inventory.InventoryTrackerHost? inventoryTrackerHost = null,
+        Trackers.Corpse.CorpseTrackerHost? corpseTrackerHost = null,
+        Trackers.Player.PlayerTrackerHost? playerTrackerHost = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(chatLogger);
 
         Mana = new ManaPageViewModel(settings, equipmentTrackerHost, host);
         Combat = new CombatPageViewModel(settings, combatTrackerHost, host);
-        Corpse = new CorpsePageViewModel(settings);
-        Player = new PlayerPageViewModel(settings);
+        Corpse = new CorpsePageViewModel(settings, corpseTrackerHost, host);
+        Player = new PlayerPageViewModel(settings, playerTrackerHost, host);
         InventoryItems = new InventoryItemsPageViewModel(inventoryTrackerHost);
         ChatLogger = new ChatLoggerPageViewModel(settings, chatLogger);
         InventoryTools = new InventoryToolsPageViewModel(

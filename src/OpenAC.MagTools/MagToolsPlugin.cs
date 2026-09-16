@@ -82,7 +82,8 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _autoRecharge = new AutoRecharge(host, _settings);
         _main = new MainViewModel(
             _settings, _chatLogger, host, _combatTrackerHost,
-            _equipmentTrackerHost, _inventoryTrackerHost);
+            _equipmentTrackerHost, _inventoryTrackerHost,
+            _corpseTrackerHost, _playerTrackerHost);
         _tinkeringAutoConfirm = new TinkeringAutoConfirm(host, _settings.Tinkering, _main.Tinkering);
         _hud = new HudViewModel(host);
         _hudUpdater = new HudUpdater(

@@ -291,9 +291,17 @@ public sealed class TinkeringPageViewModel : ListPageViewModel
 /// and periodic command lists for one scope.
 /// </summary>
 /// <remarks>
-/// TODO(P8): the command runner and the scope binding (which needs the live
-/// account/server/character) land with the login-conveniences slice. The row
-/// icons are the original's up/down/delete art.
+/// One instance is bound to the account/server/character scope
+/// (<see cref="Settings.SettingsScope.Character"/>), the other to the server
+/// scope (<see cref="Settings.SettingsScope.Server"/>) -- see
+/// <see cref="MainViewModel.CharacterCommands"/>/<see cref="MainViewModel.ServerCommands"/>.
+/// <see cref="Bind"/> is called once per login (the scope path depends on the
+/// live account/server/character, which is not known until then), reloading
+/// all three lists from storage. Every Add/Move/Delete mutates the in-memory
+/// list and immediately rewrites the whole node back to
+/// <see cref="Settings.ScopedCommandStore"/>, mirroring the original's
+/// "rewrite the whole list on every change" `LoginList`/`PeriodicCommandList`
+/// click handlers. The row icons are the original's up/down/delete art.
 /// </remarks>
 public sealed class ScopedCommandsPageViewModel
 {
@@ -301,56 +309,191 @@ public sealed class ScopedCommandsPageViewModel
     public const uint DownIconId = 0x060028FDu;
     public const uint DeleteIconId = 0x060011F8u;
 
+    private readonly Settings.ScopedCommandStore? _store;
+    private string _scopePath = string.Empty;
+
+    private List<string> _loginCommands = [];
+    private List<string> _loginCompleteCommands = [];
+    private List<Settings.PeriodicCommand> _periodicCommands = [];
+
+    /// <summary>Parameterless ctor for pre-P8 callers/tests that don't need live storage.</summary>
     public ScopedCommandsPageViewModel()
+        : this(null)
     {
+    }
+
+    public ScopedCommandsPageViewModel(Settings.ScopedCommandStore? store)
+    {
+        _store = store;
+
         SetLoginText = text => LoginText = text;
         SetLoginCompleteText = text => LoginCompleteText = text;
         SetPeriodicText = text => PeriodicText = text;
         SetPeriodicInterval = text => PeriodicIntervalText = text;
         SetPeriodicOffset = text => PeriodicOffsetText = text;
 
-        AddLoginCommand = static () => { };
-        AddLoginCompleteCommand = static () => { };
-        AddPeriodicCommand = static () => { };
+        AddLoginCommand = AddLogin;
+        AddLoginCompleteCommand = AddLoginComplete;
+        AddPeriodicCommand = AddPeriodic;
 
-        MoveLoginCommandUp = static _ => { };
-        MoveLoginCommandDown = static _ => { };
-        DeleteLoginCommand = static _ => { };
-        MoveLoginCompleteCommandUp = static _ => { };
-        MoveLoginCompleteCommandDown = static _ => { };
-        DeleteLoginCompleteCommand = static _ => { };
-        DeletePeriodicCommand = static _ => { };
+        MoveLoginCommandUp = index => MoveLogin(index, -1);
+        MoveLoginCommandDown = index => MoveLogin(index, 1);
+        DeleteLoginCommand = DeleteLogin;
+        MoveLoginCompleteCommandUp = index => MoveLoginComplete(index, -1);
+        MoveLoginCompleteCommandDown = index => MoveLoginComplete(index, 1);
+        DeleteLoginCompleteCommand = DeleteLoginComplete;
+        DeletePeriodicCommand = DeletePeriodic;
 
         SelectLoginRow = index => LoginSelectedRow = index;
         SelectLoginCompleteRow = index => LoginCompleteSelectedRow = index;
         SelectPeriodicRow = index => PeriodicSelectedRow = index;
     }
 
+    /// <summary>
+    /// Rebinds this page to a scope path (called once per login) and reloads
+    /// all three lists from storage.
+    /// </summary>
+    public void Bind(string scopePath)
+    {
+        ArgumentNullException.ThrowIfNull(scopePath);
+        _scopePath = scopePath;
+        LoginSelectedRow = -1;
+        LoginCompleteSelectedRow = -1;
+        PeriodicSelectedRow = -1;
+        Reload();
+    }
+
+    private void Reload()
+    {
+        if (_store is null || _scopePath.Length == 0)
+        {
+            _loginCommands = [];
+            _loginCompleteCommands = [];
+            _periodicCommands = [];
+            return;
+        }
+
+        _loginCommands = [.. _store.GetOnLoginCommands(_scopePath)];
+        _loginCompleteCommands = [.. _store.GetOnLoginCompleteCommands(_scopePath)];
+        _periodicCommands = [.. _store.GetPeriodicCommands(_scopePath)];
+    }
+
+    private bool CanEdit => _store is not null && _scopePath.Length > 0;
+
+    private static IReadOnlyList<uint> RepeatIcon(uint icon, int count)
+    {
+        if (count <= 0)
+            return [];
+        var icons = new uint[count];
+        Array.Fill(icons, icon);
+        return icons;
+    }
+
+    // ---- On-Login -------------------------------------------------------
+
     public string LoginText { get; private set; } = string.Empty;
     public Action<string> SetLoginText { get; }
     public Action AddLoginCommand { get; }
-    public IReadOnlyList<string> LoginCommands { get; } = [];
-    public IReadOnlyList<uint> LoginUpIcons { get; } = [];
-    public IReadOnlyList<uint> LoginDownIcons { get; } = [];
-    public IReadOnlyList<uint> LoginDeleteIcons { get; } = [];
+    public IReadOnlyList<string> LoginCommands => _loginCommands;
+    public IReadOnlyList<uint> LoginUpIcons => RepeatIcon(UpIconId, _loginCommands.Count);
+    public IReadOnlyList<uint> LoginDownIcons => RepeatIcon(DownIconId, _loginCommands.Count);
+    public IReadOnlyList<uint> LoginDeleteIcons => RepeatIcon(DeleteIconId, _loginCommands.Count);
     public Action<int> MoveLoginCommandUp { get; }
     public Action<int> MoveLoginCommandDown { get; }
     public Action<int> DeleteLoginCommand { get; }
-    public int LoginSelectedRow { get; private set; } = -1;
+    public int LoginSelectedRow { get => _loginSelectedRowField; private set => _loginSelectedRowField = value; }
     public Action<int> SelectLoginRow { get; }
+
+    private void AddLogin()
+    {
+        if (!CanEdit)
+            return;
+        string text = LoginText.Trim();
+        if (text.Length == 0)
+            return;
+
+        _loginCommands.Add(text);
+        _store!.SetOnLoginCommands(_scopePath, _loginCommands);
+        LoginText = string.Empty;
+    }
+
+    private void MoveLogin(int index, int direction)
+    {
+        if (!CanEdit)
+            return;
+        int target = index + direction;
+        if (index < 0 || index >= _loginCommands.Count || target < 0 || target >= _loginCommands.Count)
+            return;
+
+        (_loginCommands[index], _loginCommands[target]) = (_loginCommands[target], _loginCommands[index]);
+        _store!.SetOnLoginCommands(_scopePath, _loginCommands);
+        LoginSelectedRow = target;
+    }
+
+    private void DeleteLogin(int index)
+    {
+        if (!CanEdit || index < 0 || index >= _loginCommands.Count)
+            return;
+
+        _loginCommands.RemoveAt(index);
+        _store!.SetOnLoginCommands(_scopePath, _loginCommands);
+        AdjustSelectionAfterDelete(ref RefLoginSelectedRow(), index);
+    }
+
+    // ---- On-Login-Complete ------------------------------------------------
 
     public string LoginCompleteText { get; private set; } = string.Empty;
     public Action<string> SetLoginCompleteText { get; }
     public Action AddLoginCompleteCommand { get; }
-    public IReadOnlyList<string> LoginCompleteCommands { get; } = [];
-    public IReadOnlyList<uint> LoginCompleteUpIcons { get; } = [];
-    public IReadOnlyList<uint> LoginCompleteDownIcons { get; } = [];
-    public IReadOnlyList<uint> LoginCompleteDeleteIcons { get; } = [];
+    public IReadOnlyList<string> LoginCompleteCommands => _loginCompleteCommands;
+    public IReadOnlyList<uint> LoginCompleteUpIcons => RepeatIcon(UpIconId, _loginCompleteCommands.Count);
+    public IReadOnlyList<uint> LoginCompleteDownIcons => RepeatIcon(DownIconId, _loginCompleteCommands.Count);
+    public IReadOnlyList<uint> LoginCompleteDeleteIcons => RepeatIcon(DeleteIconId, _loginCompleteCommands.Count);
     public Action<int> MoveLoginCompleteCommandUp { get; }
     public Action<int> MoveLoginCompleteCommandDown { get; }
     public Action<int> DeleteLoginCompleteCommand { get; }
-    public int LoginCompleteSelectedRow { get; private set; } = -1;
+    public int LoginCompleteSelectedRow { get => _loginCompleteSelectedRowField; private set => _loginCompleteSelectedRowField = value; }
     public Action<int> SelectLoginCompleteRow { get; }
+
+    private void AddLoginComplete()
+    {
+        if (!CanEdit)
+            return;
+        string text = LoginCompleteText.Trim();
+        if (text.Length == 0)
+            return;
+
+        _loginCompleteCommands.Add(text);
+        _store!.SetOnLoginCompleteCommands(_scopePath, _loginCompleteCommands);
+        LoginCompleteText = string.Empty;
+    }
+
+    private void MoveLoginComplete(int index, int direction)
+    {
+        if (!CanEdit)
+            return;
+        int target = index + direction;
+        if (index < 0 || index >= _loginCompleteCommands.Count
+            || target < 0 || target >= _loginCompleteCommands.Count)
+            return;
+
+        (_loginCompleteCommands[index], _loginCompleteCommands[target]) =
+            (_loginCompleteCommands[target], _loginCompleteCommands[index]);
+        _store!.SetOnLoginCompleteCommands(_scopePath, _loginCompleteCommands);
+        LoginCompleteSelectedRow = target;
+    }
+
+    private void DeleteLoginComplete(int index)
+    {
+        if (!CanEdit || index < 0 || index >= _loginCompleteCommands.Count)
+            return;
+
+        _loginCompleteCommands.RemoveAt(index);
+        _store!.SetOnLoginCompleteCommands(_scopePath, _loginCompleteCommands);
+        AdjustSelectionAfterDelete(ref RefLoginCompleteSelectedRow(), index);
+    }
+
+    // ---- Periodic -----------------------------------------------------------
 
     public string PeriodicText { get; private set; } = string.Empty;
     public Action<string> SetPeriodicText { get; }
@@ -359,11 +502,85 @@ public sealed class ScopedCommandsPageViewModel
     public string PeriodicOffsetText { get; private set; } = "0";
     public Action<string> SetPeriodicOffset { get; }
     public Action AddPeriodicCommand { get; }
-    public IReadOnlyList<string> PeriodicCommands { get; } = [];
-    public IReadOnlyList<string> PeriodicIntervals { get; } = [];
-    public IReadOnlyList<string> PeriodicOffsets { get; } = [];
-    public IReadOnlyList<uint> PeriodicDeleteIcons { get; } = [];
+
+    public IReadOnlyList<string> PeriodicCommands =>
+        [.. _periodicCommands.Select(static command => command.Command)];
+
+    public IReadOnlyList<string> PeriodicIntervals =>
+        [.. _periodicCommands.Select(static command =>
+            ((int)command.Interval.TotalMinutes)
+                .ToString(System.Globalization.CultureInfo.InvariantCulture))];
+
+    public IReadOnlyList<string> PeriodicOffsets =>
+        [.. _periodicCommands.Select(static command =>
+            ((int)command.OffsetFromMidnight.TotalMinutes)
+                .ToString(System.Globalization.CultureInfo.InvariantCulture))];
+
+    public IReadOnlyList<uint> PeriodicDeleteIcons => RepeatIcon(DeleteIconId, _periodicCommands.Count);
     public Action<int> DeletePeriodicCommand { get; }
-    public int PeriodicSelectedRow { get; private set; } = -1;
+    public int PeriodicSelectedRow { get => _periodicSelectedRowField; private set => _periodicSelectedRowField = value; }
     public Action<int> SelectPeriodicRow { get; }
+
+    private void AddPeriodic()
+    {
+        if (!CanEdit)
+            return;
+        string text = PeriodicText.Trim();
+        if (text.Length == 0)
+            return;
+
+        int interval = ParsePositiveMinutes(PeriodicIntervalText, fallback: 1);
+        int offset = ParseMinutes(PeriodicOffsetText, fallback: 0);
+
+        _periodicCommands.Add(new Settings.PeriodicCommand(
+            text, TimeSpan.FromMinutes(interval), TimeSpan.FromMinutes(offset)));
+        _store!.SetPeriodicCommands(_scopePath, _periodicCommands);
+
+        PeriodicText = string.Empty;
+        PeriodicIntervalText = "1";
+        PeriodicOffsetText = "0";
+    }
+
+    private void DeletePeriodic(int index)
+    {
+        if (!CanEdit || index < 0 || index >= _periodicCommands.Count)
+            return;
+
+        _periodicCommands.RemoveAt(index);
+        _store!.SetPeriodicCommands(_scopePath, _periodicCommands);
+        AdjustSelectionAfterDelete(ref RefPeriodicSelectedRow(), index);
+    }
+
+    private static int ParsePositiveMinutes(string text, int fallback)
+    {
+        int value = ParseMinutes(text, fallback);
+        return value > 0 ? value : fallback;
+    }
+
+    private static int ParseMinutes(string text, int fallback)
+        => int.TryParse(
+            text,
+            System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture,
+            out int value)
+            ? value
+            : fallback;
+
+    private static void AdjustSelectionAfterDelete(ref int selectedRow, int deletedIndex)
+    {
+        if (selectedRow == deletedIndex)
+            selectedRow = -1;
+        else if (selectedRow > deletedIndex)
+            selectedRow--;
+    }
+
+    // ref-returning accessors so the three near-identical delete handlers can
+    // share one selection-adjustment helper without duplicating its logic.
+    private ref int RefLoginSelectedRow() => ref _loginSelectedRowField;
+    private ref int RefLoginCompleteSelectedRow() => ref _loginCompleteSelectedRowField;
+    private ref int RefPeriodicSelectedRow() => ref _periodicSelectedRowField;
+
+    private int _loginSelectedRowField = -1;
+    private int _loginCompleteSelectedRowField = -1;
+    private int _periodicSelectedRowField = -1;
 }

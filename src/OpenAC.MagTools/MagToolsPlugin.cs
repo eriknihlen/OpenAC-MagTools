@@ -56,6 +56,10 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
     private Looter? _looter;
     private InventoryPacker? _inventoryPacker;
     private OneTouchHeal? _oneTouchHeal;
+    private OpenMainPackOnLogin? _openMainPackOnLogin;
+    private LogOutOnDeath? _logOutOnDeath;
+    private LoginActions? _loginActions;
+    private PeriodicCommands? _periodicCommands;
     private Action<ItemIdentArgs>? _onUserItemIdentified;
     private Action<ItemIdentArgs>? _onContainerItemIdentified;
     private Action<double>? _tick;
@@ -108,6 +112,10 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _inventoryPacker = new InventoryPacker(host, _chat, _lootRules);
         _oneTouchHeal = new OneTouchHeal(host);
         _router = new MtCommandRouter(host, _chat, _settings, _inventoryPacker);
+        _openMainPackOnLogin = new OpenMainPackOnLogin(host, _settings.Misc.OpenMainPackOnLogin);
+        _logOutOnDeath = new LogOutOnDeath(host, _settings.Misc.LogOutOnDeath);
+        _loginActions = new LoginActions(host, _router, _settings.Commands);
+        _periodicCommands = new PeriodicCommands(host, _router, _settings.Commands);
 
         host.Log.Info("Mag-Tools initialized");
     }
@@ -181,6 +189,7 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _tinkeringAutoConfirm?.Start();
         _autoTradeAccept?.Start();
         _inventoryPacker?.AttachChatTrigger();
+        _logOutOnDeath?.Start();
 
         _packHotkey = _host.Hotkeys.Register(
             "pack-inventory",
@@ -249,6 +258,7 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _tinkeringAutoConfirm?.Stop();
         _autoTradeAccept?.Stop();
         _inventoryPacker?.DetachChatTrigger();
+        _logOutOnDeath?.Stop();
 
         _packHotkey?.Dispose();
         _packHotkey = null;
@@ -274,6 +284,8 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _autoTradeAdd?.Stop();
         _looter?.Stop();
         _inventoryPacker?.Stop();
+        _loginActions?.Stop();
+        _periodicCommands?.Stop();
 
         if (_session is not null)
         {
@@ -322,6 +334,19 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _autoTradeAdd?.Start(_scheduler);
         _looter?.Start(_scheduler);
         _inventoryPacker?.Bind(_scheduler);
+
+        // Character/server scope depends on the live account/server/character,
+        // which is only known once this edge has fired.
+        string characterScope = SettingsScope.Character(
+            _session.AccountName, _session.WorldName, _session.CharacterName);
+        string serverScope = SettingsScope.Server(_session.WorldName);
+
+        _main?.CharacterCommands.Bind(characterScope);
+        _main?.ServerCommands.Bind(serverScope);
+
+        _openMainPackOnLogin?.Run();
+        _loginActions?.Run(_scheduler, characterScope, serverScope);
+        _periodicCommands?.Start(_scheduler, characterScope, serverScope);
     }
 
     private void OnSessionLogoff()
@@ -343,6 +368,8 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _autoTradeAdd?.Stop();
         _looter?.Stop();
         _inventoryPacker?.Stop();
+        _loginActions?.Stop();
+        _periodicCommands?.Stop();
     }
 
     /// <summary>

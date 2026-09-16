@@ -282,4 +282,78 @@ public sealed class MagToolsPluginTests
 
         Assert.Contains(("apply", 1u, 999u), host.Automation.Items.Calls);
     }
+
+    [Fact]
+    public void LoginCompleteOpensTheMainPackByDefault()
+    {
+        var host = new FakeHost { HasUi = false };
+        host.Automation.Character.ObjectId = 42u;
+        var plugin = new MagToolsPlugin();
+
+        plugin.Initialize(host);
+        plugin.Enable();
+        host.Events.RaiseLoginComplete();
+
+        Assert.Contains(("use", 42u, 0u), host.Automation.Items.Calls);
+    }
+
+    [Fact]
+    public void LoginCompleteBindsTheCharacterAndServerCommandTabsToTheLiveScope()
+    {
+        var host = new FakeHost { HasUi = true };
+        host.Automation.Character.AccountName = "acct";
+        host.Automation.Character.WorldName = "Server";
+        host.Automation.Character.Name = "Acdream";
+
+        // Pre-seed the character-scope on-login list before the plugin ever
+        // initializes, the way a user's saved Mag-Tools.xml would arrive
+        // (the plugin's own SettingsFile loads once, at Initialize()).
+        var seedFile = new SettingsFile(host.Storage);
+        new ScopedCommandStore(seedFile).SetOnLoginCommands(
+            SettingsScope.Character("acct", "Server", "Acdream"), ["/mt test"]);
+        seedFile.Flush();
+
+        var plugin = new MagToolsPlugin();
+        plugin.Initialize(host);
+        plugin.Enable();
+        host.Events.RaiseLoginComplete();
+
+        var main = (MainViewModel)host.Ui.Panels[0].Binding;
+        Assert.Equal(["/mt test"], main.CharacterCommands.LoginCommands);
+    }
+
+    [Fact]
+    public void LogOutOnDeathIsDisabledByDefault()
+    {
+        var host = new FakeHost { HasUi = false };
+        var plugin = new MagToolsPlugin();
+
+        plugin.Initialize(host);
+        plugin.Enable();
+        host.Events.RaiseLoginComplete();
+        host.Events.RaiseLocalPlayerDied("You have died.");
+
+        Assert.Equal(0, host.Automation.Login.LogoutCalls);
+    }
+
+    [Fact]
+    public void LogOutOnDeathLogsOutWhenEnabled()
+    {
+        var host = new FakeHost { HasUi = false };
+        var plugin = new MagToolsPlugin();
+
+        plugin.Initialize(host);
+        plugin.Enable();
+
+        // Flip the live setting through the same route a user would: the
+        // plugin's own /mt console.
+        host.Commands.Handlers["mt"](
+            new AcDream.Plugin.Abstractions.PluginCommand(
+                "mt", "opt set Misc.LogOutOnDeath true", "/mt opt set Misc.LogOutOnDeath true"));
+
+        host.Events.RaiseLoginComplete();
+        host.Events.RaiseLocalPlayerDied("You have died.");
+
+        Assert.Equal(1, host.Automation.Login.LogoutCalls);
+    }
 }

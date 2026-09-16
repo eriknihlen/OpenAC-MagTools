@@ -55,8 +55,8 @@ public sealed class MainViewModel : IDisposable
         InventoryTools = new InventoryToolsPageViewModel(
             host, settings.ItemInfoOnIdent, host?.Automation.Spells);
         Tinkering = new TinkeringPageViewModel(tinkeringToolsHost);
-        CharacterCommands = new ScopedCommandsPageViewModel();
-        ServerCommands = new ScopedCommandsPageViewModel();
+        CharacterCommands = new ScopedCommandsPageViewModel(settings.Commands);
+        ServerCommands = new ScopedCommandsPageViewModel(settings.Commands);
         MiscOptions = new MiscOptionsPageViewModel(settings);
         Filters = new FiltersPageViewModel(settings);
         About = new AboutPageViewModel();

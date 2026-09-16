@@ -16,7 +16,7 @@ session. Rows that need a second party (trade, fellowship, corpse/player
 tracking) use `testaccount2` / `+Horan` via the headless host, run alongside
 the graphical primary session per the design doc's live-gate protocol (§8).
 
-## Gated (P1–P7 rounds)
+## Gated (P1–P8 rounds)
 
 | Feature | Date | Build | Steps | Observed | Verdict |
 |---|---|---|---|---|---|

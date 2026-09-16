@@ -17,17 +17,38 @@ public sealed class CombatTrackerHostTests
     }
 
     [Fact]
-    public void OnlyCombatKindLinesReachTheTrackers()
+    public void ChatKindLinesNeverReachTheTrackersEvenWhenCombatShaped()
     {
         (FakeHost host, _, CombatTrackerHost combatHost) = Build();
         var scheduler = new TickScheduler(host.Events, new ChatOutput(host));
         combatHost.Start(scheduler, "Frostfell", "Acdream");
 
-        host.Say("Bob", "You obliterate Drudge Skulker!", mine: true); // ordinary chat, not Combat kind
+        // Player speech that happens to be combat-shaped text must never
+        // reach the parsers — IsChat excludes it regardless of Kind.
+        host.Say("Bob", "You obliterate Drudge Skulker!", mine: true);
         Assert.Empty(combatHost.Current.CombatInfos);
 
         host.Combat("You obliterate Drudge Skulker!");
         Assert.Single(combatHost.Current.CombatInfos);
+    }
+
+    [Fact]
+    public void SystemKindCombatAdjacentLinesAlsoReachTheTrackers()
+    {
+        // Only evade/damage/kill lines the host itself composes arrive with
+        // Kind == Combat. Everything else combat-adjacent (aetheria surges,
+        // cloak surges, resists, spell fizzles) rides the host's generic
+        // text path and arrives with Kind == System — see the OnClassified
+        // remarks and docs/deviations.md. Feeding only Combat would starve
+        // AetheriaTracker/CloakTracker entirely.
+        (FakeHost host, _, CombatTrackerHost combatHost) = Build();
+        var scheduler = new TickScheduler(host.Events, new ChatOutput(host));
+        combatHost.Start(scheduler, "Frostfell", "Acdream");
+
+        host.System("Aetheria surges on Acdream with the power of Surge of Destruction!");
+
+        Assert.Single(combatHost.Current.AetheriaInfos);
+        Assert.Single(combatHost.Persistent.AetheriaInfos);
     }
 
     [Fact]
@@ -56,6 +77,22 @@ public sealed class CombatTrackerHostTests
         host.Combat("You zibber Reviath for 12 points of qqqzzz damage!");
 
         Assert.Contains(
+            host.ChatLines,
+            line => line.Contains(
+                "Unable to parse damage element from:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void UnparseableCombatLineStaysQuietWhenDebuggingIsDisabled()
+    {
+        (FakeHost host, SettingsManager settings, CombatTrackerHost combatHost) = Build();
+        settings.Misc.DebuggingEnabled.Value = false;
+        var scheduler = new TickScheduler(host.Events, new ChatOutput(host));
+        combatHost.Start(scheduler, "Frostfell", "Acdream");
+
+        host.Combat("You zibber Reviath for 12 points of qqqzzz damage!");
+
+        Assert.DoesNotContain(
             host.ChatLines,
             line => line.Contains(
                 "Unable to parse damage element from:", StringComparison.Ordinal));

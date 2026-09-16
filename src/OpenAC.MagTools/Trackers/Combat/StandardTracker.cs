@@ -42,7 +42,12 @@ public static class StandardTracker
         bool isCriticalHit = text.Contains("Critical hit!", StringComparison.Ordinal);
         bool isOverpower = text.Contains("Overpower!", StringComparison.Ordinal);
         bool isSneakAttack = text.Contains("Sneak Attack!", StringComparison.Ordinal);
-        bool isRecklessness = text.Contains("Recklessness!", StringComparison.Ordinal);
+        // The host's DefenderLine (an incoming reckless attack) emits
+        // "Reckless! ", not "Recklessness! " — only AttackerLine (the local
+        // player's own outgoing attack) uses the longer word. Accept both
+        // spellings; see docs/deviations.md.
+        bool isRecklessness = text.Contains("Recklessness!", StringComparison.Ordinal)
+            || text.Contains("Reckless!", StringComparison.Ordinal);
         bool isKillingBlow = false;
 
         int damageAmount = 0;
@@ -89,7 +94,16 @@ public static class StandardTracker
         }
         else
         {
-            Match? match = CombatMessages.FirstMatch(CombatMessages.MeleeMissileReceivedAttacks, text);
+            // A hostile monster's AI can use Dirty Fighting against the
+            // local player too, so a RECEIVED damage line can carry the same
+            // "Sneak Attack! "/"Reckless! " prefix the given-side tables
+            // already special-case. Strip it before matching so the
+            // received tables' greedy leading targetname group never
+            // swallows the prefix as part of the attacker's name — see
+            // CombatMessages.StripReceivedPrefixes and docs/deviations.md.
+            string receivedText = CombatMessages.StripReceivedPrefixes(text);
+
+            Match? match = CombatMessages.FirstMatch(CombatMessages.MeleeMissileReceivedAttacks, receivedText);
             if (match is not null)
             {
                 sourceName = match.Groups["targetname"].Value;
@@ -111,7 +125,7 @@ public static class StandardTracker
                 goto Found;
             }
 
-            match = CombatMessages.FirstMatch(CombatMessages.MagicReceivedAttacks, text);
+            match = CombatMessages.FirstMatch(CombatMessages.MagicReceivedAttacks, receivedText);
             if (match is not null)
             {
                 sourceName = match.Groups["targetname"].Value;

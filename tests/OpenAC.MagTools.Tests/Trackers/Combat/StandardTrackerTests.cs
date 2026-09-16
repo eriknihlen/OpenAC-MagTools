@@ -112,6 +112,76 @@ public sealed class StandardTrackerTests
         Assert.Equal(108, args.DamageAmount);
     }
 
+    // ── Melee/missile received with an attacking monster's Dirty Fighting ──
+    // A hostile monster's AI can use Sneak Attack/Reckless against the local
+    // player too. Neither prefix is anchored inside MeleeMissileReceivedAttacks,
+    // so it must be stripped before matching or the greedy leading
+    // targetname group swallows it — see docs/deviations.md.
+
+    [Fact]
+    public void SneakAttackReceivedStripsThePrefixFromTheAttackerName()
+    {
+        CombatEventArgs? args = StandardTracker.Parse(
+            "Sneak Attack! Drudge Prowler mangles your arm for 12 points of slashing damage!", Me);
+
+        Assert.NotNull(args);
+        Assert.Equal("Drudge Prowler", args!.SourceName);
+        Assert.Equal(Me, args.TargetName);
+        Assert.Equal(12, args.DamageAmount);
+        Assert.True(args.IsSneakAttack);
+    }
+
+    [Fact]
+    public void RecklessReceivedStripsThePrefixAndSetsIsRecklessness()
+    {
+        // The host's DefenderLine emits "Reckless! " (not "Recklessness! ")
+        // for an incoming reckless attack.
+        CombatEventArgs? args = StandardTracker.Parse(
+            "Reckless! Drudge Prowler mangles your arm for 12 points of slashing damage!", Me);
+
+        Assert.NotNull(args);
+        Assert.Equal("Drudge Prowler", args!.SourceName);
+        Assert.True(args.IsRecklessness);
+    }
+
+    [Fact]
+    public void CombinedSneakAttackAndRecklessReceivedStripsBothPrefixes()
+    {
+        CombatEventArgs? args = StandardTracker.Parse(
+            "Sneak Attack! Reckless! Drudge Prowler mangles your arm for 12 points of slashing damage!",
+            Me);
+
+        Assert.NotNull(args);
+        Assert.Equal("Drudge Prowler", args!.SourceName);
+        Assert.True(args.IsSneakAttack);
+        Assert.True(args.IsRecklessness);
+    }
+
+    [Fact]
+    public void RecklessnessSpellingIsAlsoAcceptedOnAReceivedLine()
+    {
+        // Defensive fallback in case a build ever emits the attacker-side
+        // wording ("Recklessness! ") on an incoming line.
+        CombatEventArgs? args = StandardTracker.Parse(
+            "Recklessness! Drudge Prowler mangles your arm for 12 points of slashing damage!", Me);
+
+        Assert.NotNull(args);
+        Assert.Equal("Drudge Prowler", args!.SourceName);
+        Assert.True(args.IsRecklessness);
+    }
+
+    [Fact]
+    public void MagicReceivedAlsoStripsTheReceivedPrefixes()
+    {
+        CombatEventArgs? args = StandardTracker.Parse(
+            "Reckless! Crystal Shard Sentinel scorches you for 47 points with Flame Arc VII.", Me);
+
+        Assert.NotNull(args);
+        Assert.Equal("Crystal Shard Sentinel", args!.SourceName);
+        Assert.Equal(AttackType.Magic, args.AttackType);
+        Assert.True(args.IsRecklessness);
+    }
+
     // ── Melee/missile given — the load-bearing spacing + ordering fix ──────
 
     [Fact]

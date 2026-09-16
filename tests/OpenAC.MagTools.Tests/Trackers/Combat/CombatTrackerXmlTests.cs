@@ -9,6 +9,24 @@ public sealed class CombatTrackerXmlTests
         => Assert.Null(CombatTrackerExporter.Export([], [], []));
 
     [Fact]
+    public void ExportWritesIndentedXmlLikeXmlDocumentSave()
+    {
+        var info = new CombatInfo("Acdream", "Drudge") { KillingBlows = 1 };
+
+        string? xml = CombatTrackerExporter.Export([info], [], []);
+
+        Assert.NotNull(xml);
+        // XmlDocument.Save (the original's own write path — this port
+        // writes to IPluginStorage instead of a real file, but keeps the
+        // same formatting) indents 2 spaces per nesting level and emits an
+        // XML declaration; OuterXml is compact single-line with neither.
+        // See docs/deviations.md.
+        Assert.StartsWith("<?xml", xml);
+        Assert.Contains("\n  <CombatInfos>", xml);
+        Assert.Contains("\n    <CombatInfo ", xml);
+    }
+
+    [Fact]
     public void ZeroValuedAttributesAreOmittedOnExport()
     {
         var info = new CombatInfo("Acdream", "Drudge");

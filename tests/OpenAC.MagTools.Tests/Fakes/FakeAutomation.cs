@@ -101,6 +101,15 @@ public sealed class RecordingChat : IPluginChat
 
     public event Action<PluginChatMessage>? Received;
 
+    /// <summary>
+    /// How many distinct handlers are currently subscribed to
+    /// <see cref="Received"/> — used to prove a shared fan-out
+    /// (<c>ChatClassificationDispatcher</c>) adds exactly one subscription
+    /// to the raw feed no matter how many of ITS OWN consumers subscribe to
+    /// it in turn.
+    /// </summary>
+    public int ReceivedSubscriberCount => Received?.GetInvocationList().Length ?? 0;
+
     public IDisposable RegisterFilter(Func<PluginChatMessage, bool> suppress)
     {
         _filters.Add(suppress);

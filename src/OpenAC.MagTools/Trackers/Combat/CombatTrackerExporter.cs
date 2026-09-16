@@ -116,7 +116,15 @@ public static class CombatTrackerExporter
             }
         }
 
-        return xmlDocument.OuterXml;
+        // The original wrote through XmlDocument.Save(path), which indents
+        // (2 spaces per level) and emits an XML declaration — OuterXml does
+        // neither (compact, single line, no declaration). Save(TextWriter)
+        // reproduces that exact formatting against the string this port
+        // hands to IPluginStorage instead of a real file. See
+        // docs/deviations.md.
+        using var writer = new StringWriter();
+        xmlDocument.Save(writer);
+        return writer.ToString();
     }
 
     private static void SetAttribute(XmlDocument document, XmlNode node, string name, string value)

@@ -1,4 +1,6 @@
 using OpenAC.MagTools.Trackers.Combat;
+using AetheriaNs = OpenAC.MagTools.Trackers.Combat.Aetheria;
+using CloaksNs = OpenAC.MagTools.Trackers.Combat.Cloaks;
 
 namespace OpenAC.MagTools.Tests.Trackers.Combat;
 
@@ -18,9 +20,40 @@ public sealed class CombatTrackerRowsTests
 
         Assert.Equal(4, rows.Count);
         Assert.Null(rows[0].TargetName);
+        Assert.Equal("", rows[0].Name);
+        Assert.Equal("KB's", rows[0].KillingBlows);
+        Assert.Equal("Dmg Rcvd", rows[0].DamageReceived);
+        Assert.Equal("Dmg Givn", rows[0].DamageGiven);
         Assert.Equal(Me, rows[1].TargetName);
+        Assert.Equal("All", rows[1].Name);
         Assert.Equal("Zebra", rows[2].TargetName);
+        Assert.Equal("Zebra", rows[2].Name);
         Assert.Equal("Apple", rows[3].TargetName);
+        Assert.Equal("Apple", rows[3].Name);
+    }
+
+    [Fact]
+    public void MonsterRowsAreAlsoSeededFromAetheriaAndCloakSurgesWithNoPlainDamage()
+    {
+        // The original's CombatTrackerGUI seeded the monster list from all
+        // three trackers. An opponent the local player only ever
+        // aetheria/cloak-surged against — no melee/missile/magic hit
+        // recorded at all — must still get a monster-list row.
+        var tracker = new CombatTracker();
+        tracker.OnAetheriaSurge(
+            new AetheriaNs.SurgeEventArgs(
+                Me, "Aetheria Only Target", AetheriaNs.SurgeType.SurgeOfAffliction),
+            Me);
+        tracker.OnCloakSurge(
+            new CloaksNs.SurgeEventArgs(
+                Me, "Cloak Only Target", CloaksNs.SurgeType.ShroudOfDarknessMelee),
+            Me);
+
+        IReadOnlyList<CombatTrackerRows.MonsterRow> rows =
+            CombatTrackerRows.BuildMonsterRows(tracker, Me, sortAlphabetically: true);
+
+        Assert.Contains(rows, r => r.TargetName == "Aetheria Only Target");
+        Assert.Contains(rows, r => r.TargetName == "Cloak Only Target");
     }
 
     [Fact]
@@ -49,10 +82,29 @@ public sealed class CombatTrackerRowsTests
         IReadOnlyList<CombatTrackerRows.MonsterRow> rows =
             CombatTrackerRows.BuildMonsterRows(tracker, Me, sortAlphabetically: false);
 
-        string allRow = rows[1].Text;
-        Assert.Contains("1", allRow); // one killing blow
-        Assert.Contains("30", allRow); // 10 + 20 damage given
-        Assert.Contains("5", allRow); // damage received
+        // Exact padded values (right-aligned into the column's pad width via
+        // PadRightAligned), not a bare Contains — "Contains("1")" would also
+        // match "10", "15", "21", etc. and prove nothing.
+        CombatTrackerRows.MonsterRow allRow = rows[1];
+        Assert.Equal("     1", allRow.KillingBlows); // one killing blow, padded to 6
+        Assert.Equal("        30", allRow.DamageGiven); // 10 + 20 damage given, padded to 10
+        Assert.Equal("         5", allRow.DamageReceived); // damage received, padded to 10
+    }
+
+    [Fact]
+    public void MonsterRowNumericColumnsAreRightAlignedByPadding()
+    {
+        var tracker = new CombatTracker();
+        tracker.OnCombatEvent(Hit(Me, "Drudge", 10), Me);
+        tracker.OnCombatEvent(Kill(Me, "Drudge"), Me);
+
+        CombatTrackerRows.MonsterRow allRow =
+            CombatTrackerRows.BuildMonsterRows(tracker, Me, sortAlphabetically: false)[1];
+
+        // Right-aligned via left-padding, per docs/deviations.md — there is
+        // no per-column alignment attribute in the markup.
+        Assert.EndsWith("1", allRow.KillingBlows);
+        Assert.StartsWith(" ", allRow.KillingBlows);
     }
 
     [Fact]
@@ -74,14 +126,17 @@ public sealed class CombatTrackerRowsTests
                 false, false, false, false, false, false, 15),
             Me);
 
-        IReadOnlyList<string> rows = CombatTrackerRows.BuildDamageRows(tracker, "Drudge", Me);
+        IReadOnlyList<CombatTrackerRows.DamageRow> rows =
+            CombatTrackerRows.BuildDamageRows(tracker, "Drudge", Me);
 
-        string slashRow = rows.Single(r => r.TrimStart().StartsWith("Slash", StringComparison.Ordinal));
-        Assert.Contains("40", slashRow);
+        CombatTrackerRows.DamageRow slashRow =
+            rows.Single(r => r.Label == "Slash");
+        Assert.Contains("40", slashRow.MeleeMissile);
 
-        string totalRow = rows.Single(r => r.TrimStart().StartsWith("Total", StringComparison.Ordinal));
-        Assert.Contains("40", totalRow); // Mel/Msl total
-        Assert.Contains("15", totalRow); // Magic total
+        CombatTrackerRows.DamageRow totalRow =
+            rows.Single(r => r.Label == "Total");
+        Assert.Contains("40", totalRow.MeleeMissile);
+        Assert.Contains("15", totalRow.Magic);
     }
 
     [Fact]
@@ -98,12 +153,14 @@ public sealed class CombatTrackerRowsTests
                 IsSneakAttack: false, IsRecklessness: false, IsKillingBlow: false, DamageAmount: 0),
             Me);
 
-        IReadOnlyList<string> rows = CombatTrackerRows.BuildDamageRows(tracker, "Drudge", Me);
-        string header = rows[0];
+        IReadOnlyList<CombatTrackerRows.DamageRow> rows =
+            CombatTrackerRows.BuildDamageRows(tracker, "Drudge", Me);
+        CombatTrackerRows.DamageRow header = rows[0];
 
+        Assert.Equal("Attacks", header.StatLabel);
         // 2 of 3 hit -> 66.666...% rounds to 67%.
-        Assert.Contains("3", header);
-        Assert.Contains("67%", header);
+        Assert.Contains("3", header.StatValue);
+        Assert.Contains("67%", header.StatValue);
     }
 
     [Fact]
@@ -132,12 +189,15 @@ public sealed class CombatTrackerRowsTests
                 IsSneakAttack: false, IsRecklessness: false, IsKillingBlow: false, DamageAmount: 0),
             Me);
 
-        IReadOnlyList<string> rows = CombatTrackerRows.BuildDamageRows(tracker, "Drudge", Me);
-        string typelessRow = rows.Single(r => r.TrimStart().StartsWith("Typeless", StringComparison.Ordinal));
+        IReadOnlyList<CombatTrackerRows.DamageRow> rows =
+            CombatTrackerRows.BuildDamageRows(tracker, "Drudge", Me);
+        CombatTrackerRows.DamageRow typelessRow =
+            rows.Single(r => r.Label == "Typeless");
 
+        Assert.Equal("Evades", typelessRow.StatLabel);
         // 4 melee defends (3 hits + 1 evade), 1 evaded -> 25%.
-        Assert.Contains("4", typelessRow);
-        Assert.Contains("25%", typelessRow);
+        Assert.Contains("4", typelessRow.StatValue);
+        Assert.Contains("25%", typelessRow.StatValue);
     }
 
     private static CombatEventArgs Hit(string source, string target, int damage) => new(

@@ -26,6 +26,7 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
     private TickScheduler? _scheduler;
     private SessionContext? _session;
     private ChatFilter? _chatFilter;
+    private ChatClassificationDispatcher? _chatDispatcher;
     private Loggers.Chat.ChatLogger? _chatLogger;
     private CombatTrackerHost? _combatTrackerHost;
     private LootRuleProcessor? _lootRules;
@@ -51,8 +52,12 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _settingsFile = new SettingsFile(host.Storage);
         _settings = new SettingsManager(_settingsFile);
         _chatFilter = new ChatFilter(host, _settings);
-        _chatLogger = new Loggers.Chat.ChatLogger(host, _settings);
-        _combatTrackerHost = new CombatTrackerHost(host, _chat, _settings);
+        // One shared classify-once fan-out for every filter-independent chat
+        // consumer (today: the chat logger and the combat tracker host) —
+        // see ChatClassificationDispatcher's remarks and docs/deviations.md.
+        _chatDispatcher = new ChatClassificationDispatcher(host);
+        _chatLogger = new Loggers.Chat.ChatLogger(host, _settings, _chatDispatcher);
+        _combatTrackerHost = new CombatTrackerHost(host, _chat, _settings, _chatDispatcher);
         _main = new MainViewModel(_settings, _chatLogger, host, _combatTrackerHost);
         _hud = new HudViewModel(host);
         _router = new MtCommandRouter(host, _chat, _settings);
@@ -189,6 +194,7 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         // logoff would.
         _chatLogger?.Stop();
         _combatTrackerHost?.Stop();
+        _chatDispatcher?.Stop();
 
         if (_session is not null)
         {
@@ -221,6 +227,7 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
     {
         if (_session is null || _scheduler is null)
             return;
+        _chatDispatcher?.Start();
         _chatLogger?.Start(_scheduler, _session.WorldName, _session.CharacterName);
         _combatTrackerHost?.Start(_scheduler, _session.WorldName, _session.CharacterName);
     }
@@ -229,6 +236,7 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
     {
         _chatLogger?.Stop();
         _combatTrackerHost?.Stop();
+        _chatDispatcher?.Stop();
         _chatFilter?.OnLogoff();
     }
 

@@ -22,19 +22,31 @@ public sealed class ChatLogger
 
     private readonly IPluginHost _host;
     private readonly SettingsManager _settings;
+    private readonly OpenAC.MagTools.Chat.ChatClassificationDispatcher? _dispatcher;
     private readonly ChatLogFileStore _fileStore;
     private Action<PluginChatMessage>? _onReceived;
+    private Action<PluginChatMessage, ChatClassifier.ChatLine>? _onClassified;
     private IDisposable? _flushRegistration;
     private string _server = string.Empty;
     private string _character = string.Empty;
     private bool _running;
 
-    public ChatLogger(IPluginHost host, SettingsManager settings)
+    /// <param name="dispatcher">
+    /// The shared classify-once fan-out (see
+    /// <see cref="OpenAC.MagTools.Chat.ChatClassificationDispatcher"/>) — pass the same
+    /// instance <c>CombatTrackerHost</c> uses so a chat line is classified
+    /// exactly once per delivery instead of once per consumer. Optional so
+    /// a caller (or a test) that has no dispatcher still gets correct,
+    /// self-contained behavior by classifying inline.
+    /// </param>
+    public ChatLogger(
+        IPluginHost host, SettingsManager settings, OpenAC.MagTools.Chat.ChatClassificationDispatcher? dispatcher = null)
     {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(settings);
         _host = host;
         _settings = settings;
+        _dispatcher = dispatcher;
         _fileStore = new ChatLogFileStore(host.Storage);
         Group1 = new ChatLogGroup(settings.ChatLogger.Group1);
         Group2 = new ChatLogGroup(settings.ChatLogger.Group2);
@@ -60,8 +72,16 @@ public sealed class ChatLogger
 
         Import();
 
-        _onReceived = OnReceived;
-        _host.Automation.Chat.Received += _onReceived;
+        if (_dispatcher is not null)
+        {
+            _onClassified = OnClassified;
+            _dispatcher.Classified += _onClassified;
+        }
+        else
+        {
+            _onReceived = OnReceived;
+            _host.Automation.Chat.Received += _onReceived;
+        }
 
         _flushRegistration = scheduler.Every(FlushInterval, Flush);
     }
@@ -73,6 +93,10 @@ public sealed class ChatLogger
             return;
 
         _running = false;
+
+        if (_onClassified is not null && _dispatcher is not null)
+            _dispatcher.Classified -= _onClassified;
+        _onClassified = null;
 
         if (_onReceived is not null)
             _host.Automation.Chat.Received -= _onReceived;
@@ -118,9 +142,22 @@ public sealed class ChatLogger
         }
     }
 
+    /// <summary>The no-dispatcher fallback path: classifies inline.</summary>
     private void OnReceived(PluginChatMessage message)
     {
-        if (!TryClassify(message, _host.Automation, out ChatClassifier.ChatChannels type))
+        if (string.IsNullOrEmpty(message.Text))
+            return;
+
+        OnClassified(message, ChatClassifier.Classify(message, _host.Automation));
+    }
+
+    /// <summary>
+    /// The shared-dispatcher path: <paramref name="line"/> was already
+    /// classified once by <see cref="OpenAC.MagTools.Chat.ChatClassificationDispatcher"/>.
+    /// </summary>
+    private void OnClassified(PluginChatMessage message, ChatClassifier.ChatLine line)
+    {
+        if (!TryClassify(line, out ChatClassifier.ChatChannels type))
             return;
 
         var entry = new LoggedChatEntry(message.Received, type, message.Text);
@@ -170,7 +207,22 @@ public sealed class ChatLogger
         if (string.IsNullOrEmpty(message.Text))
             return false;
 
-        ChatClassifier.ChatLine line = ChatClassifier.Classify(message, automation);
+        return TryClassify(ChatClassifier.Classify(message, automation), out type);
+    }
+
+    /// <summary>
+    /// Same verdict as the message-based overload, but reused from an
+    /// already-classified <see cref="ChatClassifier.ChatLine"/> — the shape
+    /// <see cref="OpenAC.MagTools.Chat.ChatClassificationDispatcher"/>'s subscribers use so a
+    /// line is never classified twice.
+    /// </summary>
+    internal static bool TryClassify(
+        ChatClassifier.ChatLine line, out ChatClassifier.ChatChannels type)
+    {
+        type = ChatClassifier.ChatChannels.None;
+
+        if (string.IsNullOrEmpty(line.Message))
+            return false;
 
         if (!line.IsChat)
             return false;

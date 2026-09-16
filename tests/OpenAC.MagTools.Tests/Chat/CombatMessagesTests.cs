@@ -83,4 +83,15 @@ public sealed class CombatMessagesTests
         Assert.True(recklessIndex >= 0 && recklessIndex < generalIndex);
         Assert.True(sneakRecklessIndex >= 0 && sneakRecklessIndex < generalIndex);
     }
+
+    [Theory]
+    [InlineData("Sneak Attack! Drudge hits you.", "Drudge hits you.")]
+    [InlineData("Reckless! Drudge hits you.", "Drudge hits you.")]
+    [InlineData("Recklessness! Drudge hits you.", "Drudge hits you.")]
+    [InlineData("Sneak Attack! Reckless! Drudge hits you.", "Drudge hits you.")]
+    [InlineData("Reckless! Sneak Attack! Drudge hits you.", "Drudge hits you.")]
+    [InlineData("Drudge hits you.", "Drudge hits you.")]
+    [InlineData("Critical hit! Drudge hits you.", "Critical hit! Drudge hits you.")]
+    public void StripReceivedPrefixesRemovesEveryLeadingDirtyFightingPrefix(string text, string expected)
+        => Assert.Equal(expected, CombatMessages.StripReceivedPrefixes(text));
 }

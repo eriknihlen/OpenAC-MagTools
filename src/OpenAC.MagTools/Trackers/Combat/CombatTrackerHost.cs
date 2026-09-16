@@ -21,13 +21,25 @@ public sealed class CombatTrackerHost
     private readonly IPluginHost _host;
     private readonly ChatOutput _chat;
     private readonly SettingsManager _settings;
+    private readonly OpenAC.MagTools.Chat.ChatClassificationDispatcher? _dispatcher;
     private Action<PluginChatMessage>? _onReceived;
+    private Action<PluginChatMessage, ChatClassifier.ChatLine>? _onClassified;
     private IDisposable? _saveRegistration;
     private string _server = string.Empty;
     private string _character = string.Empty;
     private bool _running;
 
-    public CombatTrackerHost(IPluginHost host, ChatOutput chat, SettingsManager settings)
+    /// <param name="dispatcher">
+    /// The shared classify-once fan-out (see
+    /// <see cref="OpenAC.MagTools.Chat.ChatClassificationDispatcher"/>) — pass the same
+    /// instance <c>ChatLogger</c> uses so a chat line is classified exactly
+    /// once per delivery instead of once per consumer. Optional so a caller
+    /// (or a test) that has no dispatcher still gets correct, self-contained
+    /// behavior by classifying inline.
+    /// </param>
+    public CombatTrackerHost(
+        IPluginHost host, ChatOutput chat, SettingsManager settings,
+        OpenAC.MagTools.Chat.ChatClassificationDispatcher? dispatcher = null)
     {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(chat);
@@ -35,6 +47,7 @@ public sealed class CombatTrackerHost
         _host = host;
         _chat = chat;
         _settings = settings;
+        _dispatcher = dispatcher;
     }
 
     public CombatTracker Current { get; } = new();
@@ -54,8 +67,16 @@ public sealed class CombatTrackerHost
 
         Import();
 
-        _onReceived = OnReceived;
-        _host.Automation.Chat.Received += _onReceived;
+        if (_dispatcher is not null)
+        {
+            _onClassified = OnClassified;
+            _dispatcher.Classified += _onClassified;
+        }
+        else
+        {
+            _onReceived = OnReceived;
+            _host.Automation.Chat.Received += _onReceived;
+        }
 
         _saveRegistration = scheduler.Every(SaveInterval, SavePersistent);
     }
@@ -67,6 +88,10 @@ public sealed class CombatTrackerHost
             return;
 
         _running = false;
+
+        if (_onClassified is not null && _dispatcher is not null)
+            _dispatcher.Classified -= _onClassified;
+        _onClassified = null;
 
         if (_onReceived is not null)
             _host.Automation.Chat.Received -= _onReceived;
@@ -158,16 +183,36 @@ public sealed class CombatTrackerHost
 
     /// <summary>
     /// Parses one delivered chat line and forwards whatever it recognizes to
-    /// both <see cref="Current"/> and <see cref="Persistent"/>. Only lines
-    /// classified as combat (host <c>PluginChatMessage.Kind == 8</c>) reach
-    /// the parsers — this replaces the original's own <c>Util.IsChat</c>
-    /// guard inside each tracker, since the host already tells a plugin
-    /// which lines are combat lines.
+    /// both <see cref="Current"/> and <see cref="Persistent"/>.
     /// </summary>
+    /// <remarks>
+    /// On this host, only evade/damage/kill lines that the host itself
+    /// COMPOSES (<see cref="OpenAC.MagTools.Chat.ChatClassifier.ChatLine.Kind"/>
+    /// == <see cref="ChatMessageKind.Combat"/> — <c>CombatChatTranslator</c>'s
+    /// damage-dealt/taken/missed/evaded lines, plus the retail
+    /// Victim/KillerNotification kill messages) arrive with that Kind.
+    /// Server-composed combat-ADJACENT text — spell damage, resists, magic
+    /// cast fizzles, aetheria surges, cloak surges, and Dirty-Fighting-style
+    /// notices — rides the host's generic text path
+    /// (<c>WeenieError</c>/<c>WeenieErrorWithString</c> and similar) and
+    /// arrives as <see cref="ChatMessageKind.System"/> instead, exactly like
+    /// the original's "every chat-box line except player chat" gate saw it.
+    /// Feeding only <c>Combat</c> would silently starve
+    /// <see cref="Aetheria.AetheriaTracker"/> and <see cref="Cloaks.CloakTracker"/>,
+    /// which never see a Combat-kind line to parse — see docs/deviations.md.
+    /// <c>IsChat</c> is excluded so player speech that merely contains
+    /// combat-shaped words never reaches the parsers.
+    /// </remarks>
     private void OnReceived(PluginChatMessage message)
+        => OnClassified(message, ChatClassifier.Classify(message, _host.Automation));
+
+    /// <summary>
+    /// The shared-dispatcher path: <paramref name="line"/> was already
+    /// classified once by <see cref="OpenAC.MagTools.Chat.ChatClassificationDispatcher"/>.
+    /// </summary>
+    private void OnClassified(PluginChatMessage message, ChatClassifier.ChatLine line)
     {
-        ChatClassifier.ChatLine line = ChatClassifier.Classify(message, _host.Automation);
-        if (line.Kind != ChatMessageKind.Combat)
+        if (line.Kind is not (ChatMessageKind.Combat or ChatMessageKind.System) || line.IsChat)
             return;
 
         string text = line.Message;
@@ -176,8 +221,15 @@ public sealed class CombatTrackerHost
 
         string localPlayerName = _host.Automation.Character.Name;
 
-        CombatEventArgs? combatEvent =
-            StandardTracker.Parse(text, localPlayerName, diagnostic => _chat.Write(diagnostic));
+        // The original's "Unable to parse ..." diagnostics
+        // (StandardTracker's Debug.WriteToChat calls) only ever printed when
+        // debugging was turned on — see docs/deviations.md and the Misc ->
+        // Options "Debugging Enabled" toggle.
+        Action<string>? diagnostic = _settings.Misc.DebuggingEnabled.Value
+            ? diagnosticText => _chat.Write(diagnosticText)
+            : null;
+
+        CombatEventArgs? combatEvent = StandardTracker.Parse(text, localPlayerName, diagnostic);
         if (combatEvent is not null)
         {
             Current.OnCombatEvent(combatEvent, localPlayerName);

@@ -5,22 +5,31 @@ namespace OpenAC.MagTools.Trackers.Combat;
 /// <summary>
 /// Builds the two Combat-tab list bodies from a <see cref="CombatTracker"/>.
 /// Port of the maths in the original's <c>Views/CombatTrackerGUI.cs</c> and
-/// <c>Views/CombatTrackerGUIInfo.cs</c>, adapted to one plain string per row
-/// instead of five separate <c>HudStaticText</c> columns — see
-/// docs/deviations.md for why (the host's list widget here is single-column;
-/// there is no per-column pixel-width primitive to port to).
+/// <c>Views/CombatTrackerGUIInfo.cs</c>. The host's <c>&lt;list&gt;</c>
+/// control supports real <c>&lt;column&gt;</c> children (see
+/// docs/plugin-ui-markup.md), so both lists are genuine multi-column lists
+/// here — monster list 111/37/55/*, damage list 40/52/52/45/*. Every VALUE
+/// and PERCENTAGE computation is byte-for-byte the same math as the
+/// original; the one real gap is that the markup has no per-column
+/// alignment attribute, so a numeric cell is right-aligned by padding the
+/// string itself (<see cref="PadRightAligned"/>) rather than by a column
+/// property. See docs/deviations.md.
 /// </summary>
 public static class CombatTrackerRows
 {
-    private const string NameHeader = "";
-
     /// <summary>
-    /// One monster-list row: <see cref="TargetName"/> is null for the header
-    /// row, or the local player's own name for the "All" aggregate row (so a
-    /// caller can feed it straight into <see cref="CombatTracker.GetCombatInfos"/>
-    /// the same way row 1 does in the original), or the opponent's name.
+    /// One monster-list row, one value per column. <see cref="TargetName"/>
+    /// is null for the header row, or the local player's own name for the
+    /// "All" aggregate row (so a caller can feed it straight into
+    /// <see cref="CombatTracker.GetCombatInfos"/> the same way row 1 does in
+    /// the original), or the opponent's name. The original's selected-row
+    /// marker glyph is dropped entirely (not moved into the name cell) —
+    /// see docs/deviations.md, "Combat monster-list row marker": the host's
+    /// <c>&lt;list selectionband="true"&gt;</c> already highlights the
+    /// selected row.
     /// </summary>
-    public readonly record struct MonsterRow(string Text, string? TargetName);
+    public readonly record struct MonsterRow(
+        string Name, string KillingBlows, string DamageReceived, string DamageGiven, string? TargetName);
 
     /// <summary>
     /// Builds the monster list: a header row, the "All" aggregate row, then
@@ -36,45 +45,54 @@ public static class CombatTrackerRows
 
         var rows = new List<MonsterRow>
         {
-            new(Pad(NameHeader, "KB's", "Dmg Rcvd", "Dmg Givn"), null),
-            new(BuildAggregateRow(tracker, localPlayerName), localPlayerName),
+            new(string.Empty, "KB's", "Dmg Rcvd", "Dmg Givn", null),
+            BuildAggregateRow(tracker, localPlayerName),
         };
 
+        // The original's CombatTrackerGUI seeded the monster list from all
+        // three trackers, not just the plain combat one — an opponent the
+        // local player only ever aetheria-surged or cloak-surged against
+        // (no melee/missile/magic hit recorded at all) still gets a row.
         var names = new List<string>();
         foreach (CombatInfo info in tracker.GetCombatInfos(localPlayerName))
-        {
-            string? opponent = OpponentOf(info, localPlayerName);
-            if (opponent is null || names.Contains(opponent, StringComparer.Ordinal))
-                continue;
-            names.Add(opponent);
-        }
+            AddOpponent(names, OpponentOf(info.SourceName, info.TargetName, localPlayerName));
+        foreach (AetheriaInfo info in tracker.GetAetheriaInfos(localPlayerName))
+            AddOpponent(names, OpponentOf(info.SourceName, info.TargetName, localPlayerName));
+        foreach (CloakInfo info in tracker.GetCloakInfos(localPlayerName))
+            AddOpponent(names, OpponentOf(info.SourceName, info.TargetName, localPlayerName));
 
         if (sortAlphabetically)
             names.Sort(StringComparer.Ordinal);
 
         foreach (string name in names)
-            rows.Add(new MonsterRow(BuildOpponentRow(tracker, name, localPlayerName), name));
+            rows.Add(BuildOpponentRow(tracker, name, localPlayerName));
 
         return rows;
     }
 
-    private static string? OpponentOf(CombatInfo info, string localPlayerName)
+    private static string? OpponentOf(string sourceName, string targetName, string localPlayerName)
     {
-        if (!string.IsNullOrEmpty(info.SourceName) && info.SourceName != localPlayerName)
-            return info.SourceName;
-        if (!string.IsNullOrEmpty(info.TargetName) && info.TargetName != localPlayerName)
-            return info.TargetName;
+        if (!string.IsNullOrEmpty(sourceName) && sourceName != localPlayerName)
+            return sourceName;
+        if (!string.IsNullOrEmpty(targetName) && targetName != localPlayerName)
+            return targetName;
         return null;
     }
 
-    private static string BuildAggregateRow(CombatTracker tracker, string localPlayerName)
-        => BuildMonsterRow(tracker.GetCombatInfos(localPlayerName), "All", localPlayerName);
+    private static void AddOpponent(List<string> names, string? opponent)
+    {
+        if (opponent is not null && !names.Contains(opponent, StringComparer.Ordinal))
+            names.Add(opponent);
+    }
 
-    private static string BuildOpponentRow(CombatTracker tracker, string name, string localPlayerName)
-        => BuildMonsterRow(tracker.GetCombatInfos(name), name, localPlayerName);
+    private static MonsterRow BuildAggregateRow(CombatTracker tracker, string localPlayerName)
+        => BuildMonsterRow(tracker.GetCombatInfos(localPlayerName), "All", localPlayerName, localPlayerName);
 
-    private static string BuildMonsterRow(
-        IReadOnlyList<CombatInfo> combatInfos, string displayName, string localPlayerName)
+    private static MonsterRow BuildOpponentRow(CombatTracker tracker, string name, string localPlayerName)
+        => BuildMonsterRow(tracker.GetCombatInfos(name), name, localPlayerName, name);
+
+    private static MonsterRow BuildMonsterRow(
+        IReadOnlyList<CombatInfo> combatInfos, string displayName, string localPlayerName, string targetName)
     {
         int killingBlows = 0;
         long damageReceived = 0;
@@ -97,24 +115,42 @@ public static class CombatTrackerRows
         string rcvd = damageReceived == 0 ? "" : NumberFormatter.Format(damageReceived, "#,##0", 9999999);
         string givn = damageGiven == 0 ? "" : NumberFormatter.Format(damageGiven, "#,##0", 99999999);
 
-        return Pad(displayName, kb, rcvd, givn);
+        return new MonsterRow(
+            displayName,
+            PadRightAligned(kb, 6),
+            PadRightAligned(rcvd, 10),
+            PadRightAligned(givn, 10),
+            targetName);
     }
 
-    private static string Pad(string name, string col2, string col3, string col4)
-        => string.Format(
-            CultureInfo.InvariantCulture,
-            "{0,-24} {1,6} {2,10} {3,10}", Truncate(name, 24), col2, col3, col4);
-
-    private static string Truncate(string text, int max) => text.Length <= max ? text : text[..max];
+    /// <summary>
+    /// Right-aligns a numeric/percentage cell by padding on the left, since
+    /// the markup's <c>&lt;column&gt;</c> element has no alignment
+    /// attribute (see the class remarks and docs/deviations.md). The pad
+    /// widths below reuse the character counts the original single-string
+    /// layout used (<c>"{1,6} {2,10} {3,10}"</c> for the monster list,
+    /// <c>"{1,9} {2,9} ... {4,9}"</c> for the damage list) as a best-effort
+    /// approximation of the authored pixel column widths — there is no
+    /// pixel-to-character metric available to compute this exactly.
+    /// </summary>
+    private static string PadRightAligned(string value, int width) => value.PadLeft(width);
 
     // ── Damage/info list ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// One damage-list row, one value per column: an element/summary label,
+    /// the melee/missile and magic damage-received cells, a right-hand
+    /// stat label, and its value.
+    /// </summary>
+    public readonly record struct DamageRow(
+        string Label, string MeleeMissile, string Magic, string StatLabel, string StatValue);
 
     /// <summary>
     /// Builds the damage-list body for whichever monster row is selected
     /// (<paramref name="targetName"/> — the local player's own name for
     /// "All", per <see cref="MonsterRow.TargetName"/>).
     /// </summary>
-    public static IReadOnlyList<string> BuildDamageRows(
+    public static IReadOnlyList<DamageRow> BuildDamageRows(
         CombatTracker tracker, string? targetName, string localPlayerName)
     {
         ArgumentNullException.ThrowIfNull(tracker);
@@ -162,7 +198,7 @@ public static class CombatTrackerRows
 
         static string Cell(Dictionary<DamageElement, int> bucket, DamageElement element)
             => bucket.TryGetValue(element, out int value) && value != 0
-                ? value.ToString("#,##0", CultureInfo.InvariantCulture)
+                ? PadRightAligned(value.ToString("#,##0", CultureInfo.InvariantCulture), 9)
                 : "";
 
         // Attacks / evades / resists.
@@ -281,22 +317,62 @@ public static class CombatTrackerRows
 
         return
         [
-            Row("", "Mel/Msl", "Magic", "Attacks", attacksCell),
-            Row("Typeless", Cell(receivedMeleeMissile, DamageElement.Typeless), Cell(receivedMagic, DamageElement.Typeless), "Evades", evadesCell),
-            Row("Slash", Cell(receivedMeleeMissile, DamageElement.Slash), Cell(receivedMagic, DamageElement.Slash), "Resists", resistsCell),
-            Row("Pierce", Cell(receivedMeleeMissile, DamageElement.Pierce), Cell(receivedMagic, DamageElement.Pierce), "A.Surges", aSurgesCell),
-            Row("Bludge", Cell(receivedMeleeMissile, DamageElement.Bludge), Cell(receivedMagic, DamageElement.Bludge), "C.Surges", cSurgesCell),
-            Row("Fire", Cell(receivedMeleeMissile, DamageElement.Fire), Cell(receivedMagic, DamageElement.Fire), "", ""),
-            Row("Cold", Cell(receivedMeleeMissile, DamageElement.Cold), Cell(receivedMagic, DamageElement.Cold), "Av/Mx", avgMaxCell),
-            Row("Acid", Cell(receivedMeleeMissile, DamageElement.Acid), Cell(receivedMagic, DamageElement.Acid), "Crits", critsCell),
-            Row("Electric", Cell(receivedMeleeMissile, DamageElement.Electric), Cell(receivedMagic, DamageElement.Electric), "Av/Mx", critsAvgMaxCell),
-            "",
-            Row(
+            new DamageRow("", "Mel/Msl", "Magic", "Attacks", PadRightAligned(attacksCell, 9)),
+            new DamageRow(
+                "Typeless",
+                Cell(receivedMeleeMissile, DamageElement.Typeless),
+                Cell(receivedMagic, DamageElement.Typeless),
+                "Evades",
+                PadRightAligned(evadesCell, 9)),
+            new DamageRow(
+                "Slash",
+                Cell(receivedMeleeMissile, DamageElement.Slash),
+                Cell(receivedMagic, DamageElement.Slash),
+                "Resists",
+                PadRightAligned(resistsCell, 9)),
+            new DamageRow(
+                "Pierce",
+                Cell(receivedMeleeMissile, DamageElement.Pierce),
+                Cell(receivedMagic, DamageElement.Pierce),
+                "A.Surges",
+                PadRightAligned(aSurgesCell, 9)),
+            new DamageRow(
+                "Bludge",
+                Cell(receivedMeleeMissile, DamageElement.Bludge),
+                Cell(receivedMagic, DamageElement.Bludge),
+                "C.Surges",
+                PadRightAligned(cSurgesCell, 9)),
+            new DamageRow(
+                "Fire",
+                Cell(receivedMeleeMissile, DamageElement.Fire),
+                Cell(receivedMagic, DamageElement.Fire),
+                "",
+                ""),
+            new DamageRow(
+                "Cold",
+                Cell(receivedMeleeMissile, DamageElement.Cold),
+                Cell(receivedMagic, DamageElement.Cold),
+                "Av/Mx",
+                PadRightAligned(avgMaxCell, 9)),
+            new DamageRow(
+                "Acid",
+                Cell(receivedMeleeMissile, DamageElement.Acid),
+                Cell(receivedMagic, DamageElement.Acid),
+                "Crits",
+                PadRightAligned(critsCell, 9)),
+            new DamageRow(
+                "Electric",
+                Cell(receivedMeleeMissile, DamageElement.Electric),
+                Cell(receivedMagic, DamageElement.Electric),
+                "Av/Mx",
+                PadRightAligned(critsAvgMaxCell, 9)),
+            new DamageRow("", "", "", "", ""),
+            new DamageRow(
                 "Total",
-                totalMeleeMissile == 0 ? "" : totalMeleeMissile.ToString("#,##0", CultureInfo.InvariantCulture),
-                totalMagic == 0 ? "" : totalMagic.ToString("#,##0", CultureInfo.InvariantCulture),
+                totalMeleeMissile == 0 ? "" : PadRightAligned(totalMeleeMissile.ToString("#,##0", CultureInfo.InvariantCulture), 9),
+                totalMagic == 0 ? "" : PadRightAligned(totalMagic.ToString("#,##0", CultureInfo.InvariantCulture), 9),
                 "Total",
-                totalDamageCell),
+                PadRightAligned(totalDamageCell, 9)),
         ];
     }
 
@@ -309,9 +385,4 @@ public static class CombatTrackerRows
         double percent = numerator / (double)denominator * 100;
         return Math.Round(percent, digits).ToString("F" + digits.ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
     }
-
-    private static string Row(string col0, string col1, string col2, string col3, string col4)
-        => string.Format(
-            CultureInfo.InvariantCulture,
-            "{0,-9} {1,9} {2,9} {3,-9} {4,9}", col0, col1, col2, col3, col4);
 }

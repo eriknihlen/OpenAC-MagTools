@@ -25,6 +25,52 @@ namespace OpenAC.MagTools.Chat;
 /// </remarks>
 public static class CombatMessages
 {
+    /// <summary>
+    /// Prefixes retail can put in front of a RECEIVED melee/missile or magic
+    /// damage line when the attacking monster's AI used the Dirty Fighting
+    /// skill against the local player: "Sneak Attack! ", "Reckless! " (the
+    /// defender-side wording — see <c>CombatNotificationText.DefenderLine</c>
+    /// in the acdream host, which emits "Reckless! " rather than
+    /// "Recklessness! " for an incoming attack), and "Recklessness! " (kept
+    /// as a defensive fallback in case a build ever emits the attacker-side
+    /// wording on a received line). None of <see cref="MeleeMissileReceivedAttacks"/>
+    /// or <see cref="MagicReceivedAttacks"/> anchor past these — without
+    /// stripping them first, the tables' greedy leading
+    /// <c>(?&lt;targetname&gt;.+)</c> group would swallow the prefix as if it
+    /// were part of the monster's name. Applied only on the received side:
+    /// <see cref="MeleeMissileGivenAttacks"/>/<see cref="MagicGivenAttacks"/>
+    /// already have explicit Sneak-Attack/Recklessness pattern variants for
+    /// the local player's own outgoing attacks.
+    /// </summary>
+    private static readonly string[] ReceivedPrefixesToStrip =
+        ["Sneak Attack! ", "Reckless! ", "Recklessness! "];
+
+    /// <summary>
+    /// Strips every leading combination of <see cref="ReceivedPrefixesToStrip"/>
+    /// from <paramref name="text"/> (retail can combine "Sneak Attack! " with
+    /// "Reckless! " on the same line) so a received-side regex match never
+    /// captures the prefix as part of the attacker's name.
+    /// </summary>
+    public static string StripReceivedPrefixes(string text)
+    {
+        bool strippedAny;
+        do
+        {
+            strippedAny = false;
+            foreach (string prefix in ReceivedPrefixesToStrip)
+            {
+                if (text.StartsWith(prefix, StringComparison.Ordinal))
+                {
+                    text = text[prefix.Length..];
+                    strippedAny = true;
+                }
+            }
+        }
+        while (strippedAny);
+
+        return text;
+    }
+
     // ── Failed attacks (evade / resist) — direction inferred by the caller ──
 
     /// <summary>

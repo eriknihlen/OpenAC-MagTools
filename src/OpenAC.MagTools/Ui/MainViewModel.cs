@@ -105,6 +105,7 @@ public sealed class MainViewModel : IDisposable
         MiscOptions.Options.Dispose();
         Filters.Options.Dispose();
         ChatLogger.Dispose();
+        Combat.Dispose();
     }
 
     /// <summary>Reverses <see cref="Dispose"/> for a Disable()/Enable() cycle.</summary>
@@ -117,6 +118,7 @@ public sealed class MainViewModel : IDisposable
         MiscOptions.Options.Resubscribe();
         Filters.Options.Resubscribe();
         ChatLogger.Resubscribe();
+        Combat.Resubscribe();
     }
 
     private enum TopTab { Trackers, Loggers, Tools, Misc }
@@ -280,21 +282,35 @@ public sealed class MainViewModel : IDisposable
 
     // ---- Trackers -> Combat --------------------------------------------------
 
-    public IReadOnlyList<string> CombatCurrentMonsterRows => Combat.CurrentMonsterRows;
+    public IReadOnlyList<string> CombatCurrentMonsterNames => Combat.CurrentMonsterNames;
+    public IReadOnlyList<string> CombatCurrentMonsterKillingBlows => Combat.CurrentMonsterKillingBlows;
+    public IReadOnlyList<string> CombatCurrentMonsterDamageReceived => Combat.CurrentMonsterDamageReceived;
+    public IReadOnlyList<string> CombatCurrentMonsterDamageGiven => Combat.CurrentMonsterDamageGiven;
     public int CombatCurrentMonsterSelectedRow => Combat.CurrentMonsterSelectedRow;
     public Action<int> SelectCombatCurrentMonster => Combat.SelectCurrentMonster;
-    public IReadOnlyList<string> CombatCurrentDamageRows => Combat.CurrentDamageRows;
+
+    public IReadOnlyList<string> CombatCurrentDamageLabels => Combat.CurrentDamageLabels;
+    public IReadOnlyList<string> CombatCurrentDamageMeleeMissile => Combat.CurrentDamageMeleeMissile;
+    public IReadOnlyList<string> CombatCurrentDamageMagic => Combat.CurrentDamageMagic;
+    public IReadOnlyList<string> CombatCurrentDamageStatLabels => Combat.CurrentDamageStatLabels;
+    public IReadOnlyList<string> CombatCurrentDamageStatValues => Combat.CurrentDamageStatValues;
     public int CombatCurrentDamageSelectedRow => Combat.CurrentDamageSelectedRow;
     public Action<int> SelectCombatCurrentDamage => Combat.SelectCurrentDamage;
 
-    public IReadOnlyList<string> CombatPersistentMonsterRows =>
-        Combat.PersistentMonsterRows;
+    public IReadOnlyList<string> CombatPersistentMonsterNames => Combat.PersistentMonsterNames;
+    public IReadOnlyList<string> CombatPersistentMonsterKillingBlows => Combat.PersistentMonsterKillingBlows;
+    public IReadOnlyList<string> CombatPersistentMonsterDamageReceived => Combat.PersistentMonsterDamageReceived;
+    public IReadOnlyList<string> CombatPersistentMonsterDamageGiven => Combat.PersistentMonsterDamageGiven;
     public int CombatPersistentMonsterSelectedRow =>
         Combat.PersistentMonsterSelectedRow;
     public Action<int> SelectCombatPersistentMonster =>
         Combat.SelectPersistentMonster;
-    public IReadOnlyList<string> CombatPersistentDamageRows =>
-        Combat.PersistentDamageRows;
+
+    public IReadOnlyList<string> CombatPersistentDamageLabels => Combat.PersistentDamageLabels;
+    public IReadOnlyList<string> CombatPersistentDamageMeleeMissile => Combat.PersistentDamageMeleeMissile;
+    public IReadOnlyList<string> CombatPersistentDamageMagic => Combat.PersistentDamageMagic;
+    public IReadOnlyList<string> CombatPersistentDamageStatLabels => Combat.PersistentDamageStatLabels;
+    public IReadOnlyList<string> CombatPersistentDamageStatValues => Combat.PersistentDamageStatValues;
     public int CombatPersistentDamageSelectedRow =>
         Combat.PersistentDamageSelectedRow;
     public Action<int> SelectCombatPersistentDamage => Combat.SelectPersistentDamage;

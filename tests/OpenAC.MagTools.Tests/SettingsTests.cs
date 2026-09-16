@@ -238,6 +238,62 @@ public sealed class SettingsFileTests
         var reloaded = new SettingsFile(storage);
         Assert.Equal("second", reloaded.GetSetting("ChatLogger/Group1/Custom", string.Empty));
     }
+
+    [Fact]
+    public void FlushPreservesElementIdentityForAnUntouchedSubtree()
+    {
+        // SyncChildrenWholesale's real guarantee: a caller holding an
+        // XElement from GetNode() for a subtree NOTHING dirtied keeps that
+        // exact same instance across a flush that reloads and merges in a
+        // sibling's concurrent write — it must not be silently replaced by a
+        // clone just because its parent's wholesale-sync path ran.
+        var storage = new MemoryStorage();
+        var file = new SettingsFile(storage);
+
+        XElement untouched = file.GetNode("Misc/WindowPositions", createIfMissing: true)!;
+        untouched.Add(new XElement("Window", "Main:10,10"));
+        file.MarkDirty("Misc/WindowPositions");
+        file.Flush();
+
+        var writtenElsewhere = new SettingsFile(storage);
+        writtenElsewhere.PutSetting("Filters/AttackEvades", true);
+        writtenElsewhere.Flush();
+
+        // Dirty something ELSE in `file`'s own document so its next Flush()
+        // reloads and merges — Misc/WindowPositions is untouched by this
+        // instance the whole time.
+        file.PutSetting("Filters/DefenseEvades", true);
+        file.Flush();
+
+        Assert.True(untouched.Parent is not null, "the node must still be attached");
+        Assert.Equal(
+            "Main:10,10",
+            file.GetChildrenInnerTexts("Misc/WindowPositions")[0]);
+
+        // The instance itself still resolves to the SAME element GetNode()
+        // handed out earlier.
+        XElement again = file.GetNode("Misc/WindowPositions", createIfMissing: false)!;
+        Assert.Same(untouched, again);
+    }
+
+    [Fact]
+    public void FlushLeavesTheDocumentDirtyWhenStorageIsUnavailable()
+    {
+        var storage = new MemoryStorage { IsAvailable = false };
+        var file = new SettingsFile(storage);
+
+        file.PutSetting("Filters/AttackEvades", true);
+        file.Flush();
+
+        Assert.Equal(0, storage.WriteCount);
+        Assert.True(file.HasPendingSave);
+
+        storage.IsAvailable = true;
+        file.Flush();
+
+        Assert.Equal(1, storage.WriteCount);
+        Assert.False(file.HasPendingSave);
+    }
 }
 
 public sealed class SettingTests

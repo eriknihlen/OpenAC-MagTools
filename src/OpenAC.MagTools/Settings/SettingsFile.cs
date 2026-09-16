@@ -198,13 +198,11 @@ public sealed class SettingsFile
         if (!_dirty)
             return;
 
-        _dirty = false;
-        _secondsSinceChange = 0d;
+        // Storage being down does not clear _dirty or _dirtyPaths: the next
+        // Tick() (or an explicit Flush()) retries once it comes back,
+        // instead of silently losing the pending write.
         if (!_storage.IsAvailable)
-        {
-            _dirtyPaths.Clear();
             return;
-        }
 
         if (_dirtyPaths.Count > 0)
         {
@@ -212,11 +210,18 @@ public sealed class SettingsFile
             XElement? freshRoot = fresh.Root;
             if (freshRoot is not null)
                 MergeNonDirty(Root, freshRoot, string.Empty);
-            _dirtyPaths.Clear();
         }
 
+        // _dirty and _dirtyPaths are cleared only once WriteText has actually
+        // returned — a throw here (e.g. a full disk) leaves this instance
+        // still marked dirty for the next attempt, rather than reporting a
+        // save that never happened.
         _storage.WriteText(StorageKey, Serialize(_document));
         SaveCount++;
+
+        _dirty = false;
+        _secondsSinceChange = 0d;
+        _dirtyPaths.Clear();
     }
 
     /// <summary>The document's current text, as it would be written.</summary>
@@ -329,11 +334,19 @@ public sealed class SettingsFile
                     continue;
                 }
 
-                var clone = new XElement(sourceChild);
                 if (destinationChild is not null)
-                    destinationChild.ReplaceWith(clone);
+                {
+                    // Merge in place rather than clone-and-replace, so a
+                    // caller's own reference into this untouched child (or
+                    // one of ITS descendants, via GetNode) survives the
+                    // merge — see SyncChildrenWholesale's remarks.
+                    MergeElementInPlace(destinationChild, sourceChild);
+                }
                 else
-                    destination.Add(clone);
+                {
+                    destination.Add(new XElement(sourceChild));
+                }
+
                 continue;
             }
 
@@ -390,20 +403,97 @@ public sealed class SettingsFile
     }
 
     /// <summary>
-    /// Replaces every child of <paramref name="destination"/> with a clone of
-    /// <paramref name="source"/>'s children. Safe only when no path under
-    /// this subtree is dirty, so there is nothing to preserve identity-wise.
+    /// Syncs <paramref name="destination"/>'s children and attributes to
+    /// match <paramref name="source"/>, called only when nothing under this
+    /// subtree is dirty.
     /// </summary>
+    /// <remarks>
+    /// The real guarantee: any destination child whose element name has a
+    /// same-named counterpart in source keeps its own <see cref="XElement"/>
+    /// identity (recursively) rather than being replaced by a clone. That
+    /// matters because <see cref="GetNode"/> can hand a caller a reference
+    /// into this document — a reload/merge must not silently swap that
+    /// reference out from under them for a subtree that did not actually
+    /// change. It is NOT a guarantee about which of several same-named
+    /// siblings pairs with which (they pair off in document order, first to
+    /// first), and it does not preserve identity for a child whose name has
+    /// no counterpart in <paramref name="source"/> — that child is dropped.
+    /// Attributes are added, updated, and removed to match source exactly.
+    /// </remarks>
     private static void SyncChildrenWholesale(XElement destination, XElement source)
     {
         if (XNode.DeepEquals(destination, source))
             return;
 
+        var byName = destination.Elements()
+            .GroupBy(static child => child.Name.LocalName, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => new Queue<XElement>(group),
+                StringComparer.Ordinal);
+
+        var ordered = new List<XElement>();
+        foreach (XElement sourceChild in source.Elements())
+        {
+            XElement target;
+            if (byName.TryGetValue(sourceChild.Name.LocalName, out Queue<XElement>? matches)
+                && matches.Count > 0)
+            {
+                target = matches.Dequeue();
+                MergeElementInPlace(target, sourceChild);
+            }
+            else
+            {
+                target = new XElement(sourceChild);
+            }
+
+            ordered.Add(target);
+        }
+
+        // RemoveNodes() only unparents the matched instances above — it does
+        // not destroy them, so a caller's own reference into one keeps
+        // working — then they (and any newly cloned additions) are re-added
+        // in source order. Anything left in `byName` (a destination child
+        // whose name/occurrence had no counterpart in source) is simply not
+        // re-added.
         destination.RemoveNodes();
-        foreach (XElement child in source.Elements())
-            destination.Add(new XElement(child));
+        foreach (XElement child in ordered)
+            destination.Add(child);
+
+        SyncAttributes(destination, source);
+    }
+
+    /// <summary>
+    /// Merges <paramref name="source"/> INTO <paramref name="destination"/>
+    /// in place — children (recursively, via <see cref="SyncChildrenWholesale"/>),
+    /// attributes, and (for a leaf with no child elements on either side) the
+    /// text value — instead of cloning <paramref name="source"/> over it, so
+    /// <paramref name="destination"/>'s own <see cref="XElement"/> identity
+    /// is preserved for whoever is holding a reference to it.
+    /// </summary>
+    private static void MergeElementInPlace(XElement destination, XElement source)
+    {
+        SyncChildrenWholesale(destination, source);
+        SyncAttributes(destination, source);
+        if (!destination.HasElements && !source.HasElements)
+            destination.Value = source.Value;
+    }
+
+    private static void SyncAttributes(XElement destination, XElement source)
+    {
+        var sourceNames = new HashSet<XName>();
         foreach (XAttribute attribute in source.Attributes())
+        {
             destination.SetAttributeValue(attribute.Name, attribute.Value);
+            sourceNames.Add(attribute.Name);
+        }
+
+        foreach (XAttribute stale in destination.Attributes()
+                     .Where(attribute => !sourceNames.Contains(attribute.Name))
+                     .ToList())
+        {
+            stale.Remove();
+        }
     }
 
     private static string[] SplitPath(string xpath)

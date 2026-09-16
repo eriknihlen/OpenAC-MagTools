@@ -187,7 +187,6 @@ public sealed class TinkeringPageViewModel : ListPageViewModel
     private readonly Macros.TinkeringToolsHost? _tinkeringHost;
 
     public TinkeringPageViewModel(Macros.TinkeringToolsHost? tinkeringHost = null)
-        : base(index => tinkeringHost?.SelectRow(index))
     {
         _tinkeringHost = tinkeringHost;
 
@@ -199,6 +198,8 @@ public sealed class TinkeringPageViewModel : ListPageViewModel
         SetTargetTotalTinks = text => TargetTotalTinksText = text;
         DeleteRow = index => _tinkeringHost?.DeleteRow(index);
     }
+
+    protected override void OnRowSelected(int index) => _tinkeringHost?.SelectRow(index);
 
     public Action AddSelectedItem { get; }
     public Action Start { get; }

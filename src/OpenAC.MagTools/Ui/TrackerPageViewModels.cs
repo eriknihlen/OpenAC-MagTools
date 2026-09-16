@@ -15,12 +15,18 @@ namespace OpenAC.MagTools.Ui;
 /// </summary>
 public abstract class ListPageViewModel
 {
-    protected ListPageViewModel(Action<int>? onRowSelected = null)
+    protected ListPageViewModel()
     {
         Select = index =>
         {
             SelectedRow = index;
-            onRowSelected?.Invoke(index);
+            // Virtual dispatch happens at call time, after the derived
+            // class's own field initializers have already run -- unlike a
+            // lambda captured through a base(...) constructor argument
+            // (evaluated before any derived field initializer), this lets an
+            // override safely read per-instance state such as a cached rows
+            // builder (M5).
+            OnRowSelected(index);
         };
         RowIconClicked = static _ => { };
     }
@@ -28,6 +34,16 @@ public abstract class ListPageViewModel
     public int SelectedRow { get; private set; } = -1;
 
     public Action<int> Select { get; }
+
+    /// <summary>
+    /// Called after <see cref="SelectedRow"/> is updated. A derived page
+    /// overrides this to also drive host selection (<c>Selection.Select</c>)
+    /// using the SAME row projection its display properties read, not a
+    /// freshly built one.
+    /// </summary>
+    protected virtual void OnRowSelected(int index)
+    {
+    }
 
     /// <summary>Icon columns must declare a row action even when inert.</summary>
     public Action<int> RowIconClicked { get; }
@@ -398,23 +414,17 @@ public sealed class CorpsePageViewModel : ListPageViewModel
 {
     private readonly CorpseTrackerSettings _settings;
     private readonly CorpseTrackerHost? _corpseTrackerHost;
+    private readonly IPluginHost? _host;
 
     public CorpsePageViewModel(
         SettingsManager settings,
         CorpseTrackerHost? corpseTrackerHost = null,
         IPluginHost? host = null)
-        : base(index =>
-        {
-            if (corpseTrackerHost is null || host is null)
-                return;
-            IReadOnlyList<CorpseRow> rows = CorpseTrackerRows.Build(corpseTrackerHost.Tracker);
-            if (index >= 0 && index < rows.Count)
-                host.Selection.Select(rows[index].ObjectId);
-        })
     {
         ArgumentNullException.ThrowIfNull(settings);
         _settings = settings.CorpseTracker;
         _corpseTrackerHost = corpseTrackerHost;
+        _host = host;
 
         ClearHistory = () => _corpseTrackerHost?.Tracker.ClearStats();
         ToggleEnabled = () => _settings.Enabled.Value = !_settings.Enabled.Value;
@@ -432,6 +442,16 @@ public sealed class CorpsePageViewModel : ListPageViewModel
     /// <summary>Recomputed on every access -- newest first, opened corpses excluded (see CorpseTrackerRows).</summary>
     private IReadOnlyList<CorpseRow> Rows
         => _corpseTrackerHost is null ? [] : CorpseTrackerRows.Build(_corpseTrackerHost.Tracker);
+
+    /// <summary>Selects through the SAME row projection the display properties below read (M5).</summary>
+    protected override void OnRowSelected(int index)
+    {
+        if (_host is null)
+            return;
+        IReadOnlyList<CorpseRow> rows = Rows;
+        if (index >= 0 && index < rows.Count)
+            _host.Selection.Select(rows[index].ObjectId);
+    }
 
     public IReadOnlyList<string> Times => Rows.Select(row => row.Time).ToList();
     public IReadOnlyList<string> Names => Rows.Select(row => row.Name).ToList();
@@ -457,6 +477,7 @@ public sealed class PlayerPageViewModel : ListPageViewModel
 {
     private readonly PlayerTrackerSettings _settings;
     private readonly PlayerTrackerHost? _playerTrackerHost;
+    private readonly IPluginHost? _host;
     // Stateful across accesses: the 10-second rate-limited re-sort (see
     // PlayerTrackerRowsBuilder) needs its own clock, not a fresh one per call.
     private readonly PlayerTrackerRowsBuilder _rowsBuilder = new();
@@ -465,18 +486,11 @@ public sealed class PlayerPageViewModel : ListPageViewModel
         SettingsManager settings,
         PlayerTrackerHost? playerTrackerHost = null,
         IPluginHost? host = null)
-        : base(index =>
-        {
-            if (playerTrackerHost is null || host is null)
-                return;
-            IReadOnlyList<PlayerRow> rows = PlayerTrackerRows(playerTrackerHost);
-            if (index >= 0 && index < rows.Count)
-                host.Selection.Select(rows[index].ObjectId);
-        })
     {
         ArgumentNullException.ThrowIfNull(settings);
         _settings = settings.PlayerTracker;
         _playerTrackerHost = playerTrackerHost;
+        _host = host;
 
         ClearHistory = () => _playerTrackerHost?.Tracker.ClearStats();
         ToggleEnabled = () => _settings.Enabled.Value = !_settings.Enabled.Value;
@@ -484,15 +498,23 @@ public sealed class PlayerPageViewModel : ListPageViewModel
             _settings.Persistent.Value = !_settings.Persistent.Value;
     }
 
-    // A static helper so the base-constructor's onRowSelected lambda (which
-    // runs before instance field initializers, including _rowsBuilder) has
-    // something safe to call -- it builds its own one-shot rows rather than
-    // sharing the rate-limited builder, which only matters for display order.
-    private static IReadOnlyList<PlayerRow> PlayerTrackerRows(PlayerTrackerHost trackerHost)
-        => new PlayerTrackerRowsBuilder().Build(trackerHost.Tracker);
-
     private IReadOnlyList<PlayerRow> Rows
         => _playerTrackerHost is null ? [] : _rowsBuilder.Build(_playerTrackerHost.Tracker);
+
+    /// <summary>
+    /// Selects through the SAME cached, rate-limited row projection the
+    /// display properties below read (M5) -- a fresh
+    /// <c>PlayerTrackerRowsBuilder</c> would reorder differently than what
+    /// is currently on screen, selecting the wrong player.
+    /// </summary>
+    protected override void OnRowSelected(int index)
+    {
+        if (_host is null)
+            return;
+        IReadOnlyList<PlayerRow> rows = Rows;
+        if (index >= 0 && index < rows.Count)
+            _host.Selection.Select(rows[index].ObjectId);
+    }
 
     public IReadOnlyList<string> Times => Rows.Select(row => row.Time).ToList();
     public IReadOnlyList<string> Names => Rows.Select(row => row.Name).ToList();

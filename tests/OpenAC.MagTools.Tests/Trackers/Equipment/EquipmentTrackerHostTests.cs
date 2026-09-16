@@ -1,4 +1,5 @@
 using AcDream.Plugin.Abstractions;
+using OpenAC.MagTools;
 using OpenAC.MagTools.Tests.Fakes;
 using OpenAC.MagTools.Trackers.Equipment;
 using Xunit;
@@ -84,8 +85,167 @@ public sealed class EquipmentTrackerHostTests
         EquipmentTrackedItem tracked = Assert.Single(equipmentHost.Tracker.Items);
         Assert.True(tracked.HasIdData);
         Assert.Equal(-1d / 18d, tracked.ManaRateOfChange);
+        // The appraisal-derived bool is still captured (some callers may
+        // still want it), but H2: it is NOT what NumberOfUnretainedItems
+        // gates on any more — see EquipmentTracker.NumberOfUnretainedItems's
+        // remarks. This item's PublicFlags (the EquippedItem helper defaults
+        // it to 0u) has the Retained bit unset, so it counts as unretained
+        // regardless of the appraisal payload's own Bools[91] value.
         Assert.False(tracked.Retained);
         Assert.Equal(1, equipmentHost.Tracker.NumberOfUnretainedItems());
+    }
+
+    [Fact]
+    public void NumberOfUnretainedItems_uses_the_PublicFlags_Retained_bit_not_the_appraisal_bool()
+    {
+        var host = new FakeHost();
+        // The appraisal payload omits property id 91 entirely (the common
+        // case H2 fixes for) — Bools has no entry for it at all.
+        host.Automation.Items.Owned.Add(EquippedItem(10u));
+        host.Automation.Items.Properties[10u] = new PluginItemProperties(
+            new Dictionary<uint, int>(),
+            new Dictionary<uint, long>(),
+            new Dictionary<uint, bool>(),
+            new Dictionary<uint, double>(),
+            new Dictionary<uint, string>(),
+            new Dictionary<uint, uint>(),
+            new Dictionary<uint, uint>());
+
+        var equipmentHost = new EquipmentTrackerHost(host);
+        equipmentHost.Start();
+        host.Events.RaiseObjectChanged(10u, PluginObjectChangeKind.IdentReceived);
+
+        EquipmentTrackedItem tracked = Assert.Single(equipmentHost.Tracker.Items);
+        Assert.True(tracked.HasIdData);
+        Assert.Null(tracked.Retained); // the appraisal bool truly is absent
+        // PublicFlags (EquippedItem's default 0u) has the Retained bit
+        // unset, so the item still counts as unretained.
+        Assert.Equal(1, equipmentHost.Tracker.NumberOfUnretainedItems());
+    }
+
+    [Fact]
+    public void NumberOfUnretainedItems_excludes_an_item_whose_PublicFlags_Retained_bit_is_set()
+    {
+        var host = new FakeHost();
+        host.Automation.Items.Owned.Add(
+            EquippedItem(10u) with { PublicFlags = EquipmentTracker.RetainedPublicFlag });
+        host.Automation.Items.Properties[10u] = new PluginItemProperties(
+            new Dictionary<uint, int>(),
+            new Dictionary<uint, long>(),
+            new Dictionary<uint, bool>(),
+            new Dictionary<uint, double>(),
+            new Dictionary<uint, string>(),
+            new Dictionary<uint, uint>(),
+            new Dictionary<uint, uint>());
+
+        var equipmentHost = new EquipmentTrackerHost(host);
+        equipmentHost.Start();
+        host.Events.RaiseObjectChanged(10u, PluginObjectChangeKind.IdentReceived);
+
+        Assert.Equal(0, equipmentHost.Tracker.NumberOfUnretainedItems());
+    }
+
+    [Fact]
+    public void A_burst_of_ObjectChanged_events_coalesces_to_one_capture_per_tick()
+    {
+        var host = new FakeHost();
+        host.Automation.Items.Owned.Add(EquippedItem(10u));
+        var scheduler = new TickScheduler(host.Events, new ChatOutput(host));
+
+        var equipmentHost = new EquipmentTrackerHost(host);
+        equipmentHost.Start(scheduler);
+        int capturesAfterStart = host.Automation.Items.CaptureCount;
+
+        for (int i = 0; i < 40; i++)
+            host.Events.RaiseObjectChanged(10u, PluginObjectChangeKind.Updated);
+
+        // Not yet resynced — the coalescing 500 ms tick has not fired.
+        Assert.Equal(capturesAfterStart, host.Automation.Items.CaptureCount);
+
+        scheduler.Tick(0.5); // the coalesced resync tick
+
+        Assert.Equal(capturesAfterStart + 1, host.Automation.Items.CaptureCount);
+    }
+
+    [Fact]
+    public void With_no_scheduler_ObjectChanged_still_resyncs_synchronously()
+    {
+        var host = new FakeHost();
+        var item = EquippedItem(10u);
+        host.Automation.Items.Owned.Add(item);
+
+        var equipmentHost = new EquipmentTrackerHost(host);
+        equipmentHost.Start(); // no scheduler — pre-H3 behavior
+        int capturesAfterStart = host.Automation.Items.CaptureCount;
+
+        host.Automation.Items.Owned.Clear();
+        host.Automation.Items.Owned.Add(item with { EquippedLocation = 0u });
+        host.Events.RaiseObjectChanged(10u, PluginObjectChangeKind.Updated);
+
+        Assert.Equal(capturesAfterStart + 1, host.Automation.Items.CaptureCount);
+        Assert.Empty(equipmentHost.Tracker.Items);
+    }
+
+    [Fact]
+    public void A_mana_stone_gift_message_naming_a_tracked_item_re_requests_its_id()
+    {
+        var host = new FakeHost();
+        host.Automation.Items.Owned.Add(EquippedItem(10u, "Enhanced Red Empyrean Ring"));
+
+        var equipmentHost = new EquipmentTrackerHost(host);
+        equipmentHost.Start();
+        host.Automation.Objects.IdentifyRequests.Clear(); // Start()'s own initial identify
+
+        host.Automation.Chat.Deliver(
+            "The Mana Stone gives 11,376 points of mana to the following items: "
+            + "Satin Flared Shirt, Enhanced Red Empyrean Ring, Iron Diforsa Pauldrons");
+
+        Assert.Contains(10u, host.Automation.Objects.IdentifyRequests);
+    }
+
+    [Fact]
+    public void A_low_on_mana_warning_naming_a_tracked_item_re_requests_its_id()
+    {
+        var host = new FakeHost();
+        host.Automation.Items.Owned.Add(EquippedItem(10u, "Gold Olthoi Koujia Sleeves"));
+
+        var equipmentHost = new EquipmentTrackerHost(host);
+        equipmentHost.Start();
+        host.Automation.Objects.IdentifyRequests.Clear();
+
+        host.Automation.Chat.Deliver("Your Gold Olthoi Koujia Sleeves is low on Mana.");
+
+        Assert.Contains(10u, host.Automation.Objects.IdentifyRequests);
+    }
+
+    [Fact]
+    public void An_out_of_mana_warning_for_an_untracked_item_does_not_request_an_id()
+    {
+        var host = new FakeHost();
+        host.Automation.Items.Owned.Add(EquippedItem(10u, "Ring"));
+
+        var equipmentHost = new EquipmentTrackerHost(host);
+        equipmentHost.Start();
+        host.Automation.Objects.IdentifyRequests.Clear();
+
+        host.Automation.Chat.Deliver("Your Bronze Haebrean Breastplate is out of Mana.");
+
+        Assert.DoesNotContain(10u, host.Automation.Objects.IdentifyRequests);
+    }
+
+    [Fact]
+    public void Another_players_spoken_line_naming_a_tracked_item_does_not_request_an_id()
+    {
+        var host = new FakeHost();
+        host.Automation.Items.Owned.Add(EquippedItem(10u, "Ring"));
+
+        var equipmentHost = new EquipmentTrackerHost(host);
+        equipmentHost.Start();
+        host.Automation.Objects.IdentifyRequests.Clear();
+
+        host.Automation.Chat.Deliver("Bob says, \"Your Ring is low on Mana.\"");
+
+        Assert.DoesNotContain(10u, host.Automation.Objects.IdentifyRequests);
     }
 
     [Fact]

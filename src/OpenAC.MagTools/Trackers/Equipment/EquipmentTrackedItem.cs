@@ -93,7 +93,11 @@ public sealed class EquipmentTrackedItem
 
     /// <summary>
     /// <c>ceil(-0.2 / ManaRateOfChange) * 5</c> — items burn mana on a
-    /// 5-second grid. Zero when there is no (negative) burn rate.
+    /// 5-second grid. Zero when there is no (negative) burn rate. LOW
+    /// deviation: a POSITIVE rate (a recharging item) also returns 0 here;
+    /// the original ran the same formula unconditionally for any non-zero
+    /// rate, which for a positive rate produces a negative, nonsensical
+    /// "seconds per burn". See docs/deviations.md.
     /// </summary>
     public int SecondsPerBurn
     {
@@ -134,16 +138,6 @@ public sealed class EquipmentTrackedItem
         if (Item.ItemCurrentMana == 0)
             return EquipmentTrackedItemState.NotActive;
 
-        // Player enchantments that are item-cast (duration-less/expired the
-        // instant they land) rather than a timed buff — the original's
-        // "TimeRemaining <= 0" filter.
-        List<PluginActiveEnchantment> itemCastPlayerEnchantments = [];
-        foreach (PluginActiveEnchantment enchantment in playerEnchantments)
-        {
-            if (enchantment.SecondsRemaining <= 0d)
-                itemCastPlayerEnchantments.Add(enchantment);
-        }
-
         foreach (uint spellId in SpellIds)
         {
             if (spellId == Item.SpellId)
@@ -169,8 +163,15 @@ public sealed class EquipmentTrackedItem
 
             if (!satisfied)
             {
-                foreach (PluginActiveEnchantment enchantment in itemCastPlayerEnchantments)
+                // Player enchantments that are item-cast (duration-less/expired
+                // the instant they land) rather than a timed buff — the
+                // original's "TimeRemaining <= 0" filter, applied inline
+                // instead of pre-building a filtered list per call (M6: keeps
+                // GetState allocation-free — see docs/deviations.md).
+                foreach (PluginActiveEnchantment enchantment in playerEnchantments)
                 {
+                    if (enchantment.SecondsRemaining > 0d)
+                        continue;
                     if (enchantment.Family != info.Family)
                         continue;
                     if (spells.TryGet(enchantment.SpellId, out PluginSpellInfo enchantInfo)
@@ -201,6 +202,15 @@ public sealed class EquipmentTrackedItem
 
     public int CalculatedCurrentMana(DateTime nowUtc, EquipmentTrackedItemState state)
     {
+        // The original's own `ItemState == Unknown || ItemState == NotActivatable`
+        // guard returns 0 for those two states — no id data (or nothing to
+        // read from) means there is nothing to report, not the item's raw
+        // (possibly stale/zero) current-mana field. NotActive falls through
+        // to the raw-value branch below, matching the original (NotActive
+        // always implies CurrentMana == 0 anyway, by definition of the state).
+        if (state is EquipmentTrackedItemState.Unknown or EquipmentTrackedItemState.NotActivatable)
+            return 0;
+
         int secondsPerBurn = SecondsPerBurn;
         if (state != EquipmentTrackedItemState.Active || secondsPerBurn <= 0)
             return Item.ItemCurrentMana;

@@ -27,12 +27,11 @@ public sealed class HudUpdaterTests
 
         updater.Refresh();
 
+        // M4: every zero-valued row (Pack Slots included — the character's
+        // default free-slot count of 0) reads blank, matching the original's
+        // own "== 0 ? '' : ..." convention on every one of these rows.
         foreach (string value in hud.Values)
-        {
-            if (value == "0") // Pack Slots defaults to the character's free-slot count, not blank
-                continue;
-            Assert.True(string.IsNullOrEmpty(value) || value == "0");
-        }
+            Assert.True(string.IsNullOrEmpty(value));
     }
 
     [Fact]
@@ -73,7 +72,7 @@ public sealed class HudUpdaterTests
     }
 
     [Fact]
-    public void Net_profit_rows_use_the_MMDh_divisor()
+    public void Net_profit_rows_blank_when_the_rate_is_exactly_zero()
     {
         var host = new FakeHost();
         var hud = new HudViewModel(host);
@@ -83,8 +82,44 @@ public sealed class HudUpdaterTests
 
         updater.Refresh();
 
-        // With no history yet, GetValueDifference returns 0.
-        Assert.Equal("0.0/h", Row(hud, "Net Profit 5m"));
+        // M4: with no history yet, GetValueDifference returns 0, and a zero
+        // rate reads blank — not "0.0/h" — matching the original.
+        Assert.Equal(string.Empty, Row(hud, "Net Profit 5m"));
+    }
+
+    [Fact]
+    public void Net_profit_rows_use_the_MMDh_divisor_when_nonzero()
+    {
+        var host = new FakeHost();
+        var hud = new HudViewModel(host);
+        var clock = new OpenAC.MagTools.Tests.Trackers.Inventory.FakeTimeProvider();
+        var inventoryTrackerHost = new InventoryTrackerHost(host, clock);
+        inventoryTrackerHost.ProfitLoss.Resync([]);
+        clock.Advance(TimeSpan.FromHours(1));
+        host.Automation.Items.Owned.Add(FakeItems.Item(1u, "Trade Note", equippedLocation: 0u) with
+        {
+            ObjectClass = PluginObjectClass.TradeNote,
+            Value = 250000,
+        });
+        inventoryTrackerHost.ProfitLoss.Resync(host.Automation.Items.CaptureOwnedItems());
+        var updater = new HudUpdater(host, hud, null, null, inventoryTrackerHost);
+
+        updater.Refresh();
+
+        Assert.Equal("1.0/h", Row(hud, "Net Profit 1h"));
+    }
+
+    [Fact]
+    public void Pack_slots_blanks_when_the_pack_is_completely_full()
+    {
+        var host = new FakeHost();
+        host.Automation.Character.MainPackFreeSlots = 0;
+        var hud = new HudViewModel(host);
+        var updater = new HudUpdater(host, hud, null, null, null);
+
+        updater.Refresh();
+
+        Assert.Equal(string.Empty, Row(hud, "Pack Slots"));
     }
 
     [Fact]

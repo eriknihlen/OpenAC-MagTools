@@ -265,7 +265,18 @@ public sealed class FakeItems : IItemAutomation
     /// <summary>Keyed by object id; set by a test to make <see cref="TryCaptureProperties"/> answer.</summary>
     public Dictionary<uint, PluginItemProperties> Properties { get; } = [];
 
-    public IReadOnlyList<PluginInventoryItem> CaptureOwnedItems() => Owned;
+    /// <summary>
+    /// How many times <see cref="CaptureOwnedItems"/> has been called — used
+    /// to prove a coalescing host (H1/H3) captures at most once per tick no
+    /// matter how many <c>ObjectChanged</c> events arrived inside it.
+    /// </summary>
+    public int CaptureCount { get; private set; }
+
+    public IReadOnlyList<PluginInventoryItem> CaptureOwnedItems()
+    {
+        CaptureCount++;
+        return Owned;
+    }
 
     public bool TryCaptureProperties(uint objectId, out PluginItemProperties properties)
         => Properties.TryGetValue(objectId, out properties);

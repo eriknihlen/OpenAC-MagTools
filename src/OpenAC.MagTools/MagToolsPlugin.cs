@@ -65,7 +65,7 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _chatDispatcher = new ChatClassificationDispatcher(host);
         _chatLogger = new Loggers.Chat.ChatLogger(host, _settings, _chatDispatcher);
         _combatTrackerHost = new CombatTrackerHost(host, _chat, _settings, _chatDispatcher);
-        _equipmentTrackerHost = new EquipmentTrackerHost(host);
+        _equipmentTrackerHost = new EquipmentTrackerHost(host, chatDispatcher: _chatDispatcher);
         _inventoryTrackerHost = new InventoryTrackerHost(host);
         _autoRecharge = new AutoRecharge(host, _settings);
         _main = new MainViewModel(
@@ -248,7 +248,7 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _chatDispatcher?.Start();
         _chatLogger?.Start(_scheduler, _session.WorldName, _session.CharacterName);
         _combatTrackerHost?.Start(_scheduler, _session.WorldName, _session.CharacterName);
-        _equipmentTrackerHost?.Start();
+        _equipmentTrackerHost?.Start(_scheduler);
         _inventoryTrackerHost?.Start(_scheduler);
         _autoRecharge?.Start(_scheduler);
         _hudUpdater?.Start(_scheduler);

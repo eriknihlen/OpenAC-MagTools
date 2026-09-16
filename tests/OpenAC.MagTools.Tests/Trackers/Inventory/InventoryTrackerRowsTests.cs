@@ -41,6 +41,36 @@ public sealed class InventoryTrackerRowsTests
     }
 
     [Fact]
+    public void A_consumable_row_blanks_all_three_rate_cells_when_the_count_is_zero()
+    {
+        var host = new InventoryTrackerHost(new FakeHost());
+        // Present once, then gone — CurrentCount drops to 0.
+        host.Consumables.Resync([Item(1u, "Mana Stone", PluginObjectClass.ManaStone, stackSize: 3)]);
+        host.Consumables.Resync([]);
+        host.ProfitLoss.Resync([]);
+
+        var rows = InventoryTrackerRows.Build(host);
+        InventoryTrackerRows.Row row = rows[7];
+        Assert.Equal("0", row.Count);
+        Assert.Equal(string.Empty, row.Average5m);
+        Assert.Equal(string.Empty, row.Average1h);
+        Assert.Equal(string.Empty, row.Hours);
+    }
+
+    [Fact]
+    public void A_profit_row_blanks_a_rate_cell_that_computes_to_exactly_zero()
+    {
+        var host = new InventoryTrackerHost(new FakeHost());
+        host.Consumables.Resync([]);
+        host.ProfitLoss.Resync([]); // Peas/Comps/Salvage/NetProfit all read 0/h
+
+        var rows = InventoryTrackerRows.Build(host);
+        // Row 1 is "Peas".
+        Assert.Equal(string.Empty, rows[1].Average5m);
+        Assert.Equal(string.Empty, rows[1].Average1h);
+    }
+
+    [Fact]
     public void Consumable_rows_sort_by_class_zindex_then_descending_unit_value()
     {
         var host = new InventoryTrackerHost(new FakeHost());

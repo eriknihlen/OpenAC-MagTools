@@ -40,6 +40,8 @@ public sealed class ManaPageViewModel : ListPageViewModel
     private uint[] _stateIcons = [];
     private string[] _itemMana = [];
     private string[] _itemTime = [];
+    private string _totalText = "Mana needed: 0";
+    private string _unretainedTotalText = "Unretained Items: 0";
     private bool _dirty = true;
     private Action? _onChanged;
     private bool _subscribed;
@@ -77,6 +79,12 @@ public sealed class ManaPageViewModel : ListPageViewModel
         _equipmentTrackerHost.Tracker.Changed += _onChanged;
     }
 
+    /// <summary>
+    /// M6: rebuilds the row arrays AND the two total-label strings together,
+    /// gated on the same dirty flag — <see cref="TotalText"/> and
+    /// <see cref="UnretainedTotalText"/> used to recompute (and allocate a
+    /// fresh formatted string) on every single poll, dirty or not.
+    /// </summary>
     private void RefreshIfDirty()
     {
         if (!_dirty || _equipmentTrackerHost is null || _host is null)
@@ -104,6 +112,14 @@ public sealed class ManaPageViewModel : ListPageViewModel
             _itemMana[i] = row.ManaText;
             _itemTime[i] = row.TimeText;
         }
+
+        int needed = _equipmentTrackerHost.Tracker.ManaNeededToRefillItems(
+            _host.Automation.Spells, _host.Automation.Character.ActiveEnchantments);
+        _totalText = "Mana needed: " + needed.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        int unretained = _equipmentTrackerHost.Tracker.NumberOfUnretainedItems();
+        _unretainedTotalText =
+            "Unretained Items: " + unretained.ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
 
     public IReadOnlyList<uint> ItemIcons { get { RefreshIfDirty(); return _itemIcons; } }
@@ -112,26 +128,9 @@ public sealed class ManaPageViewModel : ListPageViewModel
     public IReadOnlyList<string> ItemMana { get { RefreshIfDirty(); return _itemMana; } }
     public IReadOnlyList<string> ItemTime { get { RefreshIfDirty(); return _itemTime; } }
 
-    public string TotalText
-    {
-        get
-        {
-            if (_equipmentTrackerHost is null || _host is null)
-                return "Mana needed: 0";
-            int needed = _equipmentTrackerHost.Tracker.ManaNeededToRefillItems(
-                _host.Automation.Spells, _host.Automation.Character.ActiveEnchantments);
-            return "Mana needed: " + needed.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        }
-    }
+    public string TotalText { get { RefreshIfDirty(); return _totalText; } }
 
-    public string UnretainedTotalText
-    {
-        get
-        {
-            int count = _equipmentTrackerHost?.Tracker.NumberOfUnretainedItems() ?? 0;
-            return "Unretained Items: " + count.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        }
-    }
+    public string UnretainedTotalText { get { RefreshIfDirty(); return _unretainedTotalText; } }
 
     public bool RechargeEnabled => _autoRecharge.Value;
 

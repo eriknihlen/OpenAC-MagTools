@@ -71,8 +71,13 @@ public sealed class HudUpdater
         _hud.SetValue("DPS In 1m", N0(_combatTrackerHost?.Current.DpsIn1m));
         _hud.SetValue("DPS In 5m", N0(_combatTrackerHost?.Current.DpsIn5m));
         _hud.SetValue("DPS In 1h", N0(_combatTrackerHost?.Current.DpsIn1h));
-        _hud.SetValue("Players", PlayersRow());
-        _hud.SetValue("Monsters", MonstersRow());
+
+        // LOW: one CaptureObjects() call feeds both the Players and Monsters
+        // rows, instead of two independent full landscape scans.
+        (string players, string monsters) = PlayersAndMonstersRows();
+        _hud.SetValue("Players", players);
+        _hud.SetValue("Monsters", monsters);
+
         _hud.SetValue("Pack Slots", PackSlotsRow());
         // "ID Queue" — no host equivalent; see class remarks.
         _hud.SetValue("ID Queue", string.Empty);
@@ -111,45 +116,53 @@ public sealed class HudUpdater
         return depletion.TotalHours.ToString("N1", CultureInfo.InvariantCulture) + "h";
     }
 
+    /// <summary>M4: blank, not "0.0/h", when the rate computes to exactly zero.</summary>
     private string NetProfitRow(TimeSpan historyPeriod)
     {
         if (_inventoryTrackerHost is null)
             return string.Empty;
 
         double perHour = ProfitLossTracker.MmdPerHour(_inventoryTrackerHost.ProfitLoss.NetProfit, historyPeriod);
-        return perHour.ToString("N1", CultureInfo.InvariantCulture) + "/h";
+        return perHour == 0d ? string.Empty : perHour.ToString("N1", CultureInfo.InvariantCulture) + "/h";
     }
 
     private static string N0(double? value)
         => value is { } v and not 0d ? v.ToString("N0", CultureInfo.InvariantCulture) : string.Empty;
 
-    private string PlayersRow()
+    private (string Players, string Monsters) PlayersAndMonstersRows()
     {
-        int count = -1; // subtract the local player below regardless of whether any were found
+        int playerCount = -1; // subtract the local player below regardless of whether any were found
+        int monsterCount = 0;
         foreach (PluginWorldObject candidate in _host.Automation.Objects.CaptureObjects())
         {
-            if (candidate.IsLandscape && candidate.ObjectClass == PluginObjectClass.Player)
-                count++;
+            if (!candidate.IsLandscape)
+                continue;
+
+            if (candidate.ObjectClass == PluginObjectClass.Player)
+                playerCount++;
+            else if (candidate.ObjectClass == PluginObjectClass.Monster)
+                monsterCount++;
         }
 
-        return count > 0 ? count.ToString(CultureInfo.InvariantCulture) : string.Empty;
+        string players = playerCount > 0 ? playerCount.ToString(CultureInfo.InvariantCulture) : string.Empty;
+        string monsters = monsterCount > 0 ? monsterCount.ToString(CultureInfo.InvariantCulture) : string.Empty;
+        return (players, monsters);
     }
 
-    private string MonstersRow()
-    {
-        int count = 0;
-        foreach (PluginWorldObject candidate in _host.Automation.Objects.CaptureObjects())
-        {
-            if (candidate.IsLandscape && candidate.ObjectClass == PluginObjectClass.Monster)
-                count++;
-        }
-
-        return count > 0 ? count.ToString(CultureInfo.InvariantCulture) : string.Empty;
-    }
-
+    /// <remarks>
+    /// LOW: the host's <see cref="ICharacterInfo.MainPackFreeSlots"/> hardcodes
+    /// the main pack's capacity at 102 slots (<c>AppAutomationSurface.cs</c>'s
+    /// implementation) rather than reading the character's actual, possibly
+    /// augmented, live <c>ItemSlots</c> capacity the way the original's
+    /// <c>Util.GetFreePackSlots</c> did. Not fixable from this plugin — the
+    /// host contract exposes only the final free-slot count, not the pack's
+    /// own capacity. See docs/deviations.md.
+    /// </remarks>
     private string PackSlotsRow()
     {
         int slots = _host.Automation.Character.MainPackFreeSlots;
-        return slots.ToString(CultureInfo.InvariantCulture);
+        // M4: blank, not "0", when the pack is completely full — matches the
+        // original's own "(freePackSlots == 0) ? '' : ..." ternary.
+        return slots == 0 ? string.Empty : slots.ToString(CultureInfo.InvariantCulture);
     }
 }

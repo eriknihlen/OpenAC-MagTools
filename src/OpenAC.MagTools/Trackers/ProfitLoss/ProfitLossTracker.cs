@@ -73,6 +73,15 @@ public sealed class ProfitLossTracker
         }
 
         DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
+        // Unlike ConsumablesTracker's per-NAME groups, these four series
+        // always exist and are always recomputed from the full owned set, so
+        // every Resync stamps all four — a legitimate "0 -> real value"
+        // transition (say, a fresh baseline immediately followed by an hour
+        // of real profit) must still leave a genuine zero snapshot behind for
+        // the rate math to measure against. H1's login-fabrication fix lives
+        // in InventoryTrackerHost's priming-on-quiescence gate, which governs
+        // WHEN this method is called at all, not whether an individual call
+        // records data.
         Peas.AddSnapShot(now, peas, RetentionMinutes);
         Comps.AddSnapShot(now, comps, RetentionMinutes);
         Salvage.AddSnapShot(now, salvage, RetentionMinutes);
@@ -80,6 +89,13 @@ public sealed class ProfitLossTracker
 
         Changed?.Invoke();
     }
+
+    /// <summary>
+    /// Raises <see cref="Changed"/> without touching any history — the idle
+    /// half of the H1 coalescing tick in
+    /// <see cref="Inventory.InventoryTrackerHost"/>.
+    /// </summary>
+    public void RaiseChanged() => Changed?.Invoke();
 
     /// <summary>MMD/h over <paramref name="historyPeriod"/>, projected to a one-hour rate.</summary>
     public static double MmdPerHour(ValueSnapShotGroup series, TimeSpan historyPeriod)

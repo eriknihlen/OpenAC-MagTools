@@ -56,12 +56,31 @@ public static class ManaTrackerRows
                 _ => NoneIcon,
             };
 
-            int calculatedMana = item.CalculatedCurrentMana(now, state);
-            string manaText = calculatedMana.ToString(CultureInfo.InvariantCulture)
-                + " / " + item.Item.ItemMaximumMana.ToString(CultureInfo.InvariantCulture);
-
+            // The original's Item_Changed only computes the mana/time cells
+            // for Active/NotActive items; Unknown/NotActivatable get the
+            // literal "-" in both cells instead of a stale or meaningless
+            // number (see docs/deviations.md and M2 in the P5 fix round).
+            // ManaTimeRemaining is Zero for anything but Active regardless,
+            // so computing it unconditionally (needed for the sort key on
+            // both Active AND NotActive rows) is safe even for
+            // Unknown/NotActivatable items, whose displayed cells never use it.
             TimeSpan remaining = item.ManaTimeRemaining(now, state);
-            string timeText = FormatTime(remaining);
+
+            string manaText;
+            string timeText;
+            if (state is EquipmentTrackedItemState.Unknown or EquipmentTrackedItemState.NotActivatable)
+            {
+                manaText = "-";
+                timeText = "-";
+            }
+            else
+            {
+                int calculatedMana = item.CalculatedCurrentMana(now, state);
+                manaText = calculatedMana.ToString(CultureInfo.InvariantCulture)
+                    + " / " + item.Item.ItemMaximumMana.ToString(CultureInfo.InvariantCulture);
+
+                timeText = FormatTime(remaining);
+            }
 
             // The original's hidden sort cell: ManaTimeRemaining.TotalSeconds
             // for Active/NotActive items, int.MaxValue otherwise (Unknown/
@@ -80,11 +99,14 @@ public static class ManaTrackerRows
         return rows;
     }
 
+    /// <summary>
+    /// Always formats — the original's time cell has no blank branch of its
+    /// own for Active/NotActive items; a NotActive item's zero
+    /// <see cref="EquipmentTrackedItem.ManaTimeRemaining"/> formats as the
+    /// literal "0h00m", not blank (M2 in the P5 fix round).
+    /// </summary>
     private static string FormatTime(TimeSpan remaining)
     {
-        if (remaining <= TimeSpan.Zero || remaining == TimeSpan.MaxValue)
-            return string.Empty;
-
         int totalHours = (int)remaining.TotalHours;
         int minutes = remaining.Minutes;
         return totalHours.ToString(CultureInfo.InvariantCulture) + "h"

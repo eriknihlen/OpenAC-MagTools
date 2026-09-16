@@ -16,7 +16,13 @@ public sealed class TrackedConsumable(string name, PluginObjectClass objectClass
     /// <summary>The most recently observed matching item's icon.</summary>
     public uint Icon { get; set; }
 
-    /// <summary>Unit value: <c>Value / StackCount</c> of the most recently observed item.</summary>
+    /// <summary>
+    /// Unit value: <c>Value / StackCount</c> of the most recently observed
+    /// item. LOW deviation: the original set this ONCE, at the group's first
+    /// sighting, and never revised it — this port re-derives it on every
+    /// <see cref="ConsumablesTracker.Resync"/> from whatever item is left as
+    /// the representative. See docs/deviations.md.
+    /// </summary>
     public int ItemValue { get; set; }
 
     public Trackers.ValueSnapShotGroup History { get; } = new(minutesToRetain, timeProvider);

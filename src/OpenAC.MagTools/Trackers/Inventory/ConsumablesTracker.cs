@@ -13,12 +13,13 @@ namespace OpenAC.MagTools.Trackers.Inventory;
 /// The original re-scanned per <c>Create</c>/<c>Change</c>/<c>Release</c>
 /// object event and additionally re-raised <c>ItemChanged</c> off a 500 ms
 /// timer, rate-limited to once per item per second. This port folds both into
-/// a single <see cref="Resync"/> the host calls from both an
-/// <see cref="IEvents.ObjectChanged"/> handler and a 500 ms scheduler tick,
-/// and rate-limits the resulting <see cref="Changed"/> event as a whole
-/// (once per second) rather than per tracked name — our binding layer polls
-/// property getters on any <see cref="Changed"/> rather than per-row, so a
-/// coarser rate limit has the same observable effect. See docs/deviations.md.
+/// a single <see cref="Resync"/> the host (<see cref="InventoryTrackerHost"/>)
+/// calls at most once per 500 ms tick — coalesced from however many
+/// <see cref="IEvents.ObjectChanged"/> events arrived inside that tick — and
+/// rate-limits the resulting <see cref="Changed"/> event as a whole (once per
+/// tick) rather than per tracked name — our binding layer polls property
+/// getters on any <see cref="Changed"/> rather than per-row, so a coarser
+/// rate limit has the same observable effect. See docs/deviations.md.
 /// </remarks>
 public sealed class ConsumablesTracker(int minutesToRetain = 60, TimeProvider? timeProvider = null)
 {
@@ -29,6 +30,13 @@ public sealed class ConsumablesTracker(int minutesToRetain = 60, TimeProvider? t
     public event Action? Changed;
 
     public IReadOnlyCollection<TrackedConsumable> Tracked => _tracked.Values;
+
+    /// <summary>
+    /// Raises <see cref="Changed"/> without touching any history — the idle
+    /// half of the H1 coalescing tick in <see cref="InventoryTrackerHost"/>,
+    /// so bound UI still re-reads its own time-window math on a quiet tick.
+    /// </summary>
+    public void RaiseChanged() => Changed?.Invoke();
 
     public void Clear()
     {
@@ -96,9 +104,23 @@ public sealed class ConsumablesTracker(int minutesToRetain = 60, TimeProvider? t
                 _tracked[group] = tracked;
             }
 
+            // LOW: the original added Decal's own 0x6000000 image-id base to
+            // its bare wo.Icon value before handing it to the GUI; the host's
+            // PluginInventoryItem.IconId is already a full resolvable icon
+            // id, so no offset is applied here.
             tracked.Icon = sample.IconId;
             tracked.ItemValue = sample.StackSize > 0 ? sample.Value / sample.StackSize : sample.Value;
-            tracked.History.AddSnapShot(now, total, minutesToRetain);
+
+            // H1/H3: a snapshot is only recorded when this group's total
+            // actually changed since the last one — an ObjectChanged burst
+            // that coalesces to a full Resync no-ops for every group an
+            // irrelevant change did not touch, instead of stamping a
+            // same-value snapshot (and inflating SnapShots.Count) for no
+            // reason. The first sighting of a group always records (its
+            // History starts empty, so LastKnownValue defaults to 0 and the
+            // comparison only skips a genuine no-op).
+            if (tracked.History.LastKnownValue != total)
+                tracked.History.AddSnapShot(now, total, minutesToRetain);
         }
 
         // A tracked name with nothing left in inventory keeps its history (so
@@ -106,7 +128,7 @@ public sealed class ConsumablesTracker(int minutesToRetain = 60, TimeProvider? t
         // drops to zero, same as the original re-scanning found nothing.
         foreach ((string group, TrackedConsumable tracked) in _tracked)
         {
-            if (!totals.ContainsKey(group))
+            if (!totals.ContainsKey(group) && tracked.History.LastKnownValue != 0)
                 tracked.History.AddSnapShot(now, 0, minutesToRetain);
         }
 

@@ -68,19 +68,33 @@ public static class InventoryTrackerRows
         return rows;
     }
 
+    /// <summary>M4: blank, not "0.0", when a rate is exactly zero — matches the original's own ternary.</summary>
     private static Row ProfitRow(string name, ValueSnapShotGroup series)
     {
         double average5m = ProfitLossTracker.MmdPerHour(series, TimeSpan.FromMinutes(5));
         double average1h = ProfitLossTracker.MmdPerHour(series, TimeSpan.FromHours(1));
         return new Row(
             0u, name, string.Empty,
-            average5m.ToString("N1", CultureInfo.InvariantCulture),
-            average1h.ToString("N1", CultureInfo.InvariantCulture),
+            average5m == 0d ? string.Empty : average5m.ToString("N1", CultureInfo.InvariantCulture),
+            average1h == 0d ? string.Empty : average1h.ToString("N1", CultureInfo.InvariantCulture),
             string.Empty);
     }
 
+    /// <summary>
+    /// M4: matches the original's <c>UpdateInventoryItem</c> exactly — when
+    /// <c>LastKnownValue == 0</c>, ALL THREE of Avg/h~5m, Avg/h~1h and (Hrs)
+    /// go blank together (the Count cell itself still reads "0"); otherwise
+    /// each of the three is blanked independently when it individually
+    /// computes to zero.
+    /// </summary>
     private static Row ConsumableRow(TrackedConsumable tracked)
     {
+        int lastKnown = tracked.CurrentCount;
+        string countText = lastKnown.ToString(CultureInfo.InvariantCulture);
+
+        if (lastKnown == 0)
+            return new Row(tracked.Icon, tracked.Name, countText, string.Empty, string.Empty, string.Empty);
+
         double average5m = tracked.History.GetValueDifference(
             TimeSpan.FromMinutes(5), TimeSpan.FromHours(1));
         double average1h = tracked.History.GetValueDifference(
@@ -93,9 +107,9 @@ public static class InventoryTrackerRows
         return new Row(
             tracked.Icon,
             tracked.Name,
-            tracked.CurrentCount.ToString(CultureInfo.InvariantCulture),
-            average5m.ToString("N1", CultureInfo.InvariantCulture),
-            average1h.ToString("N1", CultureInfo.InvariantCulture),
+            countText,
+            average5m == 0d ? string.Empty : average5m.ToString("N1", CultureInfo.InvariantCulture),
+            average1h == 0d ? string.Empty : average1h.ToString("N1", CultureInfo.InvariantCulture),
             hoursText);
     }
 }

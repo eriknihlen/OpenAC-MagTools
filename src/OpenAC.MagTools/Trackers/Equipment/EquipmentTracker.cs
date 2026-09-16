@@ -20,6 +20,15 @@ public sealed class EquipmentTracker(TimeProvider? timeProvider = null)
     /// <summary>Decal's <c>EquippedSlots</c> value for the ammo slot.</summary>
     public const uint AmmoEquippedLocation = 8388608u;
 
+    /// <summary>
+    /// ACE <c>PublicWeenieFlags.Retained</c> (0x01000000). The host does not
+    /// project the appraisal-derived Retained bool this tracker used to read
+    /// (see <see cref="NumberOfUnretainedItems"/>'s remarks); this bit on the
+    /// owned-item snapshot's <c>PublicFlags</c> is the equivalent signal and
+    /// is present without waiting for a full ident.
+    /// </summary>
+    public const uint RetainedPublicFlag = 0x01000000u;
+
     private readonly Dictionary<uint, EquipmentTrackedItem> _items = [];
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
@@ -58,11 +67,15 @@ public sealed class EquipmentTracker(TimeProvider? timeProvider = null)
 
     /// <summary>
     /// Excluded from the Mana list's display (still tracked and still counted
-    /// in the aggregates below) — names containing "Aetheria", and cloaks.
+    /// in the aggregates below) — names containing "Aetheria", cloaks, and
+    /// archer/missile ammo (M1: the original's <c>ManaTrackerGUI</c> checks
+    /// all three; this port previously only ported the first two).
     /// </summary>
     public static bool IsHiddenFromList(EquipmentTrackedItem item)
-        => item.Item.Name.Contains("Aetheria", StringComparison.Ordinal)
-            || item.Item.ValidLocations == CloakValidLocations;
+        => (!string.IsNullOrEmpty(item.Item.Name)
+                && item.Item.Name.Contains("Aetheria", StringComparison.Ordinal))
+            || item.Item.ValidLocations == CloakValidLocations
+            || IsAmmo(item);
 
     public static bool IsAmmo(EquipmentTrackedItem item)
         => item.Item.EquippedLocation == AmmoEquippedLocation;
@@ -111,14 +124,33 @@ public sealed class EquipmentTracker(TimeProvider? timeProvider = null)
         return count;
     }
 
-    /// <summary>Items with id data and <c>Retained == false</c>, excluding ammo.</summary>
+    /// <summary>
+    /// Items with id data and the <see cref="RetainedPublicFlag"/> bit unset
+    /// on their owned-item snapshot, excluding ammo.
+    /// </summary>
+    /// <remarks>
+    /// H2: this used to gate on <c>item.Retained == false</c>, the
+    /// appraisal-derived bool from <see cref="ItemInfo.ItemModel.RetainedKey"/>
+    /// — but that bool is only populated when the host's appraisal payload
+    /// happens to carry that property id, so an unretained item whose
+    /// appraisal omits it (the common case) was silently never counted, no
+    /// matter how many unretained items were equipped. The original reads
+    /// Decal's <c>wo.Values(BoolValueKey.Retained)</c>, which defaults to
+    /// <c>false</c> when absent — the same "absent means unretained" default
+    /// the owned-item snapshot's <see cref="PluginInventoryItem.PublicFlags"/>
+    /// bit test gives for free, with no ident wait. See docs/deviations.md.
+    /// </remarks>
     public int NumberOfUnretainedItems()
     {
         int count = 0;
         foreach (EquipmentTrackedItem item in _items.Values)
         {
-            if (item.HasIdData && item.Retained == false && !IsAmmo(item))
+            if (item.HasIdData
+                && (item.Item.PublicFlags & RetainedPublicFlag) == 0
+                && !IsAmmo(item))
+            {
                 count++;
+            }
         }
 
         return count;

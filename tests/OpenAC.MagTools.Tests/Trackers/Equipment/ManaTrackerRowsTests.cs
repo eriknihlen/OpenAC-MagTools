@@ -44,14 +44,76 @@ public sealed class ManaTrackerRowsTests
     }
 
     [Fact]
-    public void An_ordinary_item_is_listed_with_the_calculated_over_maximum_mana_text()
+    public void A_NotActivatable_item_shows_dashes_for_mana_and_time()
     {
+        // No carried spells (World.SpellIds is empty) => NotActivatable, per
+        // GetState's own "SpellIds.Count == 0" gate — the original's
+        // Item_Changed only computes real numbers for Active/NotActive.
         var tracker = new EquipmentTracker();
         EquipmentTrackedItem tracked = tracker.GetOrAdd(1u);
         tracked.UpdateSnapshot(Item(1u, "Ring", currentMana: 30, maximumMana: 100), default, DateTime.UtcNow);
         tracked.OnIdentReceived(EmptyProperties(), DateTime.UtcNow);
 
         var rows = ManaTrackerRows.Build(tracker, Spells, [], TimeProvider.System);
+        ManaTrackerRows.Row row = Assert.Single(rows);
+        Assert.Equal("-", row.ManaText);
+        Assert.Equal("-", row.TimeText);
+    }
+
+    [Fact]
+    public void An_unidentified_item_shows_dashes_for_mana_and_time()
+    {
+        // No OnIdentReceived call at all => Unknown state.
+        var tracker = new EquipmentTracker();
+        EquipmentTrackedItem tracked = tracker.GetOrAdd(1u);
+        tracked.UpdateSnapshot(Item(1u, "Ring", currentMana: 30, maximumMana: 100), default, DateTime.UtcNow);
+
+        var rows = ManaTrackerRows.Build(tracker, Spells, [], TimeProvider.System);
+        ManaTrackerRows.Row row = Assert.Single(rows);
+        Assert.Equal("-", row.ManaText);
+        Assert.Equal("-", row.TimeText);
+    }
+
+    [Fact]
+    public void A_NotActive_item_shows_raw_mana_and_a_zero_time_not_blank()
+    {
+        // Carried spell with no matching active enchantment anywhere =>
+        // NotActive (mana > 0, so it isn't the "zero mana" NotActive path).
+        var tracker = new EquipmentTracker();
+        EquipmentTrackedItem tracked = tracker.GetOrAdd(1u);
+        var world = new PluginWorldObject(1u, 0u, "Ring", PluginObjectClass.Jewelry, 0u, 0u, 0u)
+        {
+            SpellIds = [99u],
+        };
+        tracked.UpdateSnapshot(Item(1u, "Ring", currentMana: 30, maximumMana: 100), world, DateTime.UtcNow);
+        tracked.OnIdentReceived(EmptyProperties(), DateTime.UtcNow);
+
+        var spells = new FakeSpellCatalog();
+        spells.Register(99u, "Test Spell", family: 1, difficulty: 1);
+
+        var rows = ManaTrackerRows.Build(tracker, spells, [], TimeProvider.System);
+        ManaTrackerRows.Row row = Assert.Single(rows);
+        Assert.Equal("30 / 100", row.ManaText);
+        Assert.Equal("0h00m", row.TimeText);
+    }
+
+    [Fact]
+    public void An_Active_item_is_listed_with_the_calculated_over_maximum_mana_text()
+    {
+        var tracker = new EquipmentTracker();
+        EquipmentTrackedItem tracked = tracker.GetOrAdd(1u);
+        var world = new PluginWorldObject(1u, 0u, "Ring", PluginObjectClass.Jewelry, 0u, 0u, 0u)
+        {
+            SpellIds = [99u],
+            ActiveSpellIds = [99u],
+        };
+        tracked.UpdateSnapshot(Item(1u, "Ring", currentMana: 30, maximumMana: 100), world, DateTime.UtcNow);
+        tracked.OnIdentReceived(EmptyProperties(), DateTime.UtcNow);
+
+        var spells = new FakeSpellCatalog();
+        spells.Register(99u, "Test Spell", family: 1, difficulty: 1);
+
+        var rows = ManaTrackerRows.Build(tracker, spells, [], TimeProvider.System);
         ManaTrackerRows.Row row = Assert.Single(rows);
         Assert.Equal("30 / 100", row.ManaText);
     }

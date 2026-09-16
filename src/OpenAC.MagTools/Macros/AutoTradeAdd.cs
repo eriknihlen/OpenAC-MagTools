@@ -23,25 +23,35 @@ namespace OpenAC.MagTools.Macros;
 /// <c>NeedsIdentification</c> is scoped to the classifier's LIVE profile, not
 /// a named one) — this port approximates the original's
 /// <c>DoesPotentialItemNeedID</c> gate with "lacks appraisal data at all",
-/// requesting an id once per item and waiting for
-/// <see cref="PluginWorldObject.HasAppraisalData"/> before classifying it.
-/// See docs/deviations.md.
+/// retrying the id request every think (a plugin identify can legitimately
+/// come back <c>Refused</c>/<c>Busy</c> while the user has an appraisal of
+/// their own in flight — see docs/plugin-api.md's Identify section) until
+/// <see cref="PluginWorldObject.HasAppraisalData"/> flips true. An item that
+/// NEVER gains appraisal data is blacklisted for the rest of this run after
+/// the same 10-second stuck window every other id-wait/move-wait tracker in
+/// this port uses, so one permanently unidentifiable item cannot pin the
+/// "inventory scan complete" message forever. See docs/deviations.md.
 /// </para>
 /// </remarks>
 public sealed class AutoTradeAdd
 {
     private static readonly TimeSpan ThinkInterval = TimeSpan.FromMilliseconds(100);
+    private static readonly TimeSpan StuckWindow = TimeSpan.FromSeconds(10);
 
     private readonly IPluginHost _host;
     private readonly ChatOutput _chat;
     private readonly AutoTradeAddSettings _settings;
     private readonly LootRuleProcessor _lootRules;
+    private readonly TimeProvider _timeProvider;
 
     private IDisposable? _thinkRegistration;
     private Action<PluginTradeOpened>? _onOpened;
     private Action? _onClosed;
     private string _profileName = string.Empty;
-    private readonly HashSet<uint> _idRequested = [];
+
+    /// <summary>Per-item "how long have we been waiting for THIS item's id" clocks (M5).</summary>
+    private readonly Dictionary<uint, DateTime> _idWaitStartedUtc = [];
+    private readonly HashSet<uint> _blacklistedIds = [];
     private readonly HashSet<uint> _added = [];
     private bool _active;
     private bool _completeReported;
@@ -50,7 +60,8 @@ public sealed class AutoTradeAdd
         IPluginHost host,
         ChatOutput chat,
         AutoTradeAddSettings settings,
-        LootRuleProcessor lootRules)
+        LootRuleProcessor lootRules,
+        TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(chat);
@@ -60,6 +71,7 @@ public sealed class AutoTradeAdd
         _chat = chat;
         _settings = settings;
         _lootRules = lootRules;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public void Start(TickScheduler scheduler)
@@ -97,7 +109,8 @@ public sealed class AutoTradeAdd
             return;
 
         _profileName = _host.Automation.Trade.PartnerName;
-        _idRequested.Clear();
+        _idWaitStartedUtc.Clear();
+        _blacklistedIds.Clear();
         _added.Clear();
         _completeReported = false;
         _active = true;
@@ -108,7 +121,8 @@ public sealed class AutoTradeAdd
     private void ResetRun()
     {
         _active = false;
-        _idRequested.Clear();
+        _idWaitStartedUtc.Clear();
+        _blacklistedIds.Clear();
         _added.Clear();
         _completeReported = false;
     }
@@ -123,25 +137,45 @@ public sealed class AutoTradeAdd
             return;
         }
 
+        // M5: retried every think (not one-shot) until either appraised or
+        // stuck long enough to blacklist -- a Refused/Busy identify (see
+        // docs/plugin-api.md's Identify section) must get another chance
+        // next think, and an item that NEVER gains appraisal data must not
+        // pin `anyPendingId` (and therefore this whole run) forever.
         bool anyPendingId = false;
+        DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
 
         foreach (PluginInventoryItem item in _host.Automation.Items.CaptureOwnedItems())
         {
-            if (item.IsEquipped || _added.Contains(item.ObjectId))
+            if (item.IsEquipped || _added.Contains(item.ObjectId) || _blacklistedIds.Contains(item.ObjectId))
                 continue;
-
-            if (!TryHasAppraisal(item.ObjectId))
+            if (TryHasAppraisal(item.ObjectId))
             {
-                if (_idRequested.Add(item.ObjectId))
-                    _host.Automation.Objects.Identify(item.ObjectId);
-                anyPendingId = true;
+                _idWaitStartedUtc.Remove(item.ObjectId);
+                continue;
             }
+
+            if (!_idWaitStartedUtc.TryGetValue(item.ObjectId, out DateTime waitStartUtc))
+            {
+                _idWaitStartedUtc[item.ObjectId] = now;
+                waitStartUtc = now;
+            }
+
+            if (now - waitStartUtc > StuckWindow)
+            {
+                _blacklistedIds.Add(item.ObjectId);
+                _idWaitStartedUtc.Remove(item.ObjectId);
+                continue;
+            }
+
+            _host.Automation.Objects.Identify(item.ObjectId);
+            anyPendingId = true;
         }
 
         // One add per think, after id requests have gone out this tick.
         foreach (PluginInventoryItem item in _host.Automation.Items.CaptureOwnedItems())
         {
-            if (item.IsEquipped || _added.Contains(item.ObjectId))
+            if (item.IsEquipped || _added.Contains(item.ObjectId) || _blacklistedIds.Contains(item.ObjectId))
                 continue;
             if (!TryHasAppraisal(item.ObjectId))
                 continue;

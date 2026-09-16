@@ -45,6 +45,7 @@ public sealed class AutoBuySellTests
                 : null;
 
         host.Automation.Objects.Objects.Add(FakeObjects.Landscape(9u, "Fred", PluginObjectClass.Vendor, 0));
+        host.Automation.Vendor.VendorName = "Fred";
         host.Automation.Vendor.RaiseOpened(9u);
         scheduler.Tick(0.1);
 
@@ -64,6 +65,7 @@ public sealed class AutoBuySellTests
             => context.Item.Name == "Prismatic Taper" ? Keep() : null;
 
         host.Automation.Objects.Objects.Add(FakeObjects.Landscape(9u, "Fred", PluginObjectClass.Vendor, 0));
+        host.Automation.Vendor.VendorName = "Fred";
         host.Automation.Vendor.RaiseOpened(9u);
         scheduler.Tick(0.1);
 
@@ -87,6 +89,7 @@ public sealed class AutoBuySellTests
         };
 
         host.Automation.Objects.Objects.Add(FakeObjects.Landscape(9u, "Fred", PluginObjectClass.Vendor, 0));
+        host.Automation.Vendor.VendorName = "Fred";
         host.Automation.Vendor.RaiseOpened(9u);
         scheduler.Tick(0.1);
 
@@ -114,6 +117,7 @@ public sealed class AutoBuySellTests
         host.LootClassifiers.ProfileClassifyHandler = (_, __) => Sell();
 
         host.Automation.Objects.Objects.Add(FakeObjects.Landscape(9u, "Fred", PluginObjectClass.Vendor, 0));
+        host.Automation.Vendor.VendorName = "Fred";
         host.Automation.Vendor.RaiseOpened(9u);
         scheduler.Tick(0.1);
 
@@ -146,6 +150,7 @@ public sealed class AutoBuySellTests
         host.LootClassifiers.ProfileClassifyHandler = (_, __) => Sell();
 
         host.Automation.Objects.Objects.Add(FakeObjects.Landscape(9u, "Fred", PluginObjectClass.Vendor, 0));
+        host.Automation.Vendor.VendorName = "Fred";
         host.Automation.Vendor.RaiseOpened(9u);
         scheduler.Tick(0.1);
 
@@ -168,6 +173,7 @@ public sealed class AutoBuySellTests
         };
 
         host.Automation.Objects.Objects.Add(FakeObjects.Landscape(9u, "Fred", PluginObjectClass.Vendor, 0));
+        host.Automation.Vendor.VendorName = "Fred";
         host.Automation.Vendor.RaiseOpened(9u);
         scheduler.Tick(0.1);
 
@@ -197,6 +203,7 @@ public sealed class AutoBuySellTests
             => context.Item.Name == "Prismatic Taper" ? Keep() : null;
 
         host.Automation.Objects.Objects.Add(FakeObjects.Landscape(9u, "Fred", PluginObjectClass.Vendor, 0));
+        host.Automation.Vendor.VendorName = "Fred";
         host.Automation.Vendor.RaiseOpened(9u);
 
         Assert.Contains(host.ChatLines, line => line.Contains("Buy Items:", StringComparison.Ordinal));
@@ -204,6 +211,60 @@ public sealed class AutoBuySellTests
         Assert.Empty(host.Automation.Vendor.Calls);
 
         scheduler.Tick(0.1);
+        Assert.Empty(host.Automation.Vendor.Calls);
+    }
+
+    [Fact]
+    public void PrintsNothingToSellWhenOnlyABuyPickExists()
+    {
+        // M2: "Nothing to Sell" must print on its own, independent of
+        // whatever the buy side is doing.
+        (FakeHost host, _, OpenAC.MagTools.TickScheduler scheduler) = Build();
+        host.Automation.Vendor.Items.Add(
+            new PluginVendorItem(1u, 100u, "Prismatic Taper", PluginObjectClass.Food, 10, 1));
+        host.LootClassifiers.ProfileClassifyHandler = (_, context)
+            => context.Item.Name == "Prismatic Taper" ? Keep() : null;
+
+        host.Automation.Vendor.VendorName = "Fred";
+        host.Automation.Vendor.RaiseOpened(9u);
+        scheduler.Tick(0.1);
+
+        Assert.Contains(host.ChatLines, line => line.Contains("AutoBuySell: Nothing to Sell", StringComparison.Ordinal));
+        // The buy side still proceeds even though the sell side is empty.
+        Assert.Contains("buyall", host.Automation.Vendor.Calls);
+    }
+
+    [Fact]
+    public void BothPicksBeingTradeNotesRefusesTheRoundWithoutTouchingTheWire()
+    {
+        // M1: restored both-TradeNotes guard -- trading a note for a note is
+        // never useful, so the original refused to kick off the round.
+        (FakeHost host, _, OpenAC.MagTools.TickScheduler scheduler) = Build();
+        host.Automation.Vendor.Items.Add(
+            new PluginVendorItem(1u, 100u, "Note of Recall", PluginObjectClass.TradeNote, 10, 1));
+        PluginInventoryItem ownedNote = new(
+            2u, 0u, "Note of Vitae", 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u,
+            1, 0, 0, 0u, 0, 0, 0u, false, 0d, 0, 0, 0, 0d, 0, 0, 0)
+        {
+            ObjectClass = PluginObjectClass.TradeNote,
+        };
+        host.Automation.Items.Owned.Add(ownedNote);
+
+        host.LootClassifiers.ProfileClassifyHandler = (_, context) => context.Item.Name switch
+        {
+            "Note of Recall" => Keep(),
+            "Note of Vitae" => Sell(),
+            _ => null,
+        };
+
+        host.Automation.Vendor.VendorName = "Fred";
+        host.Automation.Vendor.RaiseOpened(9u);
+        scheduler.Tick(0.1);
+
+        Assert.Contains(
+            host.ChatLines,
+            line => line.Contains(
+                "AutoBuySell: No TradeNotes to buy or sell. Check Loot Profile", StringComparison.Ordinal));
         Assert.Empty(host.Automation.Vendor.Calls);
     }
 }

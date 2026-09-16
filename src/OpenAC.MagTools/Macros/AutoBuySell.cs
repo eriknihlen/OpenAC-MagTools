@@ -120,8 +120,11 @@ public sealed class AutoBuySell
         if (!_settings.Enabled.Value)
             return;
 
-        _host.Automation.Objects.TryGet(vendorObjectId, out PluginWorldObject vendor);
-        _vendorProfileName = vendor.Name;
+        // LOW: read straight off the vendor surface's own VendorName rather
+        // than re-resolving the vendor through the general world-object
+        // table -- IVendorAutomation already carries it, and a vendor is not
+        // guaranteed to also be present as an ordinary tracked world object.
+        _vendorProfileName = _host.Automation.Vendor.VendorName;
         _phase = Phase.Idle;
 
         if (_settings.TestMode.Value)
@@ -191,8 +194,25 @@ public sealed class AutoBuySell
             return;
         }
 
+        // M2: reported independently -- either side (or both) can be empty
+        // on a given round, and the original's own comment insists both get
+        // their own line.
         if (buy is null)
             _chat.Write("AutoBuySell: Nothing to Buy");
+        if (sell is null)
+            _chat.Write("AutoBuySell: Nothing to Sell");
+
+        // M1: restored both-TradeNotes guard. Trading a TradeNote in for
+        // another TradeNote is never useful, so the original refused to
+        // kick off the round at all when both picks landed on one --
+        // reproduced here as the SAME message rather than the upstream NRE
+        // (Appendix B #1) that guard was meant to prevent.
+        if (buy is { ObjectClass: PluginObjectClass.TradeNote }
+            && sell is { ObjectClass: PluginObjectClass.TradeNote })
+        {
+            _chat.Write("AutoBuySell: No TradeNotes to buy or sell. Check Loot Profile");
+            return;
+        }
 
         if (buy is { } picked)
         {
@@ -208,15 +228,11 @@ public sealed class AutoBuySell
             _host.Automation.Vendor.SellAll();
             _phase = Phase.Selling;
         }
-        else
-        {
-            _chat.Write("AutoBuySell: Nothing to Sell");
-        }
     }
 
-    private readonly record struct BuyPick(uint TemplateObjectId, int Count);
+    private readonly record struct BuyPick(uint TemplateObjectId, int Count, PluginObjectClass ObjectClass);
 
-    private readonly record struct SellPick(uint ObjectId);
+    private readonly record struct SellPick(uint ObjectId, PluginObjectClass ObjectClass);
 
     /// <summary>
     /// First pass: a Keep-Up-To rule whose owned count (by matching name,
@@ -244,7 +260,7 @@ public sealed class AutoBuySell
             if (amount <= 0)
                 continue;
 
-            return new BuyPick(item.TemplateObjectId, amount);
+            return new BuyPick(item.TemplateObjectId, amount, item.ObjectClass);
         }
 
         foreach (PluginVendorItem item in items)
@@ -254,7 +270,7 @@ public sealed class AutoBuySell
             if (classification.Action != PluginLootAction.Keep)
                 continue;
 
-            return new BuyPick(item.TemplateObjectId, MaxBuyCount);
+            return new BuyPick(item.TemplateObjectId, MaxBuyCount, item.ObjectClass);
         }
 
         return null;
@@ -298,7 +314,7 @@ public sealed class AutoBuySell
         }
 
         PluginInventoryItem? chosen = firstPlain ?? cheapestNonNote ?? cheapestNote;
-        return chosen is { } item2 ? new SellPick(item2.ObjectId) : null;
+        return chosen is { } item2 ? new SellPick(item2.ObjectId, item2.ObjectClass) : null;
     }
 
     private static int CountOwnedMatching(IReadOnlyList<PluginInventoryItem> owned, string name)

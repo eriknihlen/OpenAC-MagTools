@@ -366,3 +366,36 @@ Owed: a live re-gate of the inventory logger, exporter, and worn-equipment
 sort order against a real host, since this round's evidence is unit tests
 only (no game client was launched for this round per the coordinator's
 instruction).
+
+## P10 re-review round (2026-09-16, no live gate -- follow-up code review findings)
+
+The P10 review round's nine findings were confirmed fixed; a re-review of the
+SAME fix pass found five further issues, all in `InventoryLogger.cs` (plus
+one test-only finding). Fixed at `33b9c69`:
+
+- **MEDIUM-A** the 1 Hz snapshot poll unconditionally replaced
+  `_lastOwnedSnapshot` on any non-empty capture, risking a partial/stale
+  refresh near logoff. Checked the host's actual Logoff-vs-teardown ordering
+  under `OpenAcRoot` (see the commit message and the code comment on
+  `OnSnapshotPoll` for the exact `LiveSessionController.cs`/
+  `RuntimeGenerationReset.cs` line citations): teardown is atomic in both
+  observed logoff paths, so a genuinely partial capture is never observable,
+  but a poll can still land in the gap between `IsInWorld` flipping false and
+  this plugin's own `Stop()` running. Fixed: the refresh now skips while
+  `ICharacterInfo.IsInWorld` is false.
+- **MEDIUM-B** after the 60-poll startup give-up, a later non-empty poll
+  still refreshed the snapshot and `Stop()` still dumped it, contradicting
+  the give-up comment and the deviations row. Fixed: give-up now disposes
+  the poll outright.
+- **LOW-C** `_lastOwnedSnapshot = items.ToArray()` was a redundant second
+  copy every second (`CaptureOwnedItems` already returns a fresh list per
+  call). Fixed: assigns directly; the test fake was also corrected to
+  return a fresh copy (it previously returned a live, mutable list,
+  diverging from the real host's contract).
+- **LOW-D** the startup identify loop didn't record ids in `_requestedIds`,
+  causing a duplicate `Identify` on a later `Created` for the same item.
+  Fixed.
+- **LOW-E** the give-up test's final asserts could never fail. Replaced with
+  a behavioral check that a post-give-up arrival is never picked up.
+
+Still owed: the same live re-gate noted after the P10 round.

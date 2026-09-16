@@ -178,8 +178,8 @@ public sealed class ContainerIdentDetectorTests
         host.Automation.Objects.Replace(new PluginWorldObject(
             10u, 0u, "A Chest", PluginObjectClass.Container, 0u, 0u, 0u));
         host.Automation.Objects.OpenContainerObjectId = 10u;
-        host.Automation.Loot.Contents.Add(FakeItems.Item(101u, "Sword"));
-        host.Automation.Loot.Contents.Add(FakeItems.Item(102u, "Shield"));
+        host.Automation.Loot.Contents.Add(FakeItems.Item(101u, "Sword") with { ContainerObjectId = 10u });
+        host.Automation.Loot.Contents.Add(FakeItems.Item(102u, "Shield") with { ContainerObjectId = 10u });
 
         var detector = new ContainerIdentDetector(host, settings.ItemInfoOnIdent, scheduler);
         var raised = new List<ItemIdentArgs>();
@@ -222,7 +222,7 @@ public sealed class ContainerIdentDetectorTests
         host.Automation.Objects.Replace(new PluginWorldObject(
             10u, 0u, "A Vault", PluginObjectClass.Container, 0u, 0u, 0u));
         host.Automation.Objects.OpenContainerObjectId = 10u;
-        host.Automation.Loot.Contents.Add(FakeItems.Item(101u, "Sword"));
+        host.Automation.Loot.Contents.Add(FakeItems.Item(101u, "Sword") with { ContainerObjectId = 10u });
 
         var detector = new ContainerIdentDetector(host, settings.ItemInfoOnIdent, scheduler);
         var raised = new List<uint>();
@@ -248,7 +248,7 @@ public sealed class ContainerIdentDetectorTests
         host.Automation.Objects.Replace(new PluginWorldObject(
             10u, 0u, "A Reliquary", PluginObjectClass.Container, 0u, 0u, 0u));
         host.Automation.Objects.OpenContainerObjectId = 10u;
-        host.Automation.Loot.Contents.Add(FakeItems.Item(101u, "Sword"));
+        host.Automation.Loot.Contents.Add(FakeItems.Item(101u, "Sword") with { ContainerObjectId = 10u });
 
         var detector = new ContainerIdentDetector(host, settings.ItemInfoOnIdent, scheduler);
         detector.Start();
@@ -259,6 +259,62 @@ public sealed class ContainerIdentDetectorTests
             host.Events.RaiseTick(0.1);
 
         Assert.False(detector.IsRunning);
+    }
+
+    [Fact]
+    public void OnlyDirectChildrenOfTheOpenContainerAreIdentified()
+    {
+        // The host's CaptureCurrentContents() walks the whole container
+        // tree; the original's GetByContainer(openedContainerId) never
+        // descended into a nested container. An item whose ContainerObjectId
+        // is a DIFFERENT (nested) container must not be identified here.
+        (FakeHost host, SettingsManager settings, TickScheduler scheduler) = Build();
+        host.Automation.Objects.Replace(new PluginWorldObject(
+            10u, 0u, "A Chest", PluginObjectClass.Container, 0u, 0u, 0u));
+        host.Automation.Objects.OpenContainerObjectId = 10u;
+        host.Automation.Loot.Contents.Add(FakeItems.Item(101u, "Sword") with { ContainerObjectId = 10u });
+        // Nested: a pouch inside the chest, and an item inside THAT pouch.
+        host.Automation.Loot.Contents.Add(FakeItems.Item(102u, "Pouch") with { ContainerObjectId = 10u });
+        host.Automation.Loot.Contents.Add(FakeItems.Item(103u, "Gem") with { ContainerObjectId = 102u });
+
+        var detector = new ContainerIdentDetector(host, settings.ItemInfoOnIdent, scheduler);
+        var raised = new List<uint>();
+        detector.ItemIdentified += args => raised.Add(args.ObjectId);
+        detector.Start();
+
+        host.Events.RaiseContainerOpened(10u);
+        host.Events.RaiseTick(0.1);
+
+        Assert.Equal([101u, 102u], raised);
+    }
+
+    [Fact]
+    public void SalvageSuppressionIsRecomputedFromTheCurrentlyOpenContainerEachThink()
+    {
+        // Not cached from the container-open event: recomputed every Think()
+        // from the currently open container's live name.
+        (FakeHost host, SettingsManager settings, TickScheduler scheduler) = Build();
+        host.Automation.Objects.Replace(new PluginWorldObject(
+            10u, 0u, "A Bag", PluginObjectClass.Container, 0u, 0u, 0u));
+        host.Automation.Objects.OpenContainerObjectId = 10u;
+
+        var detector = new ContainerIdentDetector(host, settings.ItemInfoOnIdent, scheduler);
+        var raised = new List<ItemIdentArgs>();
+        detector.ItemIdentified += raised.Add;
+        detector.Start();
+
+        host.Events.RaiseContainerOpened(10u);
+        host.Events.RaiseTick(0.1); // no items yet; loop keeps running
+
+        // The open container's name changes without a new ContainerOpened
+        // event (e.g. the tracked snapshot updates in place).
+        host.Automation.Objects.Replace(new PluginWorldObject(
+            10u, 0u, "A Vault", PluginObjectClass.Container, 0u, 0u, 0u));
+        host.Automation.Loot.Contents.Add(FakeItems.Item(101u, "Sword") with { ContainerObjectId = 10u });
+        host.Events.RaiseTick(0.1);
+
+        Assert.Single(raised);
+        Assert.True(raised[0].DontShowIfIsSalvageRule);
     }
 
     [Fact]

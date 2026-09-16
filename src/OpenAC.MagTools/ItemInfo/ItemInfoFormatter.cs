@@ -184,8 +184,19 @@ public static class ItemInfoFormatter
 
         int useSkillSpec = item.GetInt(ItemModel.UseRequiresSkillSpecializedKey, 0);
         if (useSkillSpec > 0 && useSkillLevel > 0)
-            sb.Append(", Spec ").Append(ItemModel.SkillName(useSkillSpec))
-                .Append(' ').Append(useSkillLevel.ToString(CultureInfo.InvariantCulture));
+        {
+            // The original's unknown-skill message for THIS segment reads
+            // "Unknown skill spec: N M", not "Spec Unknown skill: N M" — a
+            // different literal from the plain "Unknown skill: N M" every
+            // other segment uses, so it can't share ItemModel.SkillName's
+            // generic fallback text.
+            if (Dictionaries.SkillInfo.TryGetValue(useSkillSpec, out string? specName))
+                sb.Append(", Spec ").Append(specName)
+                    .Append(' ').Append(useSkillLevel.ToString(CultureInfo.InvariantCulture));
+            else
+                sb.Append(", Unknown skill spec: ").Append(useSkillSpec.ToString(CultureInfo.InvariantCulture))
+                    .Append(' ').Append(useSkillLevel.ToString(CultureInfo.InvariantCulture));
+        }
 
         // 23. Lore requirement.
         int loreRequirement = item.GetInt(ItemModel.LoreRequirementKey, 0);
@@ -307,6 +318,10 @@ public static class ItemInfoFormatter
 
         foreach (uint spellId in sorted)
         {
+            // The original indexed the spell table directly with no presence
+            // check and would have thrown for an id the table doesn't have;
+            // this port skips an unresolvable id instead of crashing the
+            // whole line. See docs/deviations.md.
             if (!spells.TryGet(spellId, out PluginSpellInfo spell))
                 continue;
 

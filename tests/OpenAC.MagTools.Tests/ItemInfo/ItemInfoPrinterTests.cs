@@ -52,7 +52,7 @@ public sealed class ItemInfoPrinterTests
     }
 
     [Fact]
-    public void WithClassifierPrintsTheTellWrappedMarkerAndRuleName()
+    public void WithClassifierPrintsThePlainMarkerAndRuleNameWithNoTellWrapper()
     {
         (FakeHost host, _, _, ItemInfoPrinter printer) = Build();
         PutSword(host);
@@ -65,8 +65,11 @@ public sealed class ItemInfoPrinterTests
 
         Assert.Single(host.ChatLines);
         string line = host.ChatLines[0];
-        Assert.StartsWith("<Tell:IIDString:221112:1>+(Epics)", line);
-        Assert.Contains(@"<\\Tell> ", line);
+        // No <Tell:...> wrapper: the host's chat markup only tags speech
+        // ChatKinds, so a plugin-posted <Tell:...> would render as literal
+        // text instead of a clickable link. See docs/deviations.md.
+        Assert.StartsWith("+(Epics) ", line);
+        Assert.DoesNotContain("<Tell:", line);
         Assert.Contains("Sword", line);
     }
 
@@ -82,7 +85,8 @@ public sealed class ItemInfoPrinterTests
 
         printer.Print(new ItemIdentArgs(1u));
 
-        Assert.StartsWith("<Tell:IIDString:221112:1>-", host.ChatLines[0]);
+        Assert.StartsWith("-", host.ChatLines[0]);
+        Assert.DoesNotContain("<Tell:", host.ChatLines[0]);
     }
 
     [Fact]
@@ -156,6 +160,33 @@ public sealed class ItemInfoPrinterTests
         printer.Print(new ItemIdentArgs(1u, AllowAutoClipboard: true));
 
         Assert.Empty(host.Clipboard.Written);
+    }
+
+    [Fact]
+    public void LandscapeItemWithNoInventoryRecordIsStillClassified()
+    {
+        // The original always asked VTank to classify every appraised item,
+        // not just owned/open-container ones. A landscape item (never added
+        // to Owned, never in an open container) has no PluginInventoryItem —
+        // it should still get a verdict off a synthetic item built from its
+        // captured properties. See M6 in docs/deviations.md.
+        (FakeHost host, _, _, ItemInfoPrinter printer) = Build();
+        host.Automation.Objects.Replace(new PluginWorldObject(
+            2u, 0u, "Loose Sword", PluginObjectClass.MeleeWeapon, 0u, 0u, 0u)
+        {
+            HasAppraisalData = true,
+        });
+        host.Automation.Objects.Properties[2u] = ItemInfoFixtures.Props(
+            ints: new Dictionary<uint, int> { { 44, 30 } }); // Damage
+        host.LootClassifiers.Available.Add(new PluginLootClassifierInfo("engine", "Engine"));
+        host.LootClassifiers.ClassificationResult = new PluginLootClassification(
+            Matched: true, Action: PluginLootAction.Keep, RuleName: "Epics");
+
+        printer.Print(new ItemIdentArgs(2u));
+
+        Assert.Single(host.ChatLines);
+        Assert.StartsWith("+(Epics) ", host.ChatLines[0]);
+        Assert.Contains("Loose Sword", host.ChatLines[0]);
     }
 
     [Fact]

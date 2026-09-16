@@ -57,17 +57,38 @@ public sealed class LootRuleProcessorTests
     }
 
     [Fact]
-    public void ClassifyMapsNoLootActionToNotPassing()
+    public void ClassifyMapsUnnamedNoLootActionToNotPassing()
     {
         var registry = new FakeLootClassifierRegistry();
         registry.Available.Add(new PluginLootClassifierInfo("engine", "Engine"));
         registry.ClassificationResult = new PluginLootClassification(
-            Matched: true, Action: PluginLootAction.NoLoot, RuleName: "MyRule");
+            Matched: true, Action: PluginLootAction.NoLoot, RuleName: string.Empty);
         var processor = new LootRuleProcessor(registry);
 
         LootVerdict? verdict = processor.Classify(EmptyContext());
 
         Assert.False(verdict!.Value.Passes);
+    }
+
+    [Fact]
+    public void ClassifyMapsNamedNoLootActionToPassing()
+    {
+        // ManaStone/ManaTank rules: the classifier reports Matched:true,
+        // Action.NoLoot, but with a real RuleName attached. The original
+        // still printed "+(Rule)" for these (its own "!IsNoLoot" check),
+        // so a NAMED NoLoot verdict counts as passing. See M5 in
+        // docs/deviations.md.
+        var registry = new FakeLootClassifierRegistry();
+        registry.Available.Add(new PluginLootClassifierInfo("engine", "Engine"));
+        registry.ClassificationResult = new PluginLootClassification(
+            Matched: true, Action: PluginLootAction.NoLoot, RuleName: "ManaStone");
+        var processor = new LootRuleProcessor(registry);
+
+        LootVerdict? verdict = processor.Classify(EmptyContext());
+
+        Assert.NotNull(verdict);
+        Assert.True(verdict!.Value.Passes);
+        Assert.Equal("ManaStone", verdict.Value.RuleName);
     }
 
     [Fact]

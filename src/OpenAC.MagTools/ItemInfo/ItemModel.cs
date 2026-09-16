@@ -17,30 +17,28 @@ namespace OpenAC.MagTools.ItemInfo;
 /// identical; only the C# enum member names differ from Decal's).
 /// </para>
 /// <para>
-/// Six keys are Decal-only pseudo-properties, not real AC property ids (the
-/// <c>0x0A000000</c>/<c>0x0D000000</c>-prefixed numbers the port design calls
-/// out). <see cref="GetInt"/>/<see cref="GetDouble"/> (and their
-/// <c>Has*</c> counterparts) intercept these six numbers and resolve them
-/// off the host's typed record fields — or, for the two that have no typed
-/// field, off the matching real property id — so every other reader in this
-/// class (including the buffed-value math, which keys its spell-effect
-/// tables off these exact numbers) can use them exactly like any other
-/// property key:
+/// Several keys are Decal-only pseudo-properties, not real AC property ids
+/// (the <c>0x0A000000</c>/<c>0x0D000000</c>-prefixed numbers the port design
+/// calls out). <see cref="GetInt"/>/<see cref="GetDouble"/> (and their
+/// <c>Has*</c> counterparts) intercept these numbers and resolve them off
+/// the host's typed record fields when one is present (an owned/open-
+/// container item), falling back to the matching real property id read off
+/// the captured property bag otherwise (a landscape/vendor item, which has
+/// properties but no <see cref="PluginInventoryItem"/>) — so every other
+/// reader in this class (including the buffed-value math, which keys its
+/// spell-effect tables off these exact numbers) can use them exactly like
+/// any other property key. Confirmed against the retained
+/// <c>Mag.Shared.Constants.IntValueKey.ConvertToInt</c> /
+/// <c>DoubleValueKey.ConvertToDouble</c> tables:
 /// </para>
 /// <list type="table">
-/// <item><term>218103842 (MaxDamage)</term><description><see cref="PluginInventoryItem.Damage"/></description></item>
-/// <item><term>218103840 (EquipSkill)</term><description><see cref="PluginInventoryItem.WeaponSkill"/></description></item>
-/// <item><term>167772171 (Variance)</term><description><see cref="PluginInventoryItem.DamageVariance"/></description></item>
-/// <item><term>167772169 (SalvageWorkmanship)</term><description><see cref="PluginInventoryItem.Workmanship"/></description></item>
+/// <item><term>218103842 (MaxDamage)</term><description><see cref="PluginInventoryItem.Damage"/>, else <c>Ints[44]</c> (ACE's <c>Damage</c>)</description></item>
+/// <item><term>218103840 (EquipSkill)</term><description><see cref="PluginInventoryItem.WeaponSkill"/>, else <c>Ints[48]</c> (ACE's <c>WeaponSkill</c>)</description></item>
+/// <item><term>167772171 (Variance)</term><description><see cref="PluginInventoryItem.DamageVariance"/>, else <c>Floats[22]</c> (ACE's <c>DamageVariance</c>)</description></item>
+/// <item><term>167772169 (SalvageWorkmanship)</term><description><see cref="PluginInventoryItem.Workmanship"/> only — <c>ConvertToDouble</c> has no real-property mapping for this one</description></item>
 /// <item><term>167772172 (AttackBonus)</term><description>real property id 62 (ACE's <c>WeaponOffense</c>)</description></item>
 /// <item><term>167772174 (DamageBonus)</term><description>real property id 63 (ACE's <c>DamageMod</c>)</description></item>
 /// </list>
-/// <para>
-/// The AttackBonus/DamageBonus mapping is inferred from AC/ACE property
-/// naming convention (both are multiplicative weapon bonus floats, the same
-/// family as every other double key here) rather than confirmed against a
-/// retained Mag-Tools source constant; see <c>docs/deviations.md</c>.
-/// </para>
 /// </remarks>
 public sealed class ItemModel
 {
@@ -65,13 +63,18 @@ public sealed class ItemModel
     public const int ValueKey = 19;
     public const int ArmorLevelKey = 28;
     public const int MeleeDefenseBonusKey = 29;
-    public const int SlashProtKey = 64;
-    public const int PierceProtKey = 65;
-    public const int BludgeonProtKey = 66;
-    public const int FireProtKey = 67;
-    public const int ColdProtKey = 68;
-    public const int AcidProtKey = 69;
-    public const int LightningProtKey = 70;
+    // The seven armour-protection floats. Decal's SlashProt..LightningProt
+    // pseudo-keys convert (via the retained DoubleValueKey.ConvertToDouble
+    // table) to ACE's ArmorModVsSlash/Pierce/Bludgeon/Cold/Fire/Acid/Electric
+    // — floats 13-19, NOT the 64-70 creature-resistance ints those numbers
+    // would otherwise suggest.
+    public const int SlashProtKey = 13;
+    public const int PierceProtKey = 14;
+    public const int BludgeonProtKey = 15;
+    public const int ColdProtKey = 16;
+    public const int FireProtKey = 17;
+    public const int AcidProtKey = 18;
+    public const int LightningProtKey = 19;
     public const int WorkmanshipKey = 105;
     public const int LoreRequirementKey = 109;
     public const int MaterialKey = 131;
@@ -99,29 +102,33 @@ public sealed class ItemModel
     public const int CritDamResistRatingKey = 375;
     public const int HealBoostRatingKey = 376;
     public const int VitalityRatingKey = 379;
-    public const int UnenchantableKey = 415;
-    public const int KeysHeldKey = 417;
-    public const int UsesRemainingKey = 418;
+    // Unenchantable/KeysHeld/UsesRemaining have no entry in the retained
+    // IntValueKey.ConvertToInt table (they're real, non-pseudo Decal
+    // property numbers, not 0x0A000000-prefixed pseudo-keys), so they're
+    // taken directly from Decal.Adapter.Wrappers.LongValueKey's own metadata
+    // (extracted from Decal.Adapter.dll 2.9.7.5 and 2.9.8.3, both v11
+    // client SDKs; identical in both). The host's AcDream.Core.Properties
+    // enums use different member names for these three ids than Decal does
+    // (e.g. host id 92 is PropertyInt.Structure, not "UsesRemaining") — the
+    // NUMBER is what matters for wire compatibility, not the label; ACE
+    // repurposed/renamed a few of Decal's older property slots over time.
+    // NumKeys (193) is the one exception with a matching host member name.
+    public const int UnenchantableKey = 36;
+    public const int KeysHeldKey = 193; // host: PropertyInt.NumKeys
+    public const int UsesRemainingKey = 92; // host: PropertyInt.Structure (same id, different ACE-era name)
 
     /// <summary>
     /// The activation-skill pairing (segment 21, "Skill N to Activate").
-    /// Unlike every other key in this class, the original's separate
-    /// <c>ActivationReqSkillId</c> Decal pseudo-property has no confirmed
-    /// numeric id anywhere in the retained sources or the AcDream property
-    /// enums. This port approximates it with <see cref="WieldReqAttributeKey"/>
-    /// (the wield skill), which makes the original's
-    /// <c>WieldReqAttribute != ActivationReqSkillId</c> guard always false —
-    /// segment 21 still activates correctly off the level comparison, but the
-    /// "different skill than the wield requirement" case cannot be
-    /// distinguished. See <c>docs/deviations.md</c>.
+    /// Confirmed as ACE's <c>PropertyDataId.ItemSkillLimit</c>
+    /// (37) — a <em>DataId</em>, not an Int property, unlike every other key
+    /// in this class. <see cref="GetInt"/>/<see cref="HasInt"/> intercept
+    /// this key and read <c>DataIds[37]</c> instead of <c>Ints[37]</c>.
     /// </summary>
-    public const int ActivationReqSkillIdKey = WieldReqAttributeKey;
+    public const int ActivationReqSkillIdKey = 37;
 
     /// <summary>
-    /// The activation skill LEVEL (segment 21). Also unconfirmed against a
-    /// retained numeric constant; approximated with ACE's
-    /// <c>ItemSkillLevelLimit</c> (115), the nearest real property with a
-    /// matching name and shape. See <c>docs/deviations.md</c>.
+    /// The activation skill LEVEL (segment 21). Confirmed as ACE's
+    /// <c>ItemSkillLevelLimit</c> (115).
     /// </summary>
     public const int SkillLevelReqKey = 115;
 
@@ -133,10 +140,24 @@ public sealed class ItemModel
     private const int AttackBonusPseudoKey = 167772172;
     private const int DamageBonusPseudoKey = 167772174;
 
-    /// <summary>ACE's <c>WeaponOffense</c> — the real property AttackBonus resolves to.</summary>
+    /// <summary>
+    /// ACE's <c>Damage</c> — the real property MaxDamage falls back to.
+    /// Confirmed via <c>IntValueKey.ConvertToInt</c>. Internal (not
+    /// <c>private</c>) so <see cref="ItemInfoPrinter"/> can build a synthetic
+    /// classifier item for landscape/vendor objects off the same id.
+    /// </summary>
+    internal const int DamageRealKey = 44;
+
+    /// <summary>ACE's <c>WeaponSkill</c> — the real property EquipSkill falls back to. Confirmed via <c>IntValueKey.ConvertToInt</c>.</summary>
+    internal const int WeaponSkillRealKey = 48;
+
+    /// <summary>ACE's <c>DamageVariance</c> — the real property Variance falls back to. Confirmed via <c>DoubleValueKey.ConvertToDouble</c>.</summary>
+    internal const int DamageVarianceRealKey = 22;
+
+    /// <summary>ACE's <c>WeaponOffense</c> — the real property AttackBonus resolves to. Confirmed via <c>DoubleValueKey.ConvertToDouble</c>.</summary>
     private const int AttackBonusRealKey = 62;
 
-    /// <summary>ACE's <c>DamageMod</c> — the real property DamageBonus resolves to.</summary>
+    /// <summary>ACE's <c>DamageMod</c> — the real property DamageBonus resolves to. Confirmed via <c>DoubleValueKey.ConvertToDouble</c>.</summary>
     private const int DamageBonusRealKey = 63;
 
     private readonly PluginWorldObject _worldObject;
@@ -166,26 +187,44 @@ public sealed class ItemModel
     public IReadOnlyList<uint> SpellIds => _worldObject.SpellIds;
 
     // ---- raw accessors, matching MyWorldObject.Values(key, default) ---------
-    // These intercept the six Decal pseudo-keys (see class remarks) so every
+    // These intercept the Decal pseudo-keys (see class remarks) so every
     // other reader below — including the buffed-value math — can treat them
-    // like any other property key.
+    // like any other property key. MaxDamage/EquipSkill/Variance prefer the
+    // host's typed inventory field when one exists (an owned/open-container
+    // item), and otherwise fall back to the real property id read straight
+    // off the captured property bag — so a landscape/vendor item (properties
+    // only, no PluginInventoryItem) still reports its damage/skill/variance
+    // instead of always reading as absent.
 
     public bool HasInt(int key) => key switch
     {
-        MaxDamagePseudoKey or EquipSkillPseudoKey => _inventoryItem.HasValue,
+        MaxDamagePseudoKey => _inventoryItem.HasValue || _properties.Ints.ContainsKey((uint)DamageRealKey),
+        EquipSkillPseudoKey => _inventoryItem.HasValue || _properties.Ints.ContainsKey((uint)WeaponSkillRealKey),
+        ActivationReqSkillIdKey => _properties.DataIds.ContainsKey((uint)key),
         _ => _properties.Ints.ContainsKey((uint)key),
     };
 
     public int GetInt(int key, int defaultValue = -1) => key switch
     {
-        MaxDamagePseudoKey => _inventoryItem?.Damage ?? defaultValue,
-        EquipSkillPseudoKey => _inventoryItem?.WeaponSkill ?? defaultValue,
+        MaxDamagePseudoKey => _inventoryItem?.Damage
+            ?? (_properties.Ints.TryGetValue((uint)DamageRealKey, out int dmg) ? dmg : defaultValue),
+        EquipSkillPseudoKey => _inventoryItem?.WeaponSkill
+            ?? (_properties.Ints.TryGetValue((uint)WeaponSkillRealKey, out int skill) ? skill : defaultValue),
+        // ActivationReqSkillId (37) is ACE's PropertyDataId.ItemSkillLimit — a
+        // DataId, not an Int property; read the DataIds map instead of Ints.
+        ActivationReqSkillIdKey =>
+            _properties.DataIds.TryGetValue((uint)key, out uint activationSkillId)
+                ? (int)activationSkillId
+                : defaultValue,
         _ => _properties.Ints.TryGetValue((uint)key, out int value) ? value : defaultValue,
     };
 
     public bool HasDouble(int key) => key switch
     {
-        VariancePseudoKey or SalvageWorkmanshipPseudoKey => _inventoryItem.HasValue,
+        VariancePseudoKey => _inventoryItem.HasValue || _properties.Floats.ContainsKey((uint)DamageVarianceRealKey),
+        // SalvageWorkmanship has no real-property fallback in the retained
+        // ConvertToDouble table — it only ever comes from the typed field.
+        SalvageWorkmanshipPseudoKey => _inventoryItem.HasValue,
         AttackBonusPseudoKey => _properties.Floats.ContainsKey((uint)AttackBonusRealKey),
         DamageBonusPseudoKey => _properties.Floats.ContainsKey((uint)DamageBonusRealKey),
         _ => _properties.Floats.ContainsKey((uint)key),
@@ -193,7 +232,8 @@ public sealed class ItemModel
 
     public double GetDouble(int key, double defaultValue = -1d) => key switch
     {
-        VariancePseudoKey => _inventoryItem?.DamageVariance ?? defaultValue,
+        VariancePseudoKey => _inventoryItem?.DamageVariance
+            ?? (_properties.Floats.TryGetValue((uint)DamageVarianceRealKey, out double variance) ? variance : defaultValue),
         SalvageWorkmanshipPseudoKey => _inventoryItem?.Workmanship ?? defaultValue,
         AttackBonusPseudoKey =>
             _properties.Floats.TryGetValue((uint)AttackBonusRealKey, out double a) ? a : defaultValue,
@@ -207,7 +247,7 @@ public sealed class ItemModel
     public bool GetBool(int key, bool defaultValue = false)
         => _properties.Bools.TryGetValue((uint)key, out bool value) ? value : defaultValue;
 
-    // ---- the six Decal-only pseudo-properties, by name -----------------------
+    // ---- the Decal-only pseudo-properties, by name ---------------------------
 
     // Default 0, not -1: the format's segment 8 checks these directly
     // against 0 (`wo.Values(MaxDamage) != 0`), the same way the original

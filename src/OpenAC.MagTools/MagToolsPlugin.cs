@@ -173,6 +173,7 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
 
         if (_main is not null)
             _main.InventoryTools.Exporter = null;
+        _inventoryExporter?.Cancel();
         _inventoryExporter = null;
 
         _scheduler?.Dispose();

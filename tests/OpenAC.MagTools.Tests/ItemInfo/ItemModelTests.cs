@@ -29,6 +29,48 @@ public sealed class ItemModelTests
     }
 
     [Fact]
+    public void MaxDamageAndEquipSkillFallBackToTheRealPropertyIdsForLandscapeItems()
+    {
+        // A landscape/vendor object has captured properties but no
+        // PluginInventoryItem (it isn't owned or in an open container).
+        // Damage (44) and WeaponSkill (48) should still resolve off the
+        // property bag so these items print damage/skill correctly.
+        var wo = ItemInfoFixtures.Wo(1, "Sword", PluginObjectClass.MeleeWeapon);
+        var model = new ItemModel(
+            wo,
+            ItemInfoFixtures.Props(ints: new Dictionary<uint, int> { { 44, 37 }, { 48, 0xB } }));
+
+        Assert.True(model.HasInt(218103842));
+        Assert.Equal(37, model.MaxDamage);
+        Assert.True(model.HasInt(218103840));
+        Assert.Equal(0xB, model.EquipSkillId);
+    }
+
+    [Fact]
+    public void VarianceFallsBackToTheRealPropertyIdForLandscapeItems()
+    {
+        var wo = ItemInfoFixtures.Wo(1, "Sword", PluginObjectClass.MeleeWeapon);
+        var model = new ItemModel(
+            wo,
+            ItemInfoFixtures.Props(floats: new Dictionary<uint, double> { { 22, 0.25 } }));
+
+        Assert.True(model.HasDouble(167772171));
+        Assert.Equal(0.25, model.Variance);
+    }
+
+    [Fact]
+    public void CalcedBuffedTinkedDoTReturnsMinusOneWhenDamageIsAbsent()
+    {
+        // Like the original: no Damage/Variance data at all (a landscape
+        // item with no property for either) -> the DoT calc bails to -1
+        // instead of running the greedy tink simulation on garbage.
+        var wo = ItemInfoFixtures.Wo(1, "Sword", PluginObjectClass.MeleeWeapon);
+        var model = new ItemModel(wo, ItemInfoFixtures.Props());
+
+        Assert.Equal(-1, model.CalcedBuffedTinkedDoT);
+    }
+
+    [Fact]
     public void VarianceAndSalvageWorkmanshipResolveFromTypedFields()
     {
         var wo = ItemInfoFixtures.Wo(1, "Bag", PluginObjectClass.Salvage);

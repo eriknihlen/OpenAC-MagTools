@@ -113,6 +113,34 @@ public sealed class InventoryExporterTests
     }
 
     [Fact]
+    public void CancelStopsWithoutPrintingCompletion()
+    {
+        (FakeHost host, _, _, InventoryExporter exporter) = Build();
+        AddOwnedSword(host, 101u, identified: false);
+
+        exporter.ExportToClipboard(ExportGroups.Inventory);
+        host.Events.RaiseTick(0.1); // request pass; still waiting on ident
+
+        exporter.Cancel();
+
+        Assert.False(exporter.IsRunning);
+        Assert.Contains(host.ChatLines, line => line.Contains("Copying"));
+        Assert.DoesNotContain(host.ChatLines, line => line.Contains("has been copied"));
+        Assert.Empty(host.Clipboard.Written);
+    }
+
+    [Fact]
+    public void CancelWithNothingRunningIsANoOp()
+    {
+        (FakeHost host, _, _, InventoryExporter exporter) = Build();
+
+        exporter.Cancel();
+
+        Assert.False(exporter.IsRunning);
+        Assert.Empty(host.ChatLines);
+    }
+
+    [Fact]
     public void SecondExportWhileRunningIsIgnored()
     {
         (FakeHost host, _, _, InventoryExporter exporter) = Build();

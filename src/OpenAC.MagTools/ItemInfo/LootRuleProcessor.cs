@@ -69,7 +69,15 @@ public sealed class LootRuleProcessor
         if (!_registry.TryClassify(classifierId, in context, out PluginLootClassification classification))
             return null;
 
-        bool passes = classification.Matched && classification.Action != PluginLootAction.NoLoot;
+        // Not a plain "!IsNoLoot": some rules (e.g. ManaStone/ManaTank) come
+        // back Matched with Action.NoLoot but a real RuleName attached — the
+        // original still printed "+(Rule)" for those. A matched verdict with
+        // a named rule counts as passing even when the action itself is
+        // NoLoot; only an UNNAMED NoLoot verdict (no real rule matched) is a
+        // fail. See docs/deviations.md.
+        bool passes = classification.Matched
+            && (classification.Action != PluginLootAction.NoLoot
+                || !string.IsNullOrEmpty(classification.RuleName));
         bool isSalvage = classification.Action == PluginLootAction.Salvage;
         return new LootVerdict(passes, isSalvage, classification.RuleName);
     }

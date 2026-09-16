@@ -75,12 +75,26 @@ public sealed class InventoryExporter
         _thinkLoop = _scheduler.Every(ThinkInterval, Think);
     }
 
-    private void Stop()
+    /// <summary>
+    /// Stops a running export without printing the completion message —
+    /// for a caller tearing this instance down mid-export (e.g. the plugin
+    /// disabling) rather than the export finishing on its own. A no-op when
+    /// nothing is running.
+    /// </summary>
+    public void Cancel() => StopThinking(completed: false);
+
+    private void Stop() => StopThinking(completed: true);
+
+    private void StopThinking(bool completed)
     {
-        _thinkLoop?.Dispose();
+        if (_thinkLoop is null)
+            return;
+
+        _thinkLoop.Dispose();
         _thinkLoop = null;
 
-        _chat.Write("All inventory item info has been copied to the clipboard.");
+        if (completed)
+            _chat.Write("All inventory item info has been copied to the clipboard.");
     }
 
     private void Think()

@@ -161,13 +161,40 @@ public sealed class ItemInfoFormatterTests
         var enchantable = ItemInfoFixtures.Model(enchantableWo, ints: new Dictionary<uint, int> { { 131, 61 } });
         Assert.Equal("Iron Ring", ItemInfoFormatter.Format(enchantable, DefaultSettings, spells));
 
+        // 36 = Unenchantable, confirmed via Decal.Adapter.Wrappers.LongValueKey
+        // metadata (see ItemModel.cs remarks) — not the fabricated 415.
         var unenchantableWo = ItemInfoFixtures.Wo(1, "Ring", PluginObjectClass.Jewelry, spellIds: [20, 21]);
         var unenchantable = ItemInfoFixtures.Model(
             unenchantableWo,
-            ints: new Dictionary<uint, int> { { 131, 61 }, { 415, 1 } });
+            ints: new Dictionary<uint, int> { { 131, 61 }, { 36, 1 } });
         Assert.Equal(
             "Iron Ring, Brogard's Ward, Some Bane",
             ItemInfoFormatter.Format(unenchantable, DefaultSettings, spells));
+    }
+
+    [Fact]
+    public void UnenchantableLootGearStillShowsBanesAndImpen()
+    {
+        // The inverted branch: enchantable (no Material -> not loot
+        // generated, or Material present but Unenchantable == 0) HIDES
+        // banes/impen; unenchantable loot gear SHOWS them. Both arms here
+        // are loot generated (Material present) to isolate the Unenchantable
+        // flag itself as the variable under test.
+        var spells = new FakeFormatterSpellCatalog();
+        // Plain "Impenetrability" (no tier prefix) hits the isBaneOrImpen
+        // branch but NOT the always-show "Minor/Major/Epic/Legendary
+        // Impenetrability" literal list, so it actually exercises the
+        // Unenchantable-gated branch instead of always showing.
+        spells.Add(30, "Impenetrability");
+
+        var wo = ItemInfoFixtures.Wo(1, "Buckler", PluginObjectClass.Armor, spellIds: [30]);
+
+        var enchantableLoot = ItemInfoFixtures.Model(wo, ints: new Dictionary<uint, int> { { 131, 61 } });
+        Assert.DoesNotContain("Impenetrability", ItemInfoFormatter.Format(enchantableLoot, DefaultSettings, spells));
+
+        var unenchantableLoot = ItemInfoFixtures.Model(
+            wo, ints: new Dictionary<uint, int> { { 131, 61 }, { 36, 1 } });
+        Assert.Contains("Impenetrability", ItemInfoFormatter.Format(unenchantableLoot, DefaultSettings, spells));
     }
 
     [Theory]
@@ -233,11 +260,16 @@ public sealed class ItemInfoFormatterTests
     [Fact]
     public void UnenchantableArmorShowsTheSevenProtectionValues()
     {
+        // 36 = Unenchantable (confirmed via Decal LongValueKey metadata, not
+        // the fabricated 415). Protections are floats 13-19 (ACE's
+        // ArmorModVsSlash/Pierce/Bludgeon/Cold/Fire/Acid/Electric, confirmed
+        // via DoubleValueKey.ConvertToDouble), not the 64-70 creature
+        // resistances the old constants pointed at.
         var wo = ItemInfoFixtures.Wo(1, "Plate", PluginObjectClass.Armor);
-        var model = ItemInfoFixtures.Model(wo, ints: new Dictionary<uint, int> { { 415, 1 } },
+        var model = ItemInfoFixtures.Model(wo, ints: new Dictionary<uint, int> { { 36, 1 } },
             floats: new Dictionary<uint, double>
             {
-                { 64, 1 }, { 65, 2 }, { 66, 3 }, { 68, 4 }, { 67, 5 }, { 69, 6 }, { 70, 7 },
+                { 13, 1 }, { 14, 2 }, { 15, 3 }, { 16, 4 }, { 17, 5 }, { 18, 6 }, { 19, 7 },
             });
 
         Assert.Equal(
@@ -272,12 +304,70 @@ public sealed class ItemInfoFormatterTests
     [Fact]
     public void KeyringShowsKeysAndUsesWhenNameContainsKeyring()
     {
+        // 193 = KeysHeld (host: PropertyInt.NumKeys), 92 = UsesRemaining
+        // (host: PropertyInt.Structure, same id different ACE-era name) —
+        // both confirmed via Decal LongValueKey metadata, not the fabricated
+        // 417/418.
         var wo = ItemInfoFixtures.Wo(1, "Burning Sands Keyring", PluginObjectClass.Misc);
-        var model = ItemInfoFixtures.Model(wo, ints: new Dictionary<uint, int> { { 417, 12 }, { 418, 4 } });
+        var model = ItemInfoFixtures.Model(wo, ints: new Dictionary<uint, int> { { 193, 12 }, { 92, 4 } });
 
         Assert.Equal(
             "Burning Sands Keyring, Keys: 12, Uses: 4",
             ItemInfoFormatter.Format(model, DefaultSettings, EmptySpells));
+    }
+
+    [Fact]
+    public void ActivationRequirementReadsSkillIdFromTheDataIdNotAnInt()
+    {
+        // ActivationReqSkillId (37) is ACE's PropertyDataId.ItemSkillLimit —
+        // a DataId, not an Int property. SkillLevelReq (115) is ACE's
+        // ItemSkillLevelLimit, an ordinary Int.
+        var wo = ItemInfoFixtures.Wo(1, "Wand", PluginObjectClass.WandStaffOrb);
+        var model = ItemInfoFixtures.Model(
+            wo,
+            ints: new Dictionary<uint, int> { { 115, 300 } }, // SkillLevelReq
+            dataIds: new Dictionary<uint, uint> { { 37, 0x36 } }); // Summoning
+
+        string result = ItemInfoFormatter.Format(
+            model, new FakeItemInfoSettings { ShowBuffedValues = false }, EmptySpells);
+
+        Assert.Equal("Wand, Summoning 300 to Activate", result);
+    }
+
+    [Fact]
+    public void ActivationRequirementIsSuppressedWhenWieldMatchesAndCovers()
+    {
+        // wieldReqAttribute == activationSkillId AND the wield value already
+        // meets the activation level -> segment 21 doesn't fire.
+        var wo = ItemInfoFixtures.Wo(1, "Wand", PluginObjectClass.WandStaffOrb);
+        var model = ItemInfoFixtures.Model(
+            wo,
+            ints: new Dictionary<uint, int> { { 115, 300 }, { 159, 0x36 }, { 160, 300 } },
+            dataIds: new Dictionary<uint, uint> { { 37, 0x36 } });
+
+        string result = ItemInfoFormatter.Format(
+            model, new FakeItemInfoSettings { ShowBuffedValues = false }, EmptySpells);
+
+        Assert.DoesNotContain("to Activate", result);
+    }
+
+    [Fact]
+    public void UnknownSkillSpecUsesTheOriginalsDistinctLiteral()
+    {
+        // Unknown skill spec (368) gets its own literal, "Unknown skill
+        // spec: N M" — NOT the generic "Spec " + "Unknown skill: N" + " M"
+        // that ItemModel.SkillName's fallback would otherwise produce.
+        var wo = ItemInfoFixtures.Wo(1, "Orb", PluginObjectClass.WandStaffOrb);
+        var model = ItemInfoFixtures.Model(wo, ints: new Dictionary<uint, int>
+        {
+            { 366, 0x36 }, { 367, 5 }, // known use-requires-skill (Summoning), level 5
+            { 368, 9999 }, // unknown spec id
+        });
+
+        string result = ItemInfoFormatter.Format(
+            model, new FakeItemInfoSettings { ShowBuffedValues = false }, EmptySpells);
+
+        Assert.Equal("Orb, Summoning 5, Unknown skill spec: 9999 5", result);
     }
 
     [Fact]

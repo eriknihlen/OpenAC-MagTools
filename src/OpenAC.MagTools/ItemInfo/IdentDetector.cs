@@ -153,7 +153,6 @@ public sealed class ContainerIdentDetector : IDisposable
 
     private IDisposable? _thinkLoop;
     private double _startedAtElapsed;
-    private bool _dontShowIfIsSalvageRule;
     private bool _subscribed;
 
     public ContainerIdentDetector(
@@ -207,20 +206,15 @@ public sealed class ContainerIdentDetector : IDisposable
         if (container.Name == "Storage")
             return;
 
-        StartThinking(container.Name);
+        StartThinking();
     }
 
-    private void StartThinking(string containerName)
+    private void StartThinking()
     {
         if (_thinkLoop is not null)
             return;
 
         _startedAtElapsed = _scheduler.ElapsedSeconds;
-        _dontShowIfIsSalvageRule =
-            containerName.Contains("Chest", StringComparison.Ordinal)
-            || containerName.Contains("Vault", StringComparison.Ordinal)
-            || containerName.Contains("Reliquary", StringComparison.Ordinal);
-
         _thinkLoop = _scheduler.Every(ThinkInterval, Think);
     }
 
@@ -228,6 +222,25 @@ public sealed class ContainerIdentDetector : IDisposable
     {
         _thinkLoop?.Dispose();
         _thinkLoop = null;
+    }
+
+    /// <summary>
+    /// <c>DontShowIfIsSalvageRule</c> is verbatim's own per-think recompute,
+    /// not a value cached once at container-open time: the original
+    /// re-resolved the currently open container's name from
+    /// <c>CoreManager.Current.Actions.OpenedContainer</c> on every
+    /// <c>Think()</c> call, so a container swap (open A, close, open B)
+    /// without leaving this loop's 5-second tail picks up the new
+    /// container's name instead of the one that started the scan.
+    /// </summary>
+    private bool CurrentDontShowIfIsSalvageRule(uint openContainerId)
+    {
+        if (!_host.Automation.Objects.TryGet(openContainerId, out PluginWorldObject container))
+            return false;
+
+        return container.Name.Contains("Chest", StringComparison.Ordinal)
+            || container.Name.Contains("Vault", StringComparison.Ordinal)
+            || container.Name.Contains("Reliquary", StringComparison.Ordinal);
     }
 
     private void Think()
@@ -239,19 +252,28 @@ public sealed class ContainerIdentDetector : IDisposable
             return;
         }
 
-        IReadOnlyList<PluginInventoryItem> contents = _host.Automation.Loot.CaptureCurrentContents();
-        if (contents.Count == 0)
+        // Direct children of the open container only — the original's
+        // GetByContainer(openedContainerId) never descended into nested
+        // containers. The host's CaptureCurrentContents() walks the whole
+        // container tree, so filter to items whose immediate container IS
+        // the one that's open.
+        IReadOnlyList<PluginInventoryItem> allContents = _host.Automation.Loot.CaptureCurrentContents();
+        if (allContents.Count == 0)
             return; // sometimes it takes a bit for the contents to arrive
 
-        foreach (PluginInventoryItem item in contents)
+        bool dontShowIfIsSalvageRule = CurrentDontShowIfIsSalvageRule(openContainerId);
+
+        foreach (PluginInventoryItem item in allContents)
         {
+            if (item.ContainerObjectId != openContainerId)
+                continue;
             if (!_itemsProcessed.Add(item.ObjectId))
                 continue;
 
             ItemIdentified?.Invoke(new ItemIdentArgs(
                 item.ObjectId,
                 DontShowIfItemHasNoRule: true,
-                DontShowIfIsSalvageRule: _dontShowIfIsSalvageRule,
+                DontShowIfIsSalvageRule: dontShowIfIsSalvageRule,
                 AllowAutoClipboard: false));
         }
 

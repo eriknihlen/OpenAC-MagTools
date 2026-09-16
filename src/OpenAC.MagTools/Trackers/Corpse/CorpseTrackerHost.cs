@@ -13,12 +13,14 @@ namespace OpenAC.MagTools.Trackers.Corpse;
 public sealed class CorpseTrackerHost
 {
     private static readonly TimeSpan MaintenanceInterval = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan SaveInterval = TimeSpan.FromMinutes(10);
 
     private readonly IPluginHost _host;
     private readonly CorpseTrackerSettings _settings;
     private Action<PluginObjectChange>? _onObjectChanged;
     private Action<uint>? _onContainerOpened;
     private IDisposable? _maintenanceRegistration;
+    private IDisposable? _saveRegistration;
     private string _storageKey = string.Empty;
     private bool _running;
 
@@ -55,6 +57,7 @@ public sealed class CorpseTrackerHost
         _host.Events.ContainerOpened += _onContainerOpened;
 
         _maintenanceRegistration = scheduler.Every(MaintenanceInterval, () => Tracker.RunMaintenance(MyName));
+        _saveRegistration = scheduler.Every(SaveInterval, Save);
     }
 
     public void Stop()
@@ -76,6 +79,8 @@ public sealed class CorpseTrackerHost
 
         _maintenanceRegistration?.Dispose();
         _maintenanceRegistration = null;
+        _saveRegistration?.Dispose();
+        _saveRegistration = null;
 
         Tracker.ClearStats();
     }

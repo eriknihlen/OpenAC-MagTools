@@ -6,8 +6,10 @@ using OpenAC.MagTools.ItemInfo;
 using OpenAC.MagTools.Macros;
 using OpenAC.MagTools.Settings;
 using OpenAC.MagTools.Trackers.Combat;
+using OpenAC.MagTools.Trackers.Corpse;
 using OpenAC.MagTools.Trackers.Equipment;
 using OpenAC.MagTools.Trackers.Inventory;
+using OpenAC.MagTools.Trackers.Player;
 using OpenAC.MagTools.Ui;
 
 namespace OpenAC.MagTools;
@@ -34,6 +36,10 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
     private CombatTrackerHost? _combatTrackerHost;
     private EquipmentTrackerHost? _equipmentTrackerHost;
     private InventoryTrackerHost? _inventoryTrackerHost;
+    private CorpseTrackerHost? _corpseTrackerHost;
+    private PlayerTrackerHost? _playerTrackerHost;
+    private Loggers.Inventory.InventoryLogger? _inventoryLogger;
+    private TinkeringAutoConfirm? _tinkeringAutoConfirm;
     private AutoRecharge? _autoRecharge;
     private HudUpdater? _hudUpdater;
     private LootRuleProcessor? _lootRules;
@@ -67,10 +73,14 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _combatTrackerHost = new CombatTrackerHost(host, _chat, _settings, _chatDispatcher);
         _equipmentTrackerHost = new EquipmentTrackerHost(host, chatDispatcher: _chatDispatcher);
         _inventoryTrackerHost = new InventoryTrackerHost(host);
+        _corpseTrackerHost = new CorpseTrackerHost(host, _settings.CorpseTracker);
+        _playerTrackerHost = new PlayerTrackerHost(host, _settings.PlayerTracker);
+        _inventoryLogger = new Loggers.Inventory.InventoryLogger(host, _chat, _settings.InventoryManagement);
         _autoRecharge = new AutoRecharge(host, _settings);
         _main = new MainViewModel(
             _settings, _chatLogger, host, _combatTrackerHost,
             _equipmentTrackerHost, _inventoryTrackerHost);
+        _tinkeringAutoConfirm = new TinkeringAutoConfirm(host, _settings.Tinkering, _main.Tinkering);
         _hud = new HudViewModel(host);
         _hudUpdater = new HudUpdater(
             host, _hud, _combatTrackerHost, _equipmentTrackerHost, _inventoryTrackerHost);
@@ -148,6 +158,7 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _host.Events.Tick += _tick;
 
         _chatFilter?.Enable();
+        _tinkeringAutoConfirm?.Start();
 
         _onSessionLoginComplete = OnSessionLoginComplete;
         _onSessionLogoff = OnSessionLogoff;
@@ -202,6 +213,7 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _scheduler = null;
 
         _chatFilter?.Disable();
+        _tinkeringAutoConfirm?.Stop();
 
         // In case we are still mid-session when the plugin is disabled: stop
         // the logger and flush what it has before we go, same as a real
@@ -210,6 +222,9 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _combatTrackerHost?.Stop();
         _equipmentTrackerHost?.Stop();
         _inventoryTrackerHost?.Stop();
+        _corpseTrackerHost?.Stop();
+        _playerTrackerHost?.Stop();
+        _inventoryLogger?.Stop();
         _autoRecharge?.Stop();
         _hudUpdater?.Stop();
         _chatDispatcher?.Stop();
@@ -250,6 +265,9 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _combatTrackerHost?.Start(_scheduler, _session.WorldName, _session.CharacterName);
         _equipmentTrackerHost?.Start(_scheduler);
         _inventoryTrackerHost?.Start(_scheduler);
+        _corpseTrackerHost?.Start(_scheduler, _session.WorldName, _session.CharacterName);
+        _playerTrackerHost?.Start(_scheduler, _session.WorldName, _session.CharacterName);
+        _inventoryLogger?.Start(_session.WorldName, _session.CharacterName);
         _autoRecharge?.Start(_scheduler);
         _hudUpdater?.Start(_scheduler);
     }
@@ -260,6 +278,9 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _combatTrackerHost?.Stop();
         _equipmentTrackerHost?.Stop();
         _inventoryTrackerHost?.Stop();
+        _corpseTrackerHost?.Stop();
+        _playerTrackerHost?.Stop();
+        _inventoryLogger?.Stop();
         _autoRecharge?.Stop();
         _hudUpdater?.Stop();
         _chatDispatcher?.Stop();

@@ -9,9 +9,12 @@ namespace OpenAC.MagTools.Trackers.Player;
 /// </summary>
 public sealed class PlayerTrackerHost
 {
+    private static readonly TimeSpan SaveInterval = TimeSpan.FromMinutes(10);
+
     private readonly IPluginHost _host;
     private readonly PlayerTrackerSettings _settings;
     private Action<PluginObjectChange>? _onObjectChanged;
+    private IDisposable? _saveRegistration;
     private string _storageKey = string.Empty;
     private bool _running;
 
@@ -43,6 +46,8 @@ public sealed class PlayerTrackerHost
 
         _onObjectChanged = OnObjectChanged;
         _host.Events.ObjectChanged += _onObjectChanged;
+
+        _saveRegistration = scheduler.Every(SaveInterval, Save);
     }
 
     public void Stop()
@@ -56,6 +61,9 @@ public sealed class PlayerTrackerHost
         if (_onObjectChanged is not null)
             _host.Events.ObjectChanged -= _onObjectChanged;
         _onObjectChanged = null;
+
+        _saveRegistration?.Dispose();
+        _saveRegistration = null;
 
         Tracker.ClearStats();
     }

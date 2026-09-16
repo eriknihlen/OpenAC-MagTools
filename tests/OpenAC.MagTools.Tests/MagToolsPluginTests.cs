@@ -339,6 +339,87 @@ public sealed class MagToolsPluginTests
     }
 
     [Fact]
+    public void ServerScopedCommandsDoNotWaitForTheCharacterNameToResolve()
+    {
+        // MEDIUM-4: server scope needs only WorldName, which (unlike
+        // ICharacterInfo.Name) the host reports correctly at LoginComplete
+        // -- see defect #1 in docs/live-results.md. Server-scoped work must
+        // not be held hostage to the character-name race SessionReady exists
+        // to protect the CHARACTER scope from.
+        var host = new FakeHost { HasUi = true };
+        host.Automation.Character.AccountName = "acct";
+        host.Automation.Character.WorldName = "Server";
+        host.Automation.Character.Name = string.Empty; // not resolved yet
+
+        var seedFile = new SettingsFile(host.Storage);
+        new ScopedCommandStore(seedFile).SetOnLoginCommands(
+            SettingsScope.Server("Server"), ["server says hi"]);
+        new ScopedCommandStore(seedFile).SetOnLoginCommands(
+            SettingsScope.Character("acct", "Server", "Acdream"), ["character says hi"]);
+        seedFile.Flush();
+
+        var plugin = new MagToolsPlugin();
+        plugin.Initialize(host);
+        plugin.Enable();
+        host.Events.RaiseLoginComplete();
+
+        // The server tab binds immediately -- no name required.
+        var main = (MainViewModel)host.Ui.Panels[0].Binding;
+        Assert.Equal(["server says hi"], main.ServerCommands.LoginCommands);
+
+        // The server-scoped On-Login command dispatches over the next two
+        // ticks (dummy slot, then the real command) even though the
+        // character name still has not resolved -- the character-scoped one
+        // must NOT dispatch yet.
+        host.Events.RaiseTick(0.1);
+        host.Events.RaiseTick(0.1);
+        Assert.Contains("server says hi", host.Automation.Chat.Submitted);
+        Assert.DoesNotContain("character says hi", host.Automation.Chat.Submitted);
+
+        // Now the name resolves (SessionReady fires) -- the character list
+        // dispatches on its own independent timing. SessionReady itself
+        // fires mid-tick (from SessionContext's own Tick-driven name
+        // recheck), so the dummy slot's "RunOnNextTick" arms for the tick
+        // AFTER that one: one settle tick, then dummy, then the real
+        // command.
+        host.Automation.Character.Name = "Acdream";
+        host.Events.RaiseTick(0.1); // SessionReady fires; dummy enqueued for next tick
+        host.Events.RaiseTick(0.1); // dummy consumed
+        host.Events.RaiseTick(0.1); // real command
+
+        Assert.Contains("character says hi", host.Automation.Chat.Submitted);
+    }
+
+    [Fact]
+    public void CharacterScopedTabBindsOnceTheNameResolvesEvenWhenItLagsLoginComplete()
+    {
+        var host = new FakeHost { HasUi = true };
+        host.Automation.Character.AccountName = "acct";
+        host.Automation.Character.WorldName = "Server";
+        host.Automation.Character.Name = string.Empty; // not resolved yet
+
+        var seedFile = new SettingsFile(host.Storage);
+        new ScopedCommandStore(seedFile).SetOnLoginCommands(
+            SettingsScope.Character("acct", "Server", "Acdream"), ["/mt test"]);
+        seedFile.Flush();
+
+        var plugin = new MagToolsPlugin();
+        plugin.Initialize(host);
+        plugin.Enable();
+        host.Events.RaiseLoginComplete();
+
+        var main = (MainViewModel)host.Ui.Panels[0].Binding;
+        Assert.Empty(main.CharacterCommands.LoginCommands);
+
+        // The name resolves one tick later (the defect this whole fix round
+        // is about).
+        host.Automation.Character.Name = "Acdream";
+        host.Events.RaiseTick(0.1);
+
+        Assert.Equal(["/mt test"], main.CharacterCommands.LoginCommands);
+    }
+
+    [Fact]
     public void LogOutOnDeathIsDisabledByDefault()
     {
         var host = new FakeHost { HasUi = false };

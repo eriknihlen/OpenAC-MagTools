@@ -141,6 +141,72 @@ public sealed class PeriodicCommandsTests
     }
 
     [Fact]
+    public void StartServerScopeStartsTheTimerWithoutACharacterScopeYet()
+    {
+        // MEDIUM-4: the timer starts as soon as WorldName is known (server
+        // scope only), well before the character name has to resolve.
+        (FakeHost host, PeriodicCommands macro, OpenAC.MagTools.TickScheduler scheduler,
+            ScopedCommandStore store, FakeTimeProvider clock) = Build();
+
+        clock.Now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        string serverScope = SettingsScope.Server("Server");
+        store.SetPeriodicCommands(serverScope, [new PeriodicCommand("server", TimeSpan.FromMinutes(1), TimeSpan.Zero)]);
+
+        macro.StartServerScope(scheduler, serverScope);
+        macro.OnTimer();
+        scheduler.Tick(0.1);
+
+        Assert.Equal(["server"], host.Automation.Chat.Submitted);
+    }
+
+    [Fact]
+    public void SetCharacterScopeBackfillsWithoutDisturbingTheRunningTimer()
+    {
+        (FakeHost host, PeriodicCommands macro, OpenAC.MagTools.TickScheduler scheduler,
+            ScopedCommandStore store, FakeTimeProvider clock) = Build();
+
+        clock.Now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        string characterScope = SettingsScope.Character("acct", "Server", "Acdream");
+        string serverScope = SettingsScope.Server("Server");
+        store.SetPeriodicCommands(characterScope, [new PeriodicCommand("char", TimeSpan.FromMinutes(1), TimeSpan.Zero)]);
+        store.SetPeriodicCommands(serverScope, [new PeriodicCommand("server", TimeSpan.FromMinutes(1), TimeSpan.Zero)]);
+
+        // Server scope known first (LoginComplete-equivalent).
+        macro.StartServerScope(scheduler, serverScope);
+        // Character scope resolves shortly after (SessionReady-equivalent),
+        // before the 20-second timer's first evaluation.
+        macro.SetCharacterScope(characterScope);
+
+        macro.OnTimer();
+        scheduler.Tick(0.1);
+        scheduler.Tick(0.1);
+
+        // §1.14: character-scope commands still queue before server-scope
+        // ones within a single OnTimer evaluation.
+        Assert.Equal(["char", "server"], host.Automation.Chat.Submitted);
+    }
+
+    [Fact]
+    public void WithNoCharacterScopeSetOnlyServerScopeCommandsFire()
+    {
+        (FakeHost host, PeriodicCommands macro, OpenAC.MagTools.TickScheduler scheduler,
+            ScopedCommandStore store, FakeTimeProvider clock) = Build();
+
+        clock.Now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        string characterScope = SettingsScope.Character("acct", "Server", "Acdream");
+        string serverScope = SettingsScope.Server("Server");
+        store.SetPeriodicCommands(characterScope, [new PeriodicCommand("char", TimeSpan.FromMinutes(1), TimeSpan.Zero)]);
+        store.SetPeriodicCommands(serverScope, [new PeriodicCommand("server", TimeSpan.FromMinutes(1), TimeSpan.Zero)]);
+
+        macro.StartServerScope(scheduler, serverScope);
+        // Character scope never resolves this session.
+        macro.OnTimer();
+        scheduler.Tick(0.1);
+
+        Assert.Equal(["server"], host.Automation.Chat.Submitted);
+    }
+
+    [Fact]
     public void StopDropsTheTimerAndAnyQueuedMatches()
     {
         (FakeHost host, PeriodicCommands macro, OpenAC.MagTools.TickScheduler scheduler,

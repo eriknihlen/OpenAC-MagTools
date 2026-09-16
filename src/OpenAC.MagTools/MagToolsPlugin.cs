@@ -321,6 +321,16 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
     }
 
     /// <summary>
+    /// True once <see cref="StartServerScope"/> has run for the current
+    /// session -- guards against running it a second time from
+    /// <see cref="OnSessionReady"/> in the common case where WorldName was
+    /// already known at <see cref="OnSessionLoginComplete"/>, while still
+    /// covering the (currently unobserved, but not host-guaranteed) case
+    /// where WorldName itself was not yet known at that edge.
+    /// </summary>
+    private bool _serverScopeStarted;
+
+    /// <summary>
     /// Starts every owner that does NOT need the character/world/account
     /// names — those wait for <see cref="OnSessionReady"/>, which only fires
     /// once <see cref="SessionContext"/> has confirmed all three are
@@ -328,7 +338,7 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
     /// </summary>
     private void OnSessionLoginComplete()
     {
-        if (_scheduler is null)
+        if (_host is null || _scheduler is null)
             return;
         _chatDispatcher?.Start();
         _equipmentTrackerHost?.Start(_scheduler);
@@ -342,6 +352,16 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _looter?.Start(_scheduler);
 
         _openMainPackOnLogin?.Run();
+
+        // MEDIUM-4: the server scope needs only WorldName, which (unlike
+        // ICharacterInfo.Name) the host reports correctly at this edge --
+        // see defect #1 in docs/live-results.md. Start it here instead of
+        // waiting for OnSessionReady, which exists only to protect the
+        // CHARACTER scope from the empty-name race.
+        _serverScopeStarted = false;
+        string worldName = _host.Automation.Character.WorldName;
+        if (!string.IsNullOrEmpty(worldName))
+            StartServerScope(worldName);
     }
 
     /// <summary>
@@ -362,15 +382,32 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _inventoryLogger?.Start(_session.WorldName, _session.CharacterName);
         _inventoryPacker?.Bind(_scheduler, _session.CharacterName);
 
+        // Fallback for the (unobserved) case where WorldName itself was not
+        // yet known at OnSessionLoginComplete -- SessionReady guarantees it
+        // is non-empty by now.
+        if (!_serverScopeStarted)
+            StartServerScope(_session.WorldName);
+
         string characterScope = SettingsScope.Character(
             _session.AccountName, _session.WorldName, _session.CharacterName);
-        string serverScope = SettingsScope.Server(_session.WorldName);
 
         _main?.CharacterCommands.Bind(characterScope);
-        _main?.ServerCommands.Bind(serverScope);
 
-        _loginActions?.Run(_scheduler, characterScope, serverScope);
-        _periodicCommands?.Start(_scheduler, characterScope, serverScope);
+        _loginActions?.RunCharacterScope(_scheduler, characterScope);
+        _periodicCommands?.SetCharacterScope(characterScope);
+    }
+
+    /// <summary>Binds the server-scoped UI/command surfaces and starts the server-scoped login/periodic lists. See <see cref="_serverScopeStarted"/>.</summary>
+    private void StartServerScope(string worldName)
+    {
+        if (_scheduler is null)
+            return;
+
+        string serverScope = SettingsScope.Server(worldName);
+        _main?.ServerCommands.Bind(serverScope);
+        _loginActions?.RunServerScope(_scheduler, serverScope);
+        _periodicCommands?.StartServerScope(_scheduler, serverScope);
+        _serverScopeStarted = true;
     }
 
     private void OnSessionLogoff()
@@ -394,6 +431,7 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _inventoryPacker?.Stop();
         _loginActions?.Stop();
         _periodicCommands?.Stop();
+        _serverScopeStarted = false;
     }
 
     /// <summary>

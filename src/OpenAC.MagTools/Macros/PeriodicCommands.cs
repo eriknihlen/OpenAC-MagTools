@@ -81,14 +81,31 @@ public sealed class PeriodicCommands
     /// <summary>How many matched commands are still queued -- exposed for tests.</summary>
     internal int PendingCount => _runner.Count;
 
-    /// <summary>Starts the 20-second timer for one session. Safe to call again on a reconnect -- replaces the previous timer and guard state.</summary>
+    /// <summary>Starts the 20-second timer for one session, with both scopes known already. Safe to call again on a reconnect -- replaces the previous timer and guard state.</summary>
     public void Start(TickScheduler scheduler, string characterScopePath, string serverScopePath)
     {
-        ArgumentNullException.ThrowIfNull(scheduler);
         ArgumentNullException.ThrowIfNull(characterScopePath);
+
+        StartServerScope(scheduler, serverScopePath);
+        _characterScopePath = characterScopePath;
+    }
+
+    /// <summary>
+    /// Starts the 20-second timer with only the server scope known --
+    /// MEDIUM-4: server scope needs only <see cref="ICharacterInfo.WorldName"/>,
+    /// which (unlike the character name) the host reports correctly at
+    /// <see cref="SessionContext.LoginComplete"/>, so this does not wait for
+    /// <see cref="SessionContext.SessionReady"/>. Call
+    /// <see cref="SetCharacterScope"/> once the character scope resolves --
+    /// the 20-second cadence means it is essentially always set well before
+    /// this timer's first evaluation.
+    /// </summary>
+    public void StartServerScope(TickScheduler scheduler, string serverScopePath)
+    {
+        ArgumentNullException.ThrowIfNull(scheduler);
         ArgumentNullException.ThrowIfNull(serverScopePath);
 
-        _characterScopePath = characterScopePath;
+        _characterScopePath = string.Empty;
         _serverScopePath = serverScopePath;
         _lastEvaluatedUtcMinute = null;
         _runner.Clear();
@@ -96,6 +113,13 @@ public sealed class PeriodicCommands
 
         _timerRegistration?.Dispose();
         _timerRegistration = scheduler.Every(TimerInterval, OnTimer);
+    }
+
+    /// <summary>Backfills the character scope path once it resolves (from <see cref="SessionContext.SessionReady"/>), without disturbing the already-running timer.</summary>
+    public void SetCharacterScope(string characterScopePath)
+    {
+        ArgumentNullException.ThrowIfNull(characterScopePath);
+        _characterScopePath = characterScopePath;
     }
 
     /// <summary>Stops the timer and drops anything still queued. Called on logoff/disable.</summary>
@@ -120,7 +144,12 @@ public sealed class PeriodicCommands
         DateTime localNow = _timeProvider.GetLocalNow().DateTime;
         int minutesAfterMidnight = (int)(localNow - localNow.Date).TotalMinutes;
 
-        EnqueueMatching(_store.GetPeriodicCommands(_characterScopePath), minutesAfterMidnight);
+        // The character scope can still be unset (empty) if this fires
+        // before SetCharacterScope backfills it -- MEDIUM-4 starts the timer
+        // as soon as the server scope is known, which can be earlier than
+        // the character name resolves.
+        if (_characterScopePath.Length > 0)
+            EnqueueMatching(_store.GetPeriodicCommands(_characterScopePath), minutesAfterMidnight);
         EnqueueMatching(_store.GetPeriodicCommands(_serverScopePath), minutesAfterMidnight);
     }
 

@@ -22,14 +22,13 @@ public sealed class LoginActionsTests
     }
 
     [Fact]
-    public void RunsTheDummySlotFirstThenOneCommandPerTick()
+    public void ServerScopeRunsTheDummySlotFirstThenOneCommandPerTick()
     {
         (FakeHost host, LoginActions actions, OpenAC.MagTools.TickScheduler scheduler, ScopedCommandStore store) = Build();
-        string characterScope = SettingsScope.Character("acct", "Server", "Acdream");
         string serverScope = SettingsScope.Server("Server");
-        store.SetOnLoginCommands(characterScope, ["/mt opt list"]);
+        store.SetOnLoginCommands(serverScope, ["/mt opt list"]);
 
-        actions.Run(scheduler, characterScope, serverScope);
+        actions.RunServerScope(scheduler, serverScope);
 
         // The dummy slot occupies the very first tick: nothing dispatched yet.
         scheduler.Tick(0.1);
@@ -44,14 +43,30 @@ public sealed class LoginActionsTests
     }
 
     [Fact]
+    public void CharacterScopeRunsTheDummySlotFirstThenOneCommandPerTick()
+    {
+        (FakeHost host, LoginActions actions, OpenAC.MagTools.TickScheduler scheduler, ScopedCommandStore store) = Build();
+        string characterScope = SettingsScope.Character("acct", "Server", "Acdream");
+        store.SetOnLoginCommands(characterScope, ["/mt opt list"]);
+
+        actions.RunCharacterScope(scheduler, characterScope);
+
+        scheduler.Tick(0.1);
+        Assert.Empty(host.ChatLines);
+        Assert.Equal(1, actions.PendingCount);
+
+        scheduler.Tick(0.1);
+        Assert.Equal(0, actions.PendingCount);
+    }
+
+    [Fact]
     public void DispatchesMtCommandsThroughTheRouterAndEverythingElseToChat()
     {
         (FakeHost host, LoginActions actions, OpenAC.MagTools.TickScheduler scheduler, ScopedCommandStore store) = Build();
         string characterScope = SettingsScope.Character("acct", "Server", "Acdream");
-        string serverScope = SettingsScope.Server("Server");
         store.SetOnLoginCommands(characterScope, ["/mt test", "hello there"]);
 
-        actions.Run(scheduler, characterScope, serverScope);
+        actions.RunCharacterScope(scheduler, characterScope);
 
         scheduler.Tick(0.1); // dummy
         scheduler.Tick(0.1); // "/mt test" -> router.Execute("test") is a recognised no-op returning true
@@ -61,33 +76,39 @@ public sealed class LoginActionsTests
     }
 
     [Fact]
-    public void CharacterCommandsRunBeforeServerCommands()
+    public void TheTwoScopesRunOnIndependentQueuesAndCanOverlap()
     {
+        // MEDIUM-4: server scope starts at LoginComplete (RunServerScope),
+        // character scope only once SessionReady confirms the name
+        // (RunCharacterScope) -- they no longer share one combined queue, so
+        // both can be mid-drain at once instead of strictly serializing
+        // character-before-server.
         (FakeHost host, LoginActions actions, OpenAC.MagTools.TickScheduler scheduler, ScopedCommandStore store) = Build();
         string characterScope = SettingsScope.Character("acct", "Server", "Acdream");
         string serverScope = SettingsScope.Server("Server");
         store.SetOnLoginCommands(characterScope, ["char one"]);
         store.SetOnLoginCommands(serverScope, ["server one"]);
 
-        actions.Run(scheduler, characterScope, serverScope);
+        actions.RunServerScope(scheduler, serverScope);
+        actions.RunCharacterScope(scheduler, characterScope);
 
-        scheduler.Tick(0.1); // dummy
-        scheduler.Tick(0.1); // char one
-        scheduler.Tick(0.1); // server one
+        scheduler.Tick(0.1); // both dummies
+        scheduler.Tick(0.1); // both real commands land on the same tick
 
-        Assert.Equal(["char one", "server one"], host.Automation.Chat.Submitted);
+        Assert.Equal(2, host.Automation.Chat.Submitted.Count);
+        Assert.Contains("char one", host.Automation.Chat.Submitted);
+        Assert.Contains("server one", host.Automation.Chat.Submitted);
     }
 
     [Fact]
-    public void OnLoginRunsBeforeOnLoginCompleteOnTheSameEdge()
+    public void OnLoginRunsBeforeOnLoginCompleteOnTheSameScope()
     {
         (FakeHost host, LoginActions actions, OpenAC.MagTools.TickScheduler scheduler, ScopedCommandStore store) = Build();
         string characterScope = SettingsScope.Character("acct", "Server", "Acdream");
-        string serverScope = SettingsScope.Server("Server");
         store.SetOnLoginCommands(characterScope, ["login command"]);
         store.SetOnLoginCompleteCommands(characterScope, ["login complete command"]);
 
-        actions.Run(scheduler, characterScope, serverScope);
+        actions.RunCharacterScope(scheduler, characterScope);
 
         scheduler.Tick(0.1); // dummy
         scheduler.Tick(0.1); // login command
@@ -97,14 +118,16 @@ public sealed class LoginActionsTests
     }
 
     [Fact]
-    public void StopDropsWhateverIsStillQueued()
+    public void StopDropsWhateverIsStillQueuedInBothScopes()
     {
         (FakeHost host, LoginActions actions, OpenAC.MagTools.TickScheduler scheduler, ScopedCommandStore store) = Build();
         string characterScope = SettingsScope.Character("acct", "Server", "Acdream");
         string serverScope = SettingsScope.Server("Server");
-        store.SetOnLoginCommands(characterScope, ["never runs"]);
+        store.SetOnLoginCommands(characterScope, ["never runs (character)"]);
+        store.SetOnLoginCommands(serverScope, ["never runs (server)"]);
 
-        actions.Run(scheduler, characterScope, serverScope);
+        actions.RunServerScope(scheduler, serverScope);
+        actions.RunCharacterScope(scheduler, characterScope);
         actions.Stop();
 
         scheduler.Tick(0.1);
@@ -116,16 +139,32 @@ public sealed class LoginActionsTests
     }
 
     [Fact]
-    public void ARepeatLoginEdgeStartsAFreshQueue()
+    public void ARepeatServerScopeEdgeStartsAFreshQueue()
+    {
+        (FakeHost host, LoginActions actions, OpenAC.MagTools.TickScheduler scheduler, ScopedCommandStore store) = Build();
+        string serverScope = SettingsScope.Server("Server");
+        store.SetOnLoginCommands(serverScope, ["first login command"]);
+
+        actions.RunServerScope(scheduler, serverScope);
+        // Reconnect before the first queue drained.
+        actions.RunServerScope(scheduler, serverScope);
+
+        scheduler.Tick(0.1); // dummy
+        scheduler.Tick(0.1); // first login command (only once, not duplicated)
+        scheduler.Tick(0.1); // nothing left
+
+        Assert.Equal(["first login command"], host.Automation.Chat.Submitted);
+    }
+
+    [Fact]
+    public void ARepeatCharacterScopeEdgeStartsAFreshQueue()
     {
         (FakeHost host, LoginActions actions, OpenAC.MagTools.TickScheduler scheduler, ScopedCommandStore store) = Build();
         string characterScope = SettingsScope.Character("acct", "Server", "Acdream");
-        string serverScope = SettingsScope.Server("Server");
         store.SetOnLoginCommands(characterScope, ["first login command"]);
 
-        actions.Run(scheduler, characterScope, serverScope);
-        // Reconnect before the first queue drained.
-        actions.Run(scheduler, characterScope, serverScope);
+        actions.RunCharacterScope(scheduler, characterScope);
+        actions.RunCharacterScope(scheduler, characterScope);
 
         scheduler.Tick(0.1); // dummy
         scheduler.Tick(0.1); // first login command (only once, not duplicated)

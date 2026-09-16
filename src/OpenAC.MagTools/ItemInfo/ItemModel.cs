@@ -58,7 +58,6 @@ public sealed class ItemModel
         new Dictionary<uint, uint>());
 
     // ---- raw property ids ----------------------------------------------------
-    public const int NameKey = 1;
     public const int BurdenKey = 5;
     public const int ValueKey = 19;
     public const int ArmorLevelKey = 28;
@@ -119,12 +118,13 @@ public sealed class ItemModel
 
     /// <summary>
     /// The activation-skill pairing (segment 21, "Skill N to Activate").
-    /// Confirmed as ACE's <c>PropertyDataId.ItemSkillLimit</c>
-    /// (37) — a <em>DataId</em>, not an Int property, unlike every other key
-    /// in this class. <see cref="GetInt"/>/<see cref="HasInt"/> intercept
-    /// this key and read <c>DataIds[37]</c> instead of <c>Ints[37]</c>.
+    /// Confirmed as Decal <c>LongValueKey.ActivationReqSkillId</c> = 176
+    /// (extracted from Decal.Adapter.dll metadata) = ACE's
+    /// <c>PropertyInt.AppraisalItemSkill</c> — an ordinary Int property,
+    /// read through <see cref="GetInt"/>/<see cref="HasInt"/>'s normal
+    /// fallthrough exactly like every other key in this class.
     /// </summary>
-    public const int ActivationReqSkillIdKey = 37;
+    public const int ActivationReqSkillIdKey = 176;
 
     /// <summary>
     /// The activation skill LEVEL (segment 21). Confirmed as ACE's
@@ -196,11 +196,17 @@ public sealed class ItemModel
     // only, no PluginInventoryItem) still reports its damage/skill/variance
     // instead of always reading as absent.
 
+    // MaxDamage/EquipSkill "presence" reflects an actual nonzero value, not
+    // merely an inventory item existing: a non-weapon owned item (e.g. a
+    // quest trinket) has a PluginInventoryItem whose Damage/WeaponSkill are
+    // both 0 — that's absent data, not a real 0, so CalcedBuffedTinkedDoT
+    // and friends must still bail rather than run on garbage.
     public bool HasInt(int key) => key switch
     {
-        MaxDamagePseudoKey => _inventoryItem.HasValue || _properties.Ints.ContainsKey((uint)DamageRealKey),
-        EquipSkillPseudoKey => _inventoryItem.HasValue || _properties.Ints.ContainsKey((uint)WeaponSkillRealKey),
-        ActivationReqSkillIdKey => _properties.DataIds.ContainsKey((uint)key),
+        MaxDamagePseudoKey =>
+            _properties.Ints.ContainsKey((uint)DamageRealKey) || _inventoryItem is { Damage: not 0 },
+        EquipSkillPseudoKey =>
+            _properties.Ints.ContainsKey((uint)WeaponSkillRealKey) || _inventoryItem is { WeaponSkill: not 0 },
         _ => _properties.Ints.ContainsKey((uint)key),
     };
 
@@ -210,21 +216,20 @@ public sealed class ItemModel
             ?? (_properties.Ints.TryGetValue((uint)DamageRealKey, out int dmg) ? dmg : defaultValue),
         EquipSkillPseudoKey => _inventoryItem?.WeaponSkill
             ?? (_properties.Ints.TryGetValue((uint)WeaponSkillRealKey, out int skill) ? skill : defaultValue),
-        // ActivationReqSkillId (37) is ACE's PropertyDataId.ItemSkillLimit — a
-        // DataId, not an Int property; read the DataIds map instead of Ints.
-        ActivationReqSkillIdKey =>
-            _properties.DataIds.TryGetValue((uint)key, out uint activationSkillId)
-                ? (int)activationSkillId
-                : defaultValue,
         _ => _properties.Ints.TryGetValue((uint)key, out int value) ? value : defaultValue,
     };
 
+    // Same "actual presence, not merely an inventory item existing" rule as
+    // HasInt above: a Variance/Workmanship of exactly 0 on an existing
+    // PluginInventoryItem is absent data (e.g. a non-weapon item has no
+    // damage variance at all), not a real zero.
     public bool HasDouble(int key) => key switch
     {
-        VariancePseudoKey => _inventoryItem.HasValue || _properties.Floats.ContainsKey((uint)DamageVarianceRealKey),
+        VariancePseudoKey =>
+            _properties.Floats.ContainsKey((uint)DamageVarianceRealKey) || _inventoryItem is { DamageVariance: not 0 },
         // SalvageWorkmanship has no real-property fallback in the retained
         // ConvertToDouble table — it only ever comes from the typed field.
-        SalvageWorkmanshipPseudoKey => _inventoryItem.HasValue,
+        SalvageWorkmanshipPseudoKey => _inventoryItem is { Workmanship: not 0 },
         AttackBonusPseudoKey => _properties.Floats.ContainsKey((uint)AttackBonusRealKey),
         DamageBonusPseudoKey => _properties.Floats.ContainsKey((uint)DamageBonusRealKey),
         _ => _properties.Floats.ContainsKey((uint)key),

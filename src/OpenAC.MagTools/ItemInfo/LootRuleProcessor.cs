@@ -24,6 +24,8 @@ public readonly record struct LootVerdict(bool Passes, bool IsSalvage, string Ru
 /// </remarks>
 public sealed class LootRuleProcessor
 {
+    private static readonly string[] ManaRuleActionNames = ["ManaStone", "ManaTank"];
+
     private readonly IPluginLootClassifierRegistry _registry;
 
     public LootRuleProcessor(IPluginLootClassifierRegistry registry)
@@ -69,17 +71,38 @@ public sealed class LootRuleProcessor
         if (!_registry.TryClassify(classifierId, in context, out PluginLootClassification classification))
             return null;
 
-        // Not a plain "!IsNoLoot": some rules (e.g. ManaStone/ManaTank) come
-        // back Matched with Action.NoLoot but a real RuleName attached — the
-        // original still printed "+(Rule)" for those. A matched verdict with
-        // a named rule counts as passing even when the action itself is
-        // NoLoot; only an UNNAMED NoLoot verdict (no real rule matched) is a
-        // fail. See docs/deviations.md.
-        bool passes = classification.Matched
-            && (classification.Action != PluginLootAction.NoLoot
-                || !string.IsNullOrEmpty(classification.RuleName));
+        // The original's own check, verbatim: !result.IsNoLoot. An authored
+        // .utl rule that legitimately resolves to NoLoot (named or not)
+        // fails and prints "-(Rule)".
+        bool passes = classification.Matched && classification.Action != PluginLootAction.NoLoot;
+
+        // ManaStone/ManaTank currently come back Matched:true, Action:NoLoot
+        // from the classifier registry — a HOST artefact of the CURRENT
+        // OpenAC snapshot, where the shared PluginLootAction enum has no
+        // ManaStone/ManaTank members yet, not a real NoLoot verdict from the
+        // original's semantics. OpenAC is adding those members; matched by
+        // NAME via Enum.TryParse (never a direct PluginLootAction.ManaStone/
+        // .ManaTank reference) so this keeps compiling against both the
+        // current snapshot (TryParse simply fails, this is a no-op) and the
+        // fixed one (Action already differs from NoLoot by then, so this is
+        // a harmless belt-and-braces match, not the primary path). See
+        // docs/deviations.md.
+        if (!passes && classification.Matched)
+            passes = IsManaRuleAction(classification.Action);
+
         bool isSalvage = classification.Action == PluginLootAction.Salvage;
         return new LootVerdict(passes, isSalvage, classification.RuleName);
+    }
+
+    private static bool IsManaRuleAction(PluginLootAction action)
+    {
+        foreach (string name in ManaRuleActionNames)
+        {
+            if (Enum.TryParse(name, ignoreCase: true, out PluginLootAction candidate) && action == candidate)
+                return true;
+        }
+
+        return false;
     }
 
     /// <summary>Forwards to the active classifier's <c>NeedsIdentification</c>.</summary>

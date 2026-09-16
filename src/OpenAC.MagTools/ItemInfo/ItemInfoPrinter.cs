@@ -168,7 +168,11 @@ public sealed class ItemInfoPrinter
             UseRequiresSkillSpecialized: GetInt(ItemModel.UseRequiresSkillSpecializedKey))
         {
             ObjectClass = worldObject.ObjectClass,
-            Workmanship = GetInt(ItemModel.WorkmanshipKey),
+            // WorkmanshipKey (105) is the ordinary whole-number Int
+            // workmanship property, not the host's fractional float
+            // Workmanship field (salvage-only precision) — don't smuggle one
+            // into the other. Leave it 0; nothing in the classifier path
+            // needs salvage-precision workmanship for a non-salvage item.
         };
     }
 }

@@ -317,16 +317,17 @@ public sealed class ItemInfoFormatterTests
     }
 
     [Fact]
-    public void ActivationRequirementReadsSkillIdFromTheDataIdNotAnInt()
+    public void ActivationRequirementReadsSkillIdFromTheOrdinaryIntProperty()
     {
-        // ActivationReqSkillId (37) is ACE's PropertyDataId.ItemSkillLimit —
-        // a DataId, not an Int property. SkillLevelReq (115) is ACE's
-        // ItemSkillLevelLimit, an ordinary Int.
+        // ActivationReqSkillId (176) is Decal LongValueKey.ActivationReqSkillId
+        // = ACE's PropertyInt.AppraisalItemSkill — an ORDINARY Int property,
+        // not a DataId (a prior fix round mis-mapped it to DataId 37;
+        // Decal.Adapter.dll metadata confirms 176). SkillLevelReq (115) is
+        // ACE's ItemSkillLevelLimit, also an ordinary Int.
         var wo = ItemInfoFixtures.Wo(1, "Wand", PluginObjectClass.WandStaffOrb);
         var model = ItemInfoFixtures.Model(
             wo,
-            ints: new Dictionary<uint, int> { { 115, 300 } }, // SkillLevelReq
-            dataIds: new Dictionary<uint, uint> { { 37, 0x36 } }); // Summoning
+            ints: new Dictionary<uint, int> { { 115, 300 }, { 176, 0x36 } }); // SkillLevelReq, Summoning
 
         string result = ItemInfoFormatter.Format(
             model, new FakeItemInfoSettings { ShowBuffedValues = false }, EmptySpells);
@@ -342,8 +343,7 @@ public sealed class ItemInfoFormatterTests
         var wo = ItemInfoFixtures.Wo(1, "Wand", PluginObjectClass.WandStaffOrb);
         var model = ItemInfoFixtures.Model(
             wo,
-            ints: new Dictionary<uint, int> { { 115, 300 }, { 159, 0x36 }, { 160, 300 } },
-            dataIds: new Dictionary<uint, uint> { { 37, 0x36 } });
+            ints: new Dictionary<uint, int> { { 115, 300 }, { 159, 0x36 }, { 160, 300 }, { 176, 0x36 } });
 
         string result = ItemInfoFormatter.Format(
             model, new FakeItemInfoSettings { ShowBuffedValues = false }, EmptySpells);

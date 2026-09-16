@@ -71,24 +71,48 @@ public sealed class LootRuleProcessorTests
     }
 
     [Fact]
-    public void ClassifyMapsNamedNoLootActionToPassing()
+    public void ClassifyMapsNamedNoLootActionToNotPassing()
     {
-        // ManaStone/ManaTank rules: the classifier reports Matched:true,
-        // Action.NoLoot, but with a real RuleName attached. The original
-        // still printed "+(Rule)" for these (its own "!IsNoLoot" check),
-        // so a NAMED NoLoot verdict counts as passing. See M5 in
-        // docs/deviations.md.
+        // The original's own check is a literal !result.IsNoLoot — a NoLoot
+        // result is always a fail, named rule or not. This is NOT the
+        // ManaStone/ManaTank case: a real .utl rule that legitimately
+        // resolves to NoLoot with a name attached still fails today.
         var registry = new FakeLootClassifierRegistry();
         registry.Available.Add(new PluginLootClassifierInfo("engine", "Engine"));
         registry.ClassificationResult = new PluginLootClassification(
-            Matched: true, Action: PluginLootAction.NoLoot, RuleName: "ManaStone");
+            Matched: true, Action: PluginLootAction.NoLoot, RuleName: "SomeAuthoredRule");
         var processor = new LootRuleProcessor(registry);
 
         LootVerdict? verdict = processor.Classify(EmptyContext());
 
-        Assert.NotNull(verdict);
-        Assert.True(verdict!.Value.Passes);
-        Assert.Equal("ManaStone", verdict.Value.RuleName);
+        Assert.False(verdict!.Value.Passes);
+    }
+
+    [Theory]
+    [InlineData("ManaStone")]
+    [InlineData("ManaTank")]
+    public void ManaStoneAndManaTankStillFailUntilOpenAcAddsTheEnumMembers(string ruleName)
+    {
+        // A host artefact, not original behavior: the classifier registry
+        // reports these two specific keep-rules as Matched:true,
+        // Action.NoLoot because the CURRENT OpenAC snapshot's shared
+        // PluginLootAction enum has no ManaStone/ManaTank members yet.
+        // LootRuleProcessor.Classify guards a future fix by NAME via
+        // Enum.TryParse (see IsManaRuleAction) rather than referencing
+        // PluginLootAction.ManaStone/.ManaTank directly, which wouldn't
+        // compile against this snapshot. Until OpenAC adds those members,
+        // TryParse can't resolve the name, so this is a no-op and the
+        // verdict still fails — that's the DOCUMENTED CURRENT LIMITATION,
+        // not the desired end state. See docs/deviations.md.
+        var registry = new FakeLootClassifierRegistry();
+        registry.Available.Add(new PluginLootClassifierInfo("engine", "Engine"));
+        registry.ClassificationResult = new PluginLootClassification(
+            Matched: true, Action: PluginLootAction.NoLoot, RuleName: ruleName);
+        var processor = new LootRuleProcessor(registry);
+
+        LootVerdict? verdict = processor.Classify(EmptyContext());
+
+        Assert.False(verdict!.Value.Passes);
     }
 
     [Fact]

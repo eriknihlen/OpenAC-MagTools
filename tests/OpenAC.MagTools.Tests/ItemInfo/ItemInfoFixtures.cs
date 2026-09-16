@@ -44,15 +44,14 @@ internal static class ItemInfoFixtures
     public static PluginItemProperties Props(
         Dictionary<uint, int>? ints = null,
         Dictionary<uint, double>? floats = null,
-        Dictionary<uint, bool>? bools = null,
-        Dictionary<uint, uint>? dataIds = null)
+        Dictionary<uint, bool>? bools = null)
         => new(
             ints ?? [],
             new Dictionary<uint, long>(),
             bools ?? [],
             floats ?? [],
             new Dictionary<uint, string>(),
-            dataIds ?? [],
+            new Dictionary<uint, uint>(),
             new Dictionary<uint, uint>());
 
     public static ItemModel Model(
@@ -60,9 +59,8 @@ internal static class ItemInfoFixtures
         Dictionary<uint, int>? ints = null,
         Dictionary<uint, double>? floats = null,
         Dictionary<uint, bool>? bools = null,
-        PluginInventoryItem? inv = null,
-        Dictionary<uint, uint>? dataIds = null)
-        => new(wo, Props(ints, floats, bools, dataIds), inv);
+        PluginInventoryItem? inv = null)
+        => new(wo, Props(ints, floats, bools), inv);
 }
 
 /// <summary>A settable <see cref="ISettings"/> for formatter tests.</summary>

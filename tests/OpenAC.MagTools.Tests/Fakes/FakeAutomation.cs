@@ -79,12 +79,22 @@ public sealed class FakeCharacter : ICharacterInfo
     public uint CurrentMana { get; set; }
     public uint MaxMana { get; set; }
 
-    public IReadOnlyList<PluginSkillInfo> Skills { get; set; } = [];
+    public List<PluginSkillInfo> Skills { get; } = [];
     public IReadOnlyList<PluginAttributeInfo> Attributes { get; set; } = [];
     public IReadOnlyList<PluginActiveEnchantment> ActiveEnchantments { get; set; } = [];
 
+    IReadOnlyList<PluginSkillInfo> ICharacterInfo.Skills => Skills;
+
     public bool TryGetSkill(uint skillId, out PluginSkillInfo skill)
     {
+        foreach (PluginSkillInfo candidate in Skills)
+        {
+            if (candidate.SkillId != skillId)
+                continue;
+            skill = candidate;
+            return true;
+        }
+
         skill = default;
         return false;
     }

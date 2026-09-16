@@ -1,4 +1,5 @@
 using AcDream.Plugin.Abstractions;
+using OpenAC.MagTools.ItemInfo;
 using OpenAC.MagTools.Settings;
 using OpenAC.MagTools.Trackers.Shared;
 
@@ -119,19 +120,26 @@ public sealed class CorpseTrackerHost
             || wo.ObjectClass != PluginObjectClass.Corpse)
             return;
 
-        _host.Automation.Objects.TryCaptureProperties(objectId, out PluginItemProperties properties);
+        if (!_host.Automation.Objects.TryCaptureProperties(objectId, out PluginItemProperties properties))
+            properties = ItemModel.EmptyProperties;
         // Burden = PropertyInt.Burden (5). The original's Decal
         // StringValueKey.FullDescription is the host's PropertyString.LongDesc
         // (16) -- ACE renamed the same wire id; see docs/deviations.md.
         int burden = properties.Ints.TryGetValue(5u, out int burdenValue) ? burdenValue : 0;
         string? fullDescription = properties.Strings.TryGetValue(16u, out string? text) ? text : null;
 
+        // The host's Position is already in global compass units (see
+        // HostPosition's remarks); map back to the original's full-cell-id +
+        // landblock-local-metres storage shape so the exported XML stays
+        // numerically interchangeable with the original.
+        LandblockLocalPosition local = HostPosition.ToLandblockLocal(wo.Position);
+
         var observation = new CorpseObservation(
             objectId,
-            (int)(wo.Position.CellId >> 16),
-            wo.Position.EastWest,
-            wo.Position.NorthSouth,
-            wo.Position.Elevation,
+            local.CellId,
+            local.X,
+            local.Y,
+            local.Z,
             wo.Name,
             burden,
             wo.HasAppraisalData,
@@ -147,9 +155,13 @@ public sealed class CorpseTrackerHost
     /// <summary>
     /// The released object has already left the object table, so distance is
     /// computed from the LOCAL PLAYER's live position to the TRACKED corpse's
-    /// own stored coordinates (converted to the same compass-unit space
-    /// <see cref="PluginNavigationPosition.HorizontalDistanceMeters"/>
-    /// expects) rather than re-resolving the released id.
+    /// own stored coordinates. <see cref="TrackedCorpse.LandBlock"/> is the
+    /// full cell id and LocationX/Y are landblock-local metres (see
+    /// <see cref="HostPosition"/>'s remarks), so re-deriving compass units
+    /// via <see cref="Coords.FromLandblock"/> reproduces exactly the same
+    /// global units the live <see cref="PluginNavigationSnapshot.Position"/>
+    /// is already in, making the two directly comparable via
+    /// <see cref="PluginNavigationPosition.HorizontalDistanceMeters"/>.
     /// </summary>
     private void OnReleased(uint objectId)
     {
@@ -163,7 +175,7 @@ public sealed class CorpseTrackerHost
 
         Coords corpseCoords = Coords.FromLandblock(tracked.LandBlock, tracked.LocationX, tracked.LocationY);
         var corpsePosition = new PluginNavigationPosition(
-            0u, corpseCoords.Longitude, corpseCoords.Latitude, tracked.LocationZ, 0f, true);
+            0u, corpseCoords.Longitude, corpseCoords.Latitude, tracked.LocationZ / 240d, 0f, true);
 
         double distance = snapshot.Position.HorizontalDistanceMeters(corpsePosition);
         if (distance <= 10d)

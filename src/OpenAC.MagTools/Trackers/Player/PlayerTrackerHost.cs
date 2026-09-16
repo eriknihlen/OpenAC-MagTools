@@ -1,5 +1,6 @@
 using AcDream.Plugin.Abstractions;
 using OpenAC.MagTools.Settings;
+using OpenAC.MagTools.Trackers.Shared;
 
 namespace OpenAC.MagTools.Trackers.Player;
 
@@ -54,9 +55,11 @@ public sealed class PlayerTrackerHost
     {
         if (!_running)
             return;
-        _running = false;
 
+        // Save() gates on _running, so it must run BEFORE that flips to
+        // false, or the flush is silently skipped (H8).
         Save();
+        _running = false;
 
         if (_onObjectChanged is not null)
             _host.Events.ObjectChanged -= _onObjectChanged;
@@ -86,14 +89,20 @@ public sealed class PlayerTrackerHost
             || wo.ObjectClass != PluginObjectClass.Player)
             return;
 
+        // The host's Position is already in global compass units; map back
+        // to the original's full-cell-id + landblock-local-metres storage
+        // shape (see HostPosition's remarks) so exported XML stays
+        // numerically interchangeable with the original.
+        LandblockLocalPosition local = HostPosition.ToLandblockLocal(wo.Position);
+
         Tracker.ProcessWorldObject(
             new PlayerObservation(
                 change.ObjectId,
                 wo.Name,
-                (int)(wo.Position.CellId >> 16),
-                wo.Position.EastWest,
-                wo.Position.NorthSouth,
-                wo.Position.Elevation),
+                local.CellId,
+                local.X,
+                local.Y,
+                local.Z),
             _host.Automation.Character.Name);
     }
 }

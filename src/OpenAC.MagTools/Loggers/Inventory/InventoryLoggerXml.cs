@@ -8,9 +8,16 @@ namespace OpenAC.MagTools.Loggers.Inventory;
 /// (see the port design's §1.18/§2.7): root <c>ArrayOfMyWorldObject</c> (the
 /// serializer's own default name for a bare <c>List&lt;T&gt;</c>), one
 /// <c>MyWorldObject</c> element per item in field-declaration order, and each
-/// <c>SerializableDictionary</c> as
-/// <c>&lt;item&gt;&lt;key&gt;..&lt;/key&gt;&lt;value&gt;..&lt;/value&gt;&lt;/item&gt;</c>
-/// children.
+/// <c>SerializableDictionary&lt;int, TValue&gt;</c> exactly as its own
+/// <c>WriteXml</c>/<c>ReadXml</c> shape: <c>&lt;item&gt;&lt;key&gt;&lt;int&gt;
+/// N&lt;/int&gt;&lt;/key&gt;&lt;value&gt;&lt;TYPE&gt;V&lt;/TYPE&gt;&lt;/value&gt;
+/// &lt;/item&gt;</c>, where the inner element name is <c>XmlSerializer</c>'s own
+/// XSD-primitive root name for the value's CLR type (<c>bool</c> -&gt;
+/// <c>boolean</c>, <c>double</c> -&gt; <c>double</c>, <c>int</c> -&gt; <c>int</c>,
+/// <c>string</c> -&gt; <c>string</c>), lowercase <c>true</c>/<c>false</c> for
+/// booleans (M2). This makes a file this logger writes byte-shape compatible
+/// with one the original wrote (and vice versa), not merely readable by our
+/// own importer.
 /// </summary>
 public static class InventoryLoggerXml
 {
@@ -21,14 +28,18 @@ public static class InventoryLoggerXml
         {
             root.Add(new XElement(
                 "MyWorldObject",
-                new XElement("HasIdData", item.HasIdData),
-                new XElement("Id", item.Id.ToString(CultureInfo.InvariantCulture)),
+                new XElement("HasIdData", Bool(item.HasIdData)),
+                // The original's Id is a signed 32-bit int over the same wire
+                // guid bits; reinterpreting our uint the same way keeps a
+                // high-bit object id byte-identical to what the original
+                // would have written (LOW: uint-vs-int ids).
+                new XElement("Id", unchecked((int)item.Id).ToString(CultureInfo.InvariantCulture)),
                 new XElement("LastIdTime", item.LastIdTime.ToString(CultureInfo.InvariantCulture)),
                 new XElement("ObjectClass", item.ObjectClass.ToString(CultureInfo.InvariantCulture)),
-                Dict("BoolValues", item.BoolValues, static v => v.ToString()),
-                Dict("DoubleValues", item.DoubleValues, static v => v.ToString(CultureInfo.InvariantCulture)),
-                Dict("IntValues", item.IntValues, static v => v.ToString(CultureInfo.InvariantCulture)),
-                Dict("StringValues", item.StringValues, static v => v),
+                Dict("BoolValues", item.BoolValues, "boolean", static v => Bool(v)),
+                Dict("DoubleValues", item.DoubleValues, "double", static v => v.ToString(CultureInfo.InvariantCulture)),
+                Dict("IntValues", item.IntValues, "int", static v => v.ToString(CultureInfo.InvariantCulture)),
+                Dict("StringValues", item.StringValues, "string", static v => v),
                 new XElement("ActiveSpells", item.ActiveSpells.Select(id => new XElement("int", id))),
                 new XElement("Spells", item.Spells.Select(id => new XElement("int", id)))));
         }
@@ -36,13 +47,19 @@ public static class InventoryLoggerXml
         return new XDocument(root).ToString();
     }
 
-    private static XElement Dict<TValue>(string elementName, IReadOnlyDictionary<int, TValue> values, Func<TValue, string> format)
+    private static string Bool(bool value) => value ? "true" : "false";
+
+    private static XElement Dict<TValue>(
+        string elementName,
+        IReadOnlyDictionary<int, TValue> values,
+        string valueTypeName,
+        Func<TValue, string> format)
         => new(
             elementName,
             values.Select(kvp => new XElement(
                 "item",
-                new XElement("key", kvp.Key.ToString(CultureInfo.InvariantCulture)),
-                new XElement("value", format(kvp.Value)))));
+                new XElement("key", new XElement("int", kvp.Key.ToString(CultureInfo.InvariantCulture))),
+                new XElement("value", new XElement(valueTypeName, format(kvp.Value))))));
 
     /// <summary>Returns false for anything that doesn't parse, matching the original's "file is corrupt" path.</summary>
     public static bool TryImport(string content, out List<MyWorldObjectRecord> items)
@@ -66,8 +83,10 @@ public static class InventoryLoggerXml
 
         foreach (XElement node in root.Elements("MyWorldObject"))
         {
-            bool hasIdData = (bool?)node.Element("HasIdData") ?? false;
-            uint id = uint.TryParse((string?)node.Element("Id"), NumberStyles.Integer, CultureInfo.InvariantCulture, out uint parsedId) ? parsedId : 0u;
+            bool hasIdData = ParseBool((string?)node.Element("HasIdData"));
+            uint id = int.TryParse((string?)node.Element("Id"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedId)
+                ? unchecked((uint)parsedId)
+                : 0u;
             int lastIdTime = int.TryParse((string?)node.Element("LastIdTime"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedLastId) ? parsedLastId : 0;
             int objectClass = int.TryParse((string?)node.Element("ObjectClass"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedClass) ? parsedClass : 0;
 
@@ -77,10 +96,10 @@ public static class InventoryLoggerXml
                 Id = id,
                 LastIdTime = lastIdTime,
                 ObjectClass = objectClass,
-                BoolValues = ReadDict(node, "BoolValues", static text => bool.TryParse(text, out bool v) && v),
+                BoolValues = ReadDict(node, "BoolValues", static text => ParseBool(text)),
                 DoubleValues = ReadDict(node, "DoubleValues", static text => double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double v) ? v : 0d),
                 IntValues = ReadDict(node, "IntValues", static text => int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int v) ? v : 0),
-                StringValues = ReadDict(node, "StringValues", static text => text),
+                StringValues = ReadDict(node, "StringValues", static text => text ?? string.Empty),
                 ActiveSpells = node.Element("ActiveSpells")?.Elements("int").Select(e => (int?)e ?? 0).ToList() ?? [],
                 Spells = node.Element("Spells")?.Elements("int").Select(e => (int?)e ?? 0).ToList() ?? [],
             });
@@ -89,7 +108,9 @@ public static class InventoryLoggerXml
         return true;
     }
 
-    private static Dictionary<int, TValue> ReadDict<TValue>(XElement parent, string elementName, Func<string, TValue> parse)
+    private static bool ParseBool(string? text) => bool.TryParse(text, out bool value) && value;
+
+    private static Dictionary<int, TValue> ReadDict<TValue>(XElement parent, string elementName, Func<string?, TValue> parse)
     {
         var result = new Dictionary<int, TValue>();
         XElement? dict = parent.Element(elementName);
@@ -98,11 +119,14 @@ public static class InventoryLoggerXml
 
         foreach (XElement item in dict.Elements("item"))
         {
-            string? keyText = (string?)item.Element("key");
+            // <key><int>N</int></key> -- the inner element carries the value;
+            // its own tag name doesn't matter for reading (only for
+            // round-trip shape fidelity on write).
+            string? keyText = (string?)item.Element("key")?.Elements().FirstOrDefault();
             if (keyText is null || !int.TryParse(keyText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int key))
                 continue;
 
-            string valueText = (string?)item.Element("value") ?? string.Empty;
+            string? valueText = (string?)item.Element("value")?.Elements().FirstOrDefault();
             result[key] = parse(valueText);
         }
 

@@ -105,6 +105,12 @@ the end of this section).
    during logoff teardown. The fresh-file branch never printed its
    `Requesting id information...` message either. The file name is now
    correct; only the contents are wrong.
+   **Fixed in `45239ca` (slice P10).** `Start()` now waits for the first
+   `Tick` on which `CaptureOwnedItems()` is non-empty before deciding the
+   fresh-file-vs-existing-file branch (or runs immediately if the pack is
+   already populated at `Start()` time); `Stop()` dumps from the last
+   non-empty snapshot this instance actually captured instead of a fresh,
+   typically-empty-by-then capture.
 9. **The Worn Equipment export selects nothing** (plugin).
    `src/OpenAC.MagTools/Inventory/InventoryExporter.cs:183-193`
    (`IsEquippedByMe`) keeps the original's "if `Slot == -1` the container
@@ -113,10 +119,18 @@ the end of this section).
    0 -- the player id lives in `WielderObjectId`. Every equipped item is
    rejected, so the export writes an empty string to a clipboard that
    accepts it, and still prints the success line.
+   **Fixed in `6489985` (slice P10).** `IsEquippedByMe` now checks
+   `WielderObjectId == Character.ObjectId` instead of the container/slot
+   rule; see the `docs/deviations.md` row for this class.
 10. **The Inventory export can hang forever** (plugin).
     `InventoryExporter.Think` sets `waitingForIdData` for any selected item
     with no appraisal data after the first request pass and never
     re-requests or times out, so one never-appraised item stalls the export.
+    **Fixed in `9c1cb35` (slice P10).** `Think()` now re-requests any
+    still-unappraised item every 5 seconds, up to 3 retries, then exports
+    with what is available and reports the count of items missing id data
+    instead of waiting forever; see the `docs/deviations.md` row for this
+    class (no original retry behavior was available to port faithfully).
 11. **Defect 4 is confirmed host-side and narrowed.** A plugin-issued
     `Items.Use` on a world object returns `Started` and does nothing (no
     walk, no panel, no container); the same object used through the client's
@@ -167,7 +181,7 @@ row below carries its current blocker.
 | Idle automation: heart carver / shattered-key fixer / key deringer | `Intricate Carving Tool` still not creatable: `@ci intricatecarvingtool` is not a valid weenie and `@ci 42979` creates a `Core Plating Integrator` | PENDING |
 | Mana auto recharge | the trigger is ACE's `Your <item> is low on Mana.`, which `Player_Tick` only emits for an item that actively burns mana. The character's equipped items do not burn: drained to 2 of 294 with `@givemana`, the value was unchanged many minutes later, so the warning is never emitted | PENDING |
 | One-touch heal with a healing KIT | the hotkey itself is proven (bound via `plugin-hotkeys.json`, Ctrl+J applied a `Heal`-named food item four times). The kit branch needs a `HealingKit`-class item, and no healing-kit weenie name resolves on this ACE build | PENDING |
-| Log out on death | the character was taken to 0 health with `@setvital health 0` and the world unloaded into a transition, but no death chat line appeared and no plugin logout followed, so `IEvents.LocalPlayerDied` was never observed to fire. `@smite` on the self-selection does nothing. Needs a death that provably runs ACE's death pipeline | PENDING |
+| Log out on death | the character was taken to 0 health with `@setvital health 0` and the world unloaded into a transition, but no death chat line appeared and no plugin logout followed, so `IEvents.LocalPlayerDied` was never observed to fire. `@smite` on the self-selection does nothing. Needs a death that provably runs ACE's death pipeline. **Slice P10 audit: plugin side (`src/OpenAC.MagTools/Macros/LogOutOnDeath.cs`) is correct** -- subscribed for the plugin's whole enabled lifetime at `Enable()`/`Disable()` (matching its own doc comment, not per-session), and its handler calls `Automation.Login.Logout()` on the event with no gap. `IEvents.LocalPlayerDied` is raised only from `RuntimeCommunicationState.ReportLocalPlayerDeath`, which is wired from a server-driven death-message path in `AcDream.App`/`AcDream.Headless` -- the event simply never fired for this death, which is host-side (the death-message detection/dispatch, not the plugin's subscription). Handed to the A8 host-side agent | PENDING (host-side) |
 | Combat tracker `Dmg Rcvd` / `Dmg Givn` cells | still unprovoked: the character one-shots everything it attacks, and a monster spawned adjacent with `@attackable on` did not attack in 60 s | PENDING |
 
 ## Defects found in the 2026-09-16 gate round

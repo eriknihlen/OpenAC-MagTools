@@ -48,10 +48,31 @@ internal sealed class QueuedCommandRunner
 
     public int Count => _queue.Count;
 
-    /// <summary>The scheduler each drain step is re-armed on. Rebind on every session start.</summary>
+    /// <summary>
+    /// The scheduler each drain step is re-armed on. Rebind on every session
+    /// start.
+    /// </summary>
+    /// <remarks>
+    /// HIGH-1 (2026-09-16 review): binding to a DIFFERENT scheduler instance
+    /// than the one currently bound resets <see cref="_draining"/> to
+    /// <c>false</c> and drops whatever was still queued. A chain armed
+    /// against the OLD scheduler (a Disable() that tears the scheduler down
+    /// before it ever calls back into <see cref="DrainOne"/>) would
+    /// otherwise leave <see cref="_draining"/> stuck <c>true</c> forever --
+    /// the old scheduler is gone and will never fire the callback that
+    /// clears it, so every later <see cref="Enqueue"/> against the freshly
+    /// bound scheduler would silently no-op. Rebinding to the SAME instance
+    /// (a same-session re-arm) is left alone, preserving the Stop-then-Run
+    /// double-dispatch guard L1 exists for.
+    /// </remarks>
     public void Bind(TickScheduler scheduler)
     {
         ArgumentNullException.ThrowIfNull(scheduler);
+        if (!ReferenceEquals(_scheduler, scheduler))
+        {
+            _draining = false;
+            _queue.Clear();
+        }
         _scheduler = scheduler;
     }
 

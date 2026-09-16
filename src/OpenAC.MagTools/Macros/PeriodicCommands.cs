@@ -47,7 +47,21 @@ public sealed class PeriodicCommands
     private string _serverScopePath = string.Empty;
     private IDisposable? _timerRegistration;
 
-    /// <summary>The UTC minute-of-hour (0-59) last evaluated -- the original's "same minute never runs twice" guard.</summary>
+    /// <summary>
+    /// The UTC minute-of-hour (0-59) last evaluated -- the original's "same
+    /// minute never runs twice" guard.
+    /// </summary>
+    /// <remarks>
+    /// LOW-2: nullable, and explicitly reset to <c>null</c> in both
+    /// <see cref="Start"/> and <see cref="Stop"/>, which deliberately avoids
+    /// two ONE-SHOT skips the original's own (non-nullable, never-reset)
+    /// guard variable was exposed to -- see the matching deviations.md row
+    /// for both. Neither is reproduced here because each would only ever
+    /// suppress a single evaluation (self-corrects on the very next
+    /// 20-second poll) and reproducing either would mean deliberately
+    /// coding a sentinel collision / a missing reset rather than a
+    /// behavior worth preserving.
+    /// </remarks>
     private int? _lastEvaluatedUtcMinute;
 
     public PeriodicCommands(

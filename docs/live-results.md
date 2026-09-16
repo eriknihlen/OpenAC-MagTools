@@ -42,6 +42,7 @@ the graphical primary session per the design doc's live-gate protocol (§8).
 | Plugin-initiated appraisal is silent (A5) | 2026-09-16 | plugin 3c30f06 / OpenAC d5c37bb | probe 10: idle 25 s after login (equipment tracker re-identifies equipped items) | no examination window opened (screenshots 31/32); the Mana list still populates from the silent appraisals | PASS |
 | `/mt trade *`, `/mt vendor *`, `/mt autopack` (P7 commands) | 2026-09-16 | same | probe 10: `/mt trade accept`, `/mt vendor buy`, `/mt vendor addbuy Foo 3`, `/mt autopack`, `/mt trade add Foo` with no vendor/trade open and no AutoPack profile | `No vendor is open.` ×2, `No inventory item found named: foo`; trade accept and autopack silent (no trade open / no profile) as the original | PASS (messages); real trade/vendor flows need a partner/vendor — P8 gate round |
 | `/mt logoff` | 2026-09-16 | same | probe 10 | log: `logout-confirmed`, `returning to character select`, `character logoff complete` — the client's own graceful logout | PASS |
+| Open main pack on login (P8, enabled default) | 2026-09-16 | plugin 5822062 / OpenAC abc748d | probe 12: login with `Misc/OpenMainPackOnLogin` at its default (true), screenshot at +10 s | `Inventory of +Acdream` window open at +10 s — `Ui.ShowClientWindow(PluginClientWindow.Inventory)` (OpenAC slice A6) opens the main pack the same as the original's `Actions.UseItem(myId, 0)` did | PASS |
 
 ## Pending (owed before the port can be called fully live-gated)
 
@@ -61,7 +62,7 @@ None of the rows below has been run. Each names the exact steps so a tester
 | Mana auto recharge | let an equipped item's mana run low with `ManaManagement.AutoRecharge` on and a mana stone/charge source available; confirm the recharge action fires and the Mana tab's `cur / max` updates | PENDING (needs a real low-mana item + charge source) |
 | One-touch heal real heal | take damage, press the One Touch Heal hotkey (bind it first — unbound by default), confirm a healing kit or food item is applied and health rises | PENDING (needs live damage + hotkey bind) |
 | On-Login / On-Login-Complete / Periodic commands (P8) | in Tools → Character (or Server), add an On-Login command (e.g. `/mt test`), an On-Login-Complete command, and a Periodic command (interval 1, offset 0); reconnect and confirm both lists dispatch in order one tick apart, then watch the periodic command fire on the next whole UTC minute | PENDING (P8 feature, not yet live-gated) |
-| Open main pack on login (P8) | login; inventory window is open | PENDING re-gate (code re-wired onto OpenAC slice A6's `Ui.ShowClientWindow(PluginClientWindow.Inventory)`; the earlier H1 host-gap block is resolved -- see `docs/deviations.md` -- but the new mechanism has not been exercised against a live client yet) |
+| Open main pack on login: disabled setting (P8) | `/mt opt set Misc.OpenMainPackOnLogin false`, reconnect, confirm the inventory window does NOT open at LoginComplete (the enabled/default case is PASS -- see the Gated table, probe 12) | PENDING (negative case not yet exercised live) |
 | Log out on death (P8) | `/mt opt set Misc.LogOutOnDeath true`, die in-world (or have a second character/monster kill +Acdream); confirm the client performs its own graceful logout immediately after the death message | PENDING (P8 feature, needs an actual live death) |
 | Character/Server command tabs: Add/Move/Delete UI (P8) | in Tools → Character and Tools → Server, type a command and click Add, confirm it appears in the list and the text box clears; click the up/down icons and confirm the rows swap; click the delete icon and confirm the row disappears; confirm each change survives a plugin Disable/Enable (i.e. is actually persisted to `Mag-Tools.xml`) | PENDING (P8 feature, not yet live-gated) |
 | Inventory export to clipboard | Tools → Inventory → Clipboard Worn Equipment / Clipboard Inventory Info; confirm the `Copying all inventory item info...`/`...copied to the clipboard.` messages print and the clipboard contains one `ItemInfo` line per item in the original's sort order | PENDING (needs clipboard inspection on the live host) |
@@ -73,5 +74,8 @@ None of the rows below has been run. Each names the exact steps so a tester
 
 ## Known host gaps carried into this port (tracked upstream, not in this repo)
 
-- None currently open — A3 (Identify), A4 (appraisal profiles) and A5
-  (silent plugin-initiated appraisal) all landed and re-gated PASS above.
+- None currently open — A3 (Identify), A4 (appraisal profiles), A5
+  (silent plugin-initiated appraisal) and A6 (client window control) all
+  landed; A3-A5 are re-gated PASS above, A6's enabled-default case is
+  re-gated PASS (probe 12), its disabled-setting negative case is still
+  PENDING.

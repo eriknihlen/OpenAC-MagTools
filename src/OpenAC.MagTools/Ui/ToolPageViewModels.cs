@@ -304,19 +304,23 @@ public sealed class TinkeringPageViewModel : ListPageViewModel
 /// click handlers. The row icons are the original's up/down/delete art.
 /// </remarks>
 /// <remarks>
-/// L3, small cosmetics worth spelling out: a successful Add trims the typed
-/// command text (leading/trailing whitespace only -- the command's own
-/// internal spacing is untouched) and resets its text field(s) back to the
-/// empty-command/default-interval("1")/default-offset("0") state, matching
-/// the original's field-clear-after-add. A refused Add (blank text, or --
-/// for the periodic list -- an invalid interval/offset, M2) leaves every
-/// typed field exactly as entered, so the user can fix just the one bad
-/// field. Move swaps two adjacent rows AND moves the selection with the
-/// swapped row (so "move up" keeps the same logical row selected, not the
-/// row now sitting in its old slot). Delete clears the selection when the
-/// deleted row WAS selected, or shifts the selection index down by one when
-/// a row ABOVE the selection was deleted, so the same logical row (if any)
-/// stays selected across the delete.
+/// L3/LOW-1, small cosmetics worth spelling out: a successful On-Login/
+/// On-Login-Complete Add trims the typed command text (leading/trailing
+/// whitespace only -- the command's own internal spacing is untouched)
+/// before storing it and clears its text field back to empty. A successful
+/// Periodic Add stores the command text VERBATIM (no trim, matching the
+/// original -- see <see cref="AddPeriodic"/>'s remarks) and clears ONLY the
+/// command text field; the interval/offset fields are left exactly as
+/// typed so several commands can be added at the same interval/offset
+/// without retyping them. A refused Add (blank command text, or -- for the
+/// periodic list -- an invalid interval/offset, M2) leaves EVERY typed
+/// field exactly as entered, so the user can fix just the one bad field.
+/// Move swaps two adjacent rows AND moves the selection with the swapped
+/// row (so "move up" keeps the same logical row selected, not the row now
+/// sitting in its old slot). Delete clears the selection when the deleted
+/// row WAS selected, or shifts the selection index down by one when a row
+/// ABOVE the selection was deleted, so the same logical row (if any) stays
+/// selected across the delete.
 /// </remarks>
 public sealed class ScopedCommandsPageViewModel
 {
@@ -538,16 +542,27 @@ public sealed class ScopedCommandsPageViewModel
 
     /// <summary>
     /// M2 (<c>AccountServerCharacterGUI.cs:257</c>): the original refuses the
-    /// add outright -- no row, no store write, the typed text stays exactly
-    /// as entered -- for an empty/unparseable interval or offset, an
+    /// add outright -- no row, no store write, every typed field stays
+    /// exactly as entered -- for an empty/unparseable interval or offset, an
     /// interval &lt;= 0, or a negative offset. It never falls back to a
     /// default the way a lenient parser would.
     /// </summary>
+    /// <remarks>
+    /// LOW-1: on a SUCCESSFUL add, only <see cref="PeriodicText"/> clears --
+    /// <see cref="PeriodicIntervalText"/>/<see cref="PeriodicOffsetText"/>
+    /// are left exactly as typed (not reset to "1"/"0"), matching the
+    /// original: they are separate `Edit` controls the original never
+    /// touched on Add, so a user adding several commands at the same
+    /// interval/offset does not have to retype them each time. The command
+    /// text itself is stored VERBATIM -- no trim -- matching the original,
+    /// which read the Edit control's text straight into the new row with no
+    /// whitespace cleanup; only an entirely empty string is refused.
+    /// </remarks>
     private void AddPeriodic()
     {
         if (!CanEdit)
             return;
-        string text = PeriodicText.Trim();
+        string text = PeriodicText;
         if (text.Length == 0)
             return;
         if (!TryParseMinutes(PeriodicIntervalText, out int interval) || interval <= 0)
@@ -560,8 +575,6 @@ public sealed class ScopedCommandsPageViewModel
         _store!.SetPeriodicCommands(_scopePath, _periodicCommands);
 
         PeriodicText = string.Empty;
-        PeriodicIntervalText = "1";
-        PeriodicOffsetText = "0";
     }
 
     private void DeletePeriodic(int index)

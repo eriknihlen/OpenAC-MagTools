@@ -98,14 +98,34 @@ the owner):
 
 ### Host bugs found by live gates (all fixed and re-gated PASS)
 
-- **Lifecycle emission**: `LoginComplete` was only emitted at command
+- **Lifecycle emission (A3)**: `LoginComplete` was only emitted at command
   boundaries in the A2 host, so the plugin's online banner never appeared
   during idle world time; fixed in A3 by emitting the real async in-world
   edge from the session tick (`dcfa997`, `705de5c`, `94a296f`).
-- **Identify scope**: `IWorldObjectAutomation.Identify` refused anything
+- **Identify scope (A3)**: `IWorldObjectAutomation.Identify` refused anything
   that was not a corpse or inside the open container, so a plugin could
   never appraise an owned or landscape object; fixed to accept any known
   object (`fa5e111`).
+- **Appraisal profiles (A4)**: the host parsed the appraisal
+  WeaponProfile/ArmorProfile off the wire but never retained them on the
+  object or exposed them to a plugin, so item-info's weapon/armor segments
+  (damage range, attack bonus, armor mods) stayed blank even after a
+  successful ident -- found live gating item info on ident, fixed by
+  retaining the profiles on `ClientObject` and surfacing them through
+  `TryCaptureProperties`/`PluginInventoryItem`.
+- **Silent appraisal (A5)**: any plugin-initiated `Identify` (the equipment
+  tracker's periodic re-identify, in particular) popped the client's own
+  examination window just like a user-initiated one -- found live gating
+  the equipment tracker, fixed by tagging request origin and splitting
+  appraisal completion from presentation so only a user-originated request
+  shows the window.
+- **Client window control (A6)**: no host surface let a plugin show, hide,
+  toggle, or query one of the client's own retained windows at all --
+  `Open Main Pack On Login`'s original mechanism (using the player's own
+  object) is refused outright (`IsPlayerOwned` excludes the player object
+  itself), and there was no alternative route; found during P8 review,
+  fixed by adding `IUiRegistry.ToggleClientWindow`/`ShowClientWindow`/
+  `HideClientWindow`/`IsClientWindowVisible(PluginClientWindow)`.
 
 ## Known test-environment note
 

@@ -139,8 +139,11 @@ public sealed class ScopedCommandsPageViewModelTests
     }
 
     [Fact]
-    public void AddPeriodicCommandParsesIntervalAndOffsetAndResetsTheFields()
+    public void AddPeriodicCommandParsesIntervalAndOffsetAndClearsOnlyTheCommandText()
     {
+        // LOW-1: only the command text field clears on a successful add --
+        // interval/offset stay exactly as typed so several commands can be
+        // added at the same interval/offset without retyping them.
         (ScopedCommandsPageViewModel vm, ScopedCommandStore store, string scope) = Build();
 
         vm.SetPeriodicText("/mt autopack");
@@ -151,8 +154,8 @@ public sealed class ScopedCommandsPageViewModelTests
         Assert.Equal(["/mt autopack"], vm.PeriodicCommands);
         Assert.Equal(["5"], vm.PeriodicIntervals);
         Assert.Equal(["2"], vm.PeriodicOffsets);
-        Assert.Equal("1", vm.PeriodicIntervalText);
-        Assert.Equal("0", vm.PeriodicOffsetText);
+        Assert.Equal("5", vm.PeriodicIntervalText);
+        Assert.Equal("2", vm.PeriodicOffsetText);
         Assert.Equal(string.Empty, vm.PeriodicText);
 
         IReadOnlyList<PeriodicCommand> stored = store.GetPeriodicCommands(scope);
@@ -160,6 +163,39 @@ public sealed class ScopedCommandsPageViewModelTests
         Assert.Equal("/mt autopack", only.Command);
         Assert.Equal(TimeSpan.FromMinutes(5), only.Interval);
         Assert.Equal(TimeSpan.FromMinutes(2), only.OffsetFromMidnight);
+    }
+
+    [Fact]
+    public void AddPeriodicCommandStoresTheCommandTextVerbatimWithNoTrim()
+    {
+        // LOW-1: the original never trimmed the Edit control's text before
+        // storing it (AccountServerCharacterGUI.cs:257's surrounding read).
+        (ScopedCommandsPageViewModel vm, ScopedCommandStore store, string scope) = Build();
+
+        vm.SetPeriodicText("  /mt autopack  ");
+        vm.AddPeriodicCommand();
+
+        Assert.Equal(["  /mt autopack  "], vm.PeriodicCommands);
+        PeriodicCommand only = Assert.Single(store.GetPeriodicCommands(scope));
+        Assert.Equal("  /mt autopack  ", only.Command);
+    }
+
+    [Fact]
+    public void AddPeriodicCommandAllowsAddingSeveralAtTheSameIntervalAndOffsetInARow()
+    {
+        (ScopedCommandsPageViewModel vm, ScopedCommandStore store, string scope) = Build();
+
+        vm.SetPeriodicText("first");
+        vm.SetPeriodicInterval("5");
+        vm.SetPeriodicOffset("2");
+        vm.AddPeriodicCommand();
+
+        vm.SetPeriodicText("second");
+        vm.AddPeriodicCommand();
+
+        Assert.Equal(["first", "second"], vm.PeriodicCommands);
+        Assert.Equal(["5", "5"], vm.PeriodicIntervals);
+        Assert.Equal(["2", "2"], vm.PeriodicOffsets);
     }
 
     [Theory]

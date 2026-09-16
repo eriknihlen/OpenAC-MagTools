@@ -17,6 +17,6 @@
          has not merged to OpenAC main yet. Until it does, the default points at a
          frozen detached worktree snapshot of that branch's head. Override with
          -p:OpenAcRoot=<path> once the API branch merges and the worktree goes away. -->
-    <OpenAcRoot Condition="'$(OpenAcRoot)' == ''">C:\Users\erikn\source\repos\acdream\OpenAC\.worktrees\magtools-api-a2\</OpenAcRoot>
+    <OpenAcRoot Condition="'$(OpenAcRoot)' == ''">C:\Users\erikn\source\repos\acdream\OpenAC\.worktrees\magtools-api-a4\</OpenAcRoot>
   </PropertyGroup>
 </Project>

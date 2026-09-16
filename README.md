@@ -11,7 +11,7 @@ Mag-Plugins contributors. See [LICENSE.md](LICENSE.md).
 ## Build
 
 The plugin compiles against an OpenAC checkout. As of slice P2 it needs the
-extended plugin contract added on OpenAC branch `magtools-api-a2` (chat
+extended plugin contract added on OpenAC branch `magtools-api-a4` (chat
 `Received`/`RegisterFilter`/`PostMessage`, `IEvents.LoginComplete`/`Logoff`,
 `ISpellCatalog.All`/`TryFindByName`, `ICharacterInfo.ServerPopulation`), which
 has not merged to OpenAC `main` yet. Until it does, `Directory.Build.props`

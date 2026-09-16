@@ -160,9 +160,15 @@ public sealed class CombatTracker(TimeProvider? timeProvider = null)
         ValueSnapShotGroup group, TimeSpan historyPeriod, TimeSpan overPeriod)
     {
         int total = group.GetValueTotal(historyPeriod, out TimeSpan actualHistoryPeriodUsed);
-        if (total == 0 || actualHistoryPeriodUsed == TimeSpan.Zero)
+        if (total == 0)
             return 0;
 
+        // Faithful to the original: a single very-recent sample makes
+        // actualHistoryPeriodUsed exactly zero, which divides out to
+        // +Infinity rather than a guarded 0 — the original never guarded
+        // this either. It self-corrects within a second or two of real
+        // play as later samples land, so it is left as-is rather than
+        // "fixed" into a different (undocumented) behavior.
         return total * (overPeriod.TotalSeconds / actualHistoryPeriodUsed.TotalSeconds);
     }
 

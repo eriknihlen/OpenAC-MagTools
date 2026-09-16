@@ -34,12 +34,23 @@ public sealed class WorldObjectSorter : IComparer<PluginInventoryItem>
 
     public int Compare(PluginInventoryItem x, PluginInventoryItem y)
     {
-        if (x.ContainerObjectId == _myObjectId && x.ContainerObjectId != y.ContainerObjectId)
+        // MEDIUM-4: "directly mine" used to be ContainerObjectId == myObjectId
+        // alone, but on this host an equipped item's ContainerObjectId is
+        // whatever container it was equipped FROM (or 0), never the player --
+        // the wielding entity's id lives in WielderObjectId instead (same
+        // host-shape fact as InventoryExporter's IsEquippedByMe, defect 9).
+        // That made the equipped-ordering block below unreachable and sorted
+        // every equipped item after the main pack. WielderObjectId == myObjectId
+        // now also counts as directly mine.
+        bool xDirect = IsDirectlyMine(x);
+        bool yDirect = IsDirectlyMine(y);
+
+        if (xDirect && !yDirect)
             return -1;
-        if (y.ContainerObjectId == _myObjectId && x.ContainerObjectId != y.ContainerObjectId)
+        if (yDirect && !xDirect)
             return 1;
 
-        if (x.ContainerObjectId == _myObjectId && x.ContainerObjectId == y.ContainerObjectId)
+        if (xDirect && yDirect)
         {
             if (x.IsEquipped && !y.IsEquipped)
                 return -1;
@@ -77,4 +88,7 @@ public sealed class WorldObjectSorter : IComparer<PluginInventoryItem>
 
         return x.ObjectId.CompareTo(y.ObjectId);
     }
+
+    private bool IsDirectlyMine(PluginInventoryItem item)
+        => item.ContainerObjectId == _myObjectId || item.WielderObjectId == _myObjectId;
 }

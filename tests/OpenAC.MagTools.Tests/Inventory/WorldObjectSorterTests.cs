@@ -83,6 +83,29 @@ public sealed class WorldObjectSorterTests
     }
 
     [Fact]
+    public void EquippedItemsWithHostShapedFieldsSortBeforeMainPackAndByEquippedLocation()
+    {
+        // MEDIUM-4: on this host every equipped item has ContainerObjectId
+        // == 0 (or whatever container it was equipped FROM) and
+        // ContainerSlot == -1 -- the wielding entity's id lives in
+        // WielderObjectId instead (same host-shape fact as defect 9's
+        // IsEquippedByMe fix). The old "directly mine" test
+        // (ContainerObjectId == myObjectId alone) made these items sort as
+        // if they were in an unrelated side pack, after every main-pack
+        // item, and the equipped-ordering block was unreachable.
+        var equippedSecond = Item(2u, containerId: 0u, equippedLocation: 5u) with { WielderObjectId = MyId };
+        var equippedFirst = Item(1u, containerId: 0u, equippedLocation: 2u) with { WielderObjectId = MyId };
+        var mainPackItem = Item(3u, MyId);
+        var items = new List<PluginInventoryItem> { mainPackItem, equippedSecond, equippedFirst };
+
+        items.Sort(new WorldObjectSorter(MyId, items));
+
+        Assert.Equal(1u, items[0].ObjectId); // lower EquippedLocation first
+        Assert.Equal(2u, items[1].ObjectId);
+        Assert.Equal(3u, items[2].ObjectId); // main pack after equipped
+    }
+
+    [Fact]
     public void NeitherOwnedItemFallsBackToObjectId()
     {
         var high = new PluginInventoryItem(200u, 0u, "B", 0u, 999u, 0u, 0u, 0u, 0u, 0u, 0u,

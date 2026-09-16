@@ -87,6 +87,15 @@ public sealed class InventoryLoggerTests
     {
         (FakeHost host, ChatOutput chat, InventoryManagementSettings settings) = Make();
         host.Storage.WriteText("ACServer/Acdream.Inventory.xml", "not xml <<<");
+        // The corrupt-file check runs inside Dump(), which since defect 8's
+        // fix only runs once the owned pack is actually populated -- give
+        // it one item so Start()'s existing-file branch runs synchronously.
+        host.Automation.Items.Owned.Add(new PluginInventoryItem(
+            1u, 0u, "Trade Notes", 0u, 500u, 0u, 0u, 0u, 0u, 0u, 0u,
+            1, 0, 0, 0u, 0, 0, 0u, false, 0d, 0, 0, 0, 0, 0, 0, 0)
+        {
+            ObjectClass = PluginObjectClass.Misc,
+        });
 
         var logger = new InventoryLogger(host, chat, settings);
         logger.Start("ACServer", "Acdream");
@@ -301,5 +310,100 @@ public sealed class InventoryLoggerTests
         host.Events.RaiseObjectChanged(3u, PluginObjectChangeKind.Created);
 
         Assert.Equal([3u], host.Automation.Objects.IdentifyRequests);
+    }
+
+    [Fact]
+    public void StartAtSessionReadyBeforeThePackStreamsInWaitsThenDumpsWhenItemsArrive()
+    {
+        // Defect 8: Start() used to run immediately at SessionReady, when
+        // Items.CaptureOwnedItems() is still empty because the pack hasn't
+        // streamed in yet. That wrote (or immediately queued a dump toward)
+        // an empty <ArrayOfMyWorldObject />. The fix waits for the first
+        // Tick on which CaptureOwnedItems() is non-empty before doing
+        // anything.
+        (FakeHost host, ChatOutput chat, InventoryManagementSettings settings) = Make();
+        // No items owned yet -- CaptureOwnedItems() returns empty, as it
+        // does immediately after SessionReady on a real host.
+        var logger = new InventoryLogger(host, chat, settings);
+        logger.Start("ACServer", "Acdream");
+
+        // Nothing should have happened yet: no request message, no ident
+        // requests, no dump.
+        Assert.DoesNotContain(host.ChatLines, line => line.Contains("Requesting id information", StringComparison.Ordinal));
+        Assert.Empty(host.Automation.Objects.IdentifyRequests);
+        Assert.Null(host.Storage.ReadText("ACServer/Acdream.Inventory.xml"));
+
+        // A tick fires with still nothing owned -- still must wait.
+        host.Events.RaiseTick(0.1);
+        Assert.Null(host.Storage.ReadText("ACServer/Acdream.Inventory.xml"));
+
+        // The pack streams in.
+        host.Automation.Items.Owned.Add(new PluginInventoryItem(
+            1u, 0u, "Sword", 0u, 500u, 0u, 0u, 0u, 0u, 0u, 0u,
+            1, 0, 0, 0u, 0, 0, 0u, false, 0d, 0, 0, 0, 0, 0, 0, 0)
+        {
+            ObjectClass = PluginObjectClass.MeleeWeapon,
+        });
+        host.Automation.Objects.Objects.Add(new PluginWorldObject(
+            1u, 0u, "Sword", PluginObjectClass.MeleeWeapon, 0u, 500u, 0u) { HasAppraisalData = true });
+
+        // First tick after items appear: CaptureOwnedItems() is now
+        // non-empty. Since no file exists, this enters the fresh-file
+        // branch and prints the "Requesting id information..." message. The
+        // sword already has appraisal data, so nothing is queued to wait on
+        // -- the logger dumps immediately with the real item, not an empty
+        // one.
+        host.Events.RaiseTick(0.1);
+
+        Assert.Contains(host.ChatLines, line => line.Contains("Requesting id information", StringComparison.Ordinal));
+
+        string? xml = host.Storage.ReadText("ACServer/Acdream.Inventory.xml");
+        Assert.NotNull(xml);
+        Assert.True(InventoryLoggerXml.TryImport(xml!, out List<MyWorldObjectRecord> records));
+        MyWorldObjectRecord record = Assert.Single(records);
+        Assert.Equal(1u, record.Id);
+    }
+
+    [Fact]
+    public void StopAfterTheHostHasTornDownTheObjectsKeepsTheLastRealSnapshot()
+    {
+        // Defect 8: Stop() used to re-capture CaptureOwnedItems() fresh at
+        // logoff teardown, when the host has already released the owned
+        // objects -- producing an empty document even though real items
+        // were dumped earlier in the session. The fix dumps from the last
+        // known-good (non-empty) snapshot instead.
+        (FakeHost host, ChatOutput chat, InventoryManagementSettings settings) = Make();
+        host.Automation.Items.Owned.Add(new PluginInventoryItem(
+            1u, 0u, "Sword", 0u, 500u, 0u, 0u, 0u, 0u, 0u, 0u,
+            1, 0, 0, 0u, 0, 0, 0u, false, 0d, 0, 0, 0, 0, 0, 0, 0)
+        {
+            ObjectClass = PluginObjectClass.MeleeWeapon,
+        });
+        host.Automation.Objects.Objects.Add(new PluginWorldObject(
+            1u, 0u, "Sword", PluginObjectClass.MeleeWeapon, 0u, 500u, 0u) { HasAppraisalData = true });
+
+        var logger = new InventoryLogger(host, chat, settings);
+        logger.Start("ACServer", "Acdream");
+        // Two stable ticks to clear the readiness gate and produce the
+        // initial real dump.
+        host.Events.RaiseTick(0.1);
+        host.Events.RaiseTick(0.1);
+
+        string? beforeTeardown = host.Storage.ReadText("ACServer/Acdream.Inventory.xml");
+        Assert.NotNull(beforeTeardown);
+        Assert.True(InventoryLoggerXml.TryImport(beforeTeardown!, out List<MyWorldObjectRecord> before));
+        Assert.Single(before);
+
+        // The host tears the objects down for logoff before Stop() runs.
+        host.Automation.Items.Owned.Clear();
+        host.Automation.Objects.Objects.Clear();
+
+        logger.Stop();
+
+        string? afterTeardown = host.Storage.ReadText("ACServer/Acdream.Inventory.xml");
+        Assert.NotNull(afterTeardown);
+        Assert.True(InventoryLoggerXml.TryImport(afterTeardown!, out List<MyWorldObjectRecord> after));
+        MyWorldObjectRecord record = Assert.Single(after);
+        Assert.Equal(1u, record.Id);
     }
 }

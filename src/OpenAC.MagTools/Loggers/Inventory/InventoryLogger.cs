@@ -18,9 +18,22 @@ public sealed class InventoryLogger
     private readonly InventoryManagementSettings _settings;
     private readonly HashSet<uint> _requestedIds = [];
     private Action<PluginObjectChange>? _onObjectChanged;
+    private Action<double>? _onStartupTick;
     private string _storageKey = string.Empty;
     private bool _waitingForIdData;
     private bool _running;
+    private bool _startupCapturePending;
+
+    /// <summary>
+    /// The last non-empty owned-item snapshot this instance has actually
+    /// dumped from. <see cref="Stop"/> dumps from this rather than a fresh
+    /// <see cref="IItemAutomation.CaptureOwnedItems"/> call, because by the
+    /// time logoff teardown runs the host has typically already released
+    /// the owned objects -- a fresh capture there is reliably empty even
+    /// though real items were logged earlier in the session. See defect 8
+    /// in the live-gate results.
+    /// </summary>
+    private IReadOnlyList<PluginInventoryItem> _lastOwnedSnapshot = [];
 
     public InventoryLogger(IPluginHost host, ChatOutput chat, InventoryManagementSettings settings)
     {
@@ -59,6 +72,7 @@ public sealed class InventoryLogger
         _requestedIds.Clear();
         _waitingForIdData = false;
         _storageKey = server + "/" + character + ".Inventory.xml";
+        _lastOwnedSnapshot = [];
 
         if (!_settings.InventoryLogger.Value)
         {
@@ -67,25 +81,95 @@ public sealed class InventoryLogger
             return;
         }
 
+        _onObjectChanged = OnObjectChanged;
+        _host.Events.ObjectChanged += _onObjectChanged;
+
+        BeginStartupCapture();
+    }
+
+    /// <summary>
+    /// <see cref="Start"/> used to decide the fresh-file-vs-existing-file
+    /// branch and, in the existing-file branch, dump immediately using
+    /// whatever <see cref="IItemAutomation.CaptureOwnedItems"/> returned at
+    /// that instant. At <see cref="SessionContext.SessionReady"/> time the
+    /// owned pack has not necessarily streamed in yet, so that read a real
+    /// host's empty startup window and wrote (or immediately dumped)
+    /// nothing -- defect 8. This instead waits for the first
+    /// <see cref="IEvents.Tick"/> on which the owned-item count is non-zero
+    /// before doing anything the original did synchronously; if the pack is
+    /// already populated at <see cref="Start"/> time (the common case --
+    /// e.g. a reconnect where the character was already fully in-world),
+    /// it runs immediately, exactly like the original.
+    /// </summary>
+    private void BeginStartupCapture()
+    {
+        IReadOnlyList<PluginInventoryItem> items = _host.Automation.Items.CaptureOwnedItems();
+        if (items.Count > 0)
+        {
+            RunStartupCapture(items);
+            return;
+        }
+
+        _startupCapturePending = true;
+        _onStartupTick = OnStartupTick;
+        _host.Events.Tick += _onStartupTick;
+    }
+
+    private void OnStartupTick(double elapsedSeconds)
+    {
+        IReadOnlyList<PluginInventoryItem> items = _host.Automation.Items.CaptureOwnedItems();
+        if (items.Count == 0)
+            return;
+
+        StopStartupCapture();
+        RunStartupCapture(items);
+    }
+
+    private void StopStartupCapture()
+    {
+        if (!_startupCapturePending)
+            return;
+
+        if (_onStartupTick is not null)
+            _host.Events.Tick -= _onStartupTick;
+        _onStartupTick = null;
+        _startupCapturePending = false;
+    }
+
+    private void RunStartupCapture(IReadOnlyList<PluginInventoryItem> items)
+    {
+        _lastOwnedSnapshot = items.ToArray();
+
         if (_host.Storage.ReadText(_storageKey) is null)
         {
             _chat.Write("Requesting id information for all armor/weapon inventory. This will take a few minutes...");
 
-            foreach (PluginInventoryItem item in _host.Automation.Items.CaptureOwnedItems())
+            bool anyMissing = false;
+            foreach (PluginInventoryItem item in items)
             {
                 if (!HasIdData(item) && ObjectClassNeedsIdent(item.ObjectClass, item.Name))
+                {
                     _host.Automation.Objects.Identify(item.ObjectId);
+                    anyMissing = true;
+                }
             }
 
-            _waitingForIdData = true;
+            if (anyMissing)
+            {
+                _waitingForIdData = true;
+            }
+            else
+            {
+                // Nothing to identify (everything ident-worthy already has
+                // id data) -- dump now rather than waiting forever for an
+                // IdentReceived that will never come.
+                Dump(requestIdsIfMissing: false, items);
+            }
         }
         else
         {
-            Dump(requestIdsIfMissing: true);
+            Dump(requestIdsIfMissing: true, items);
         }
-
-        _onObjectChanged = OnObjectChanged;
-        _host.Events.ObjectChanged += _onObjectChanged;
     }
 
     public void Stop()
@@ -93,9 +177,15 @@ public sealed class InventoryLogger
         if (!_running)
             return;
         _running = false;
+        StopStartupCapture();
 
+        // Dump from the last known-good (non-empty) snapshot rather than a
+        // fresh CaptureOwnedItems() call: by the time logoff teardown runs
+        // the host has typically already released the owned objects, so a
+        // fresh capture here is reliably empty even though real items were
+        // logged earlier in the session (defect 8).
         if (_settings.InventoryLogger.Value)
-            Dump(requestIdsIfMissing: false);
+            Dump(requestIdsIfMissing: false, _lastOwnedSnapshot);
 
         if (_onObjectChanged is not null)
             _host.Events.ObjectChanged -= _onObjectChanged;
@@ -120,7 +210,8 @@ public sealed class InventoryLogger
 
         if (_waitingForIdData)
         {
-            bool allIdentified = _host.Automation.Items.CaptureOwnedItems()
+            IReadOnlyList<PluginInventoryItem> currentItems = _host.Automation.Items.CaptureOwnedItems();
+            bool allIdentified = currentItems
                 .Where(item => ObjectClassNeedsIdent(item.ObjectClass, item.Name))
                 .All(item => HasIdData(item));
 
@@ -128,7 +219,9 @@ public sealed class InventoryLogger
                 return;
 
             _waitingForIdData = false;
-            Dump(requestIdsIfMissing: false);
+            if (currentItems.Count > 0)
+                _lastOwnedSnapshot = currentItems.ToArray();
+            Dump(requestIdsIfMissing: false, currentItems);
             _chat.Write("Requesting id information for all armor/weapon inventory completed. Log file written.");
             return;
         }
@@ -166,7 +259,7 @@ public sealed class InventoryLogger
     private bool HasIdData(PluginInventoryItem item)
         => _host.Automation.Objects.TryGet(item.ObjectId, out PluginWorldObject wo) && wo.HasAppraisalData;
 
-    private void Dump(bool requestIdsIfMissing)
+    private void Dump(bool requestIdsIfMissing, IReadOnlyList<PluginInventoryItem> items)
     {
         List<MyWorldObjectRecord> previous = [];
         if (_host.Storage.ReadText(_storageKey) is { } content)
@@ -176,7 +269,7 @@ public sealed class InventoryLogger
         }
 
         var current = new List<MyWorldObjectRecord>();
-        foreach (PluginInventoryItem item in _host.Automation.Items.CaptureOwnedItems())
+        foreach (PluginInventoryItem item in items)
         {
             // An owned item the object table has no full PluginWorldObject
             // for yet (not yet resolved/appraised) is still owned and still

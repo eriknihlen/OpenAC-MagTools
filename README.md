@@ -17,12 +17,11 @@ extended plugin contract added on OpenAC branch `claude/magtools-plugin-api`
 and by P7 also E-TRADE/E-VENDOR/E-SESSION/E-HOTKEYS), which has not merged to
 OpenAC `main` yet. Until it does,
 `Directory.Build.props` points `OpenAcRoot` at a frozen detached worktree
-snapshot of that branch's head -- currently `magtools-api-final` (review-closed
-head `669832d` on `claude/magtools-plugin-api`; the branch is
-expected to pick up one more commit from the A6 fix round, so treat the
-exact SHA as a moving target until it settles. The earlier `magtools-api-a4`/
-`magtools-api-a5` snapshots this pointed at are retired and no longer
-checked out). Override it with `-p:OpenAcRoot=<path>` if yours lives
+snapshot of that branch's head -- currently `magtools-api-a7` (review-closed
+head `e83d3a7` on `claude/magtools-plugin-api`, which adds the A7 fixes:
+character identity at login, walk-to-use for world objects, a truthful
+clipboard write. The earlier `magtools-api-a4`/`a5`/`a6`/`final` snapshots
+this pointed at are retired). Override it with `-p:OpenAcRoot=<path>` if yours lives
 elsewhere (and once the API branch merges, point the default back at
 `main`).
 

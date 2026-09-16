@@ -177,6 +177,25 @@ public sealed class ItemModel
     private readonly PluginItemProperties _properties;
     private readonly PluginInventoryItem? _inventoryItem;
 
+    /// <summary>
+    /// The server's real WeaponProfile blob for this item's last successful
+    /// appraisal, or null when the item never carries one (not a weapon) or
+    /// hasn't been appraised yet. <c>Damage == -1</c> inside a present profile
+    /// means "this specific field is unknown" (see
+    /// <c>docs/plugin-api.md</c> "Weapon and armor profiles"), NOT "no
+    /// profile" — other fields on the same profile (WeaponSkill,
+    /// WeaponOffense, DamageMod, DamageVariance) can still be valid, so only
+    /// the Damage-specific accessors treat that sentinel as absent.
+    /// </summary>
+    private PluginWeaponProfile? WeaponProfile => _properties.WeaponProfile;
+
+    /// <summary>
+    /// The server's real ArmorProfile blob for this item's last successful
+    /// appraisal, or null when the item never carries one (not armor) or
+    /// hasn't been appraised yet.
+    /// </summary>
+    private PluginArmorProfile? ArmorProfile => _properties.ArmorProfile;
+
     public ItemModel(PluginWorldObject worldObject, PluginItemProperties properties)
         : this(worldObject, properties, null)
     {
@@ -215,20 +234,28 @@ public sealed class ItemModel
     // both 0 — that's absent data, not a real 0, so CalcedBuffedTinkedDoT
     // and friends must still bail rather than run on garbage.
     public bool HasInt(int key) => key switch
-    {
+        {
         MaxDamagePseudoKey =>
-            _properties.Ints.ContainsKey((uint)DamageRealKey) || _inventoryItem is { Damage: not 0 },
+            WeaponProfile is { Damage: not -1 }
+            || _properties.Ints.ContainsKey((uint)DamageRealKey)
+            || _inventoryItem is { Damage: not 0 },
         EquipSkillPseudoKey =>
-            _properties.Ints.ContainsKey((uint)WeaponSkillRealKey) || _inventoryItem is { WeaponSkill: not 0 },
+            WeaponProfile is { WeaponSkill: not 0u }
+            || _properties.Ints.ContainsKey((uint)WeaponSkillRealKey)
+            || _inventoryItem is { WeaponSkill: not 0 },
         _ => _properties.Ints.ContainsKey((uint)key),
     };
 
     public int GetInt(int key, int defaultValue = -1) => key switch
     {
-        MaxDamagePseudoKey => _inventoryItem?.Damage
-            ?? (_properties.Ints.TryGetValue((uint)DamageRealKey, out int dmg) ? dmg : defaultValue),
-        EquipSkillPseudoKey => _inventoryItem?.WeaponSkill
-            ?? (_properties.Ints.TryGetValue((uint)WeaponSkillRealKey, out int skill) ? skill : defaultValue),
+        MaxDamagePseudoKey => WeaponProfile is { Damage: not -1 } wp
+            ? wp.Damage
+            : _inventoryItem?.Damage
+                ?? (_properties.Ints.TryGetValue((uint)DamageRealKey, out int dmg) ? dmg : defaultValue),
+        EquipSkillPseudoKey => WeaponProfile is { WeaponSkill: not 0u } wp
+            ? (int)wp.WeaponSkill
+            : _inventoryItem?.WeaponSkill
+                ?? (_properties.Ints.TryGetValue((uint)WeaponSkillRealKey, out int skill) ? skill : defaultValue),
         _ => _properties.Ints.TryGetValue((uint)key, out int value) ? value : defaultValue,
     };
 
@@ -239,24 +266,63 @@ public sealed class ItemModel
     public bool HasDouble(int key) => key switch
     {
         VariancePseudoKey =>
-            _properties.Floats.ContainsKey((uint)DamageVarianceRealKey) || _inventoryItem is { DamageVariance: not 0 },
+            WeaponProfile is not null
+            || _properties.Floats.ContainsKey((uint)DamageVarianceRealKey)
+            || _inventoryItem is { DamageVariance: not 0 },
         // SalvageWorkmanship has no real-property fallback in the retained
         // ConvertToDouble table — it only ever comes from the typed field.
         SalvageWorkmanshipPseudoKey => _inventoryItem is { Workmanship: not 0 },
-        AttackBonusPseudoKey => _properties.Floats.ContainsKey((uint)AttackBonusRealKey),
-        DamageBonusPseudoKey => _properties.Floats.ContainsKey((uint)DamageBonusRealKey),
+        AttackBonusPseudoKey =>
+            WeaponProfile is not null || _properties.Floats.ContainsKey((uint)AttackBonusRealKey),
+        DamageBonusPseudoKey =>
+            WeaponProfile is not null || _properties.Floats.ContainsKey((uint)DamageBonusRealKey),
+        SlashProtKey => ArmorProfile is not null || _properties.Floats.ContainsKey((uint)SlashProtKey),
+        PierceProtKey => ArmorProfile is not null || _properties.Floats.ContainsKey((uint)PierceProtKey),
+        BludgeonProtKey => ArmorProfile is not null || _properties.Floats.ContainsKey((uint)BludgeonProtKey),
+        ColdProtKey => ArmorProfile is not null || _properties.Floats.ContainsKey((uint)ColdProtKey),
+        FireProtKey => ArmorProfile is not null || _properties.Floats.ContainsKey((uint)FireProtKey),
+        AcidProtKey => ArmorProfile is not null || _properties.Floats.ContainsKey((uint)AcidProtKey),
+        LightningProtKey => ArmorProfile is not null || _properties.Floats.ContainsKey((uint)LightningProtKey),
         _ => _properties.Floats.ContainsKey((uint)key),
     };
 
     public double GetDouble(int key, double defaultValue = -1d) => key switch
     {
-        VariancePseudoKey => _inventoryItem?.DamageVariance
-            ?? (_properties.Floats.TryGetValue((uint)DamageVarianceRealKey, out double variance) ? variance : defaultValue),
+        VariancePseudoKey => WeaponProfile is { } wp
+            ? wp.DamageVariance
+            : _inventoryItem?.DamageVariance
+                ?? (_properties.Floats.TryGetValue((uint)DamageVarianceRealKey, out double variance) ? variance : defaultValue),
         SalvageWorkmanshipPseudoKey => _inventoryItem?.Workmanship ?? defaultValue,
-        AttackBonusPseudoKey =>
-            _properties.Floats.TryGetValue((uint)AttackBonusRealKey, out double a) ? a : defaultValue,
-        DamageBonusPseudoKey =>
-            _properties.Floats.TryGetValue((uint)DamageBonusRealKey, out double d) ? d : defaultValue,
+        AttackBonusPseudoKey => WeaponProfile is { } wpa
+            ? wpa.WeaponOffense
+            : (_properties.Floats.TryGetValue((uint)AttackBonusRealKey, out double a) ? a : defaultValue),
+        DamageBonusPseudoKey => WeaponProfile is { } wpd
+            ? wpd.DamageMod
+            : (_properties.Floats.TryGetValue((uint)DamageBonusRealKey, out double d) ? d : defaultValue),
+        // The seven protections ArmorProfile reports (Nether is excluded —
+        // the original never surfaced a nether-protection segment; see
+        // docs/deviations.md).
+        SlashProtKey => ArmorProfile is { } apSl
+            ? apSl.SlashMod
+            : (_properties.Floats.TryGetValue((uint)SlashProtKey, out double vSl) ? vSl : defaultValue),
+        PierceProtKey => ArmorProfile is { } apPi
+            ? apPi.PierceMod
+            : (_properties.Floats.TryGetValue((uint)PierceProtKey, out double vPi) ? vPi : defaultValue),
+        BludgeonProtKey => ArmorProfile is { } apBl
+            ? apBl.BludgeonMod
+            : (_properties.Floats.TryGetValue((uint)BludgeonProtKey, out double vBl) ? vBl : defaultValue),
+        ColdProtKey => ArmorProfile is { } apCo
+            ? apCo.ColdMod
+            : (_properties.Floats.TryGetValue((uint)ColdProtKey, out double vCo) ? vCo : defaultValue),
+        FireProtKey => ArmorProfile is { } apFi
+            ? apFi.FireMod
+            : (_properties.Floats.TryGetValue((uint)FireProtKey, out double vFi) ? vFi : defaultValue),
+        AcidProtKey => ArmorProfile is { } apAc
+            ? apAc.AcidMod
+            : (_properties.Floats.TryGetValue((uint)AcidProtKey, out double vAc) ? vAc : defaultValue),
+        LightningProtKey => ArmorProfile is { } apLi
+            ? apLi.ElectricMod
+            : (_properties.Floats.TryGetValue((uint)LightningProtKey, out double vLi) ? vLi : defaultValue),
         _ => _properties.Floats.TryGetValue((uint)key, out double value) ? value : defaultValue,
     };
 
@@ -292,9 +358,13 @@ public sealed class ItemModel
             int material = GetInt(MaterialKey, 0);
             if (material <= 0)
                 return null;
+            // Original: `Dictionaries.MaterialInfo.ContainsKey(...) ? ... :
+            // IntValues[131].ToString(...)` — an unmapped id falls back to the
+            // BARE NUMBER, not a synthesized "unknown material N" string. See
+            // docs/deviations.md.
             return Dictionaries.MaterialInfo.TryGetValue(material, out string? name)
                 ? name
-                : "unknown material " + material.ToString(CultureInfo.InvariantCulture);
+                : material.ToString(CultureInfo.InvariantCulture);
         }
     }
 
@@ -305,9 +375,17 @@ public sealed class ItemModel
             int mastery = GetInt(MasteryKey, 0);
             if (mastery <= 0)
                 return null;
+            // Original: `Dictionaries.MasteryInfo.ContainsKey(...) ? ... :
+            // IntValues[353].ToString(...)` — bare number on a miss, exactly
+            // like Material/ItemSet below. A prior revision of this port
+            // synthesized "Unknown mastery N" instead, which is why a real
+            // appraisal of e.g. Acid Phyntos Wasp Essence (property 353 = 80,
+            // outside the original's 1-11 weapon-mastery range) rendered as
+            // "(80)" once the prefix was reverted here to match — see
+            // docs/deviations.md.
             return Dictionaries.MasteryInfo.TryGetValue(mastery, out string? name)
                 ? name
-                : "Unknown mastery " + mastery.ToString(CultureInfo.InvariantCulture);
+                : mastery.ToString(CultureInfo.InvariantCulture);
         }
     }
 
@@ -318,12 +396,22 @@ public sealed class ItemModel
             int set = GetInt(AttributeSetKey, 0);
             if (set == 0)
                 return null;
+            // Original: bare-number fallback, same as Material/Mastery above.
             return Dictionaries.AttributeSetInfo.TryGetValue(set, out string? name)
                 ? name
-                : "Unknown set " + set.ToString(CultureInfo.InvariantCulture);
+                : set.ToString(CultureInfo.InvariantCulture);
         }
     }
 
+    /// <summary>
+    /// Segment 19/21/22's skill-name lookup. The original indexed
+    /// <c>Dictionaries.SkillInfo[key]</c> directly with no presence check —
+    /// an id the table doesn't have would throw, taking the whole item-info
+    /// line down with it (the same class of bug as the unresolved
+    /// carried-spell id <see cref="ItemInfoFormatter.AppendSpells"/> already
+    /// guards against). This returns a placeholder instead. See
+    /// docs/deviations.md.
+    /// </summary>
     public static string SkillName(int skillId)
         => Dictionaries.SkillInfo.TryGetValue(skillId, out string? name)
             ? name

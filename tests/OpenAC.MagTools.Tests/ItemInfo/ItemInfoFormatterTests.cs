@@ -278,6 +278,45 @@ public sealed class ItemInfoFormatterTests
     }
 
     [Fact]
+    public void UnenchantableArmorProtectionsComeFromARealArmorProfileAppraisal()
+    {
+        // P3 follow-up: a real appraisal populates the ArmorProfile blob
+        // rather than the flat PropertyFloat table (the server does not
+        // populate 13-19 for most armor). NetherMod is present on the host
+        // record but excluded here -- the original's segment 25 never had an
+        // eighth "nether" slot.
+        var wo = ItemInfoFixtures.Wo(1, "Plate", PluginObjectClass.Armor);
+        var profile = new PluginArmorProfile(
+            ArmorLevel: 300,
+            SlashMod: 1.1f, PierceMod: 1.2f, BludgeonMod: 1.3f, ColdMod: 1.4f,
+            FireMod: 1.5f, AcidMod: 1.6f, NetherMod: 9.9f, ElectricMod: 1.7f);
+        var model = ItemInfoFixtures.Model(
+            wo, ints: new Dictionary<uint, int> { { 36, 1 } }, armorProfile: profile);
+
+        Assert.Equal(
+            "Plate, [1.1/1.2/1.3/1.4/1.5/1.6/1.7]",
+            ItemInfoFormatter.Format(model, DefaultSettings, EmptySpells));
+    }
+
+    [Fact]
+    public void WeaponSegmentsComeFromARealWeaponProfileAppraisal()
+    {
+        // Segments 8 (damage range), 10 (damage bonus %), 12 (attack bonus
+        // %) and the buffed block (17) all read through WeaponProfile once a
+        // real appraisal has one, per docs/plugin-api.md.
+        var wo = ItemInfoFixtures.Wo(1, "War Mace", PluginObjectClass.MeleeWeapon);
+        var profile = new PluginWeaponProfile(
+            DamageType: 4, WeaponTime: 0, WeaponSkill: 5, Damage: 60, DamageVariance: 0.2,
+            DamageMod: 1.10, WeaponLength: 0, MaxVelocity: 0, WeaponOffense: 1.05, MaxVelocityEstimated: 0);
+        var model = ItemInfoFixtures.Model(wo, weaponProfile: profile);
+
+        string result = ItemInfoFormatter.Format(
+            model, new FakeItemInfoSettings { ShowBuffedValues = true }, EmptySpells);
+
+        Assert.StartsWith("War Mace, 48.00-60, +10%, +5%a, (", result);
+    }
+
+    [Fact]
     public void ValueAndBurdenOnlyPrintWhenTheSettingIsOn()
     {
         var wo = ItemInfoFixtures.Wo(1, "Coin", PluginObjectClass.Misc);

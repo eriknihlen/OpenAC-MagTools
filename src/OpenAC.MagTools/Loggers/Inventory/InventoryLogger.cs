@@ -187,19 +187,23 @@ public sealed class InventoryLogger
             // id must survive a thin object-table dump unchanged: look it up
             // in `previous` and Combine rather than overwriting good id data
             // with an empty unresolved stub (HIGH-1).
+            //
+            // HIGH-A (P9 re-review): do NOT call Identify or record the id in
+            // _requestedIds here. On the real host, TryGet's false branch
+            // means there is no ClientObject for this id yet either, and
+            // Identify requires one -- so an Identify call in THIS branch is
+            // a guaranteed no-op. Worse, recording it in _requestedIds would
+            // poison OnObjectChanged's `_requestedIds.Add` dedup guard (the
+            // same H7 hazard documented at that method's container check
+            // below): once poisoned, the item would never actually be
+            // identified for the rest of the session, even after its
+            // ClientObject shows up and OnObjectChanged fires for it. The
+            // real request has to wait for that later, resolved-object path.
             if (!_host.Automation.Objects.TryGet(item.ObjectId, out PluginWorldObject wo))
             {
                 MyWorldObjectRecord unresolved = MyWorldObjectRecord.CreateUnresolved(item);
                 MyWorldObjectRecord? previousMatch = previous.FirstOrDefault(
                     prev => prev.Id == unresolved.Id && prev.ObjectClass == unresolved.ObjectClass);
-                bool alreadyHasIdData = previousMatch is not null && previousMatch.HasIdData;
-
-                if (requestIdsIfMissing && !alreadyHasIdData
-                    && ObjectClassNeedsIdent(item.ObjectClass, item.Name))
-                {
-                    _host.Automation.Objects.Identify(item.ObjectId);
-                    _requestedIds.Add(item.ObjectId);
-                }
 
                 current.Add(previousMatch is null
                     ? unresolved

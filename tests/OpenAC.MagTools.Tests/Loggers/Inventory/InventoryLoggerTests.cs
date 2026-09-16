@@ -115,6 +115,11 @@ public sealed class InventoryLoggerTests
         // dump entirely instead of appearing with HasIdData=false, like the
         // original always wrote every owned item.
         (FakeHost host, ChatOutput chat, InventoryManagementSettings settings) = Make();
+        // A file already exists, so Start() dumps immediately via Dump() --
+        // the code path this test targets. (Start()'s SEPARATE "file
+        // missing" request loop is a different code path, out of scope
+        // here.)
+        host.Storage.WriteText("ACServer/Acdream.Inventory.xml", "<ArrayOfMyWorldObject></ArrayOfMyWorldObject>");
         host.Automation.Items.Owned.Add(new PluginInventoryItem(
             7u, 0u, "Unresolved Trinket", 0u, 500u, 0u, 0u, 0u, 0u, 0u, 0u,
             1, 0, 0, 0u, 0, 0, 0u, false, 0d, 0, 0, 0, 0, 0, 0, 0)
@@ -125,7 +130,6 @@ public sealed class InventoryLoggerTests
 
         var logger = new InventoryLogger(host, chat, settings);
         logger.Start("ACServer", "Acdream");
-        logger.Stop();
 
         string? xml = host.Storage.ReadText("ACServer/Acdream.Inventory.xml");
         Assert.NotNull(xml);
@@ -139,8 +143,25 @@ public sealed class InventoryLoggerTests
         // convention Create() uses from properties.Strings.
         Assert.Equal("Unresolved Trinket", record.StringValues[1]);
 
-        // It also should have had an id requested for it, same as any other
-        // ident-worthy owned item.
+        // HIGH-A (P9 re-review): on the real host, Objects.TryGet returning
+        // false means there is no ClientObject for this id either, so an
+        // Identify call here would be a guaranteed no-op -- must NOT be
+        // called, and must NOT be recorded in _requestedIds (that would
+        // poison OnObjectChanged's dedup guard and permanently block the
+        // real request below).
+        Assert.DoesNotContain(7u, host.Automation.Objects.IdentifyRequests);
+
+        // Once the ClientObject actually shows up and OnObjectChanged fires
+        // for it, the real request DOES happen. This assertion fails on the
+        // pre-HIGH-A-fix code, which already "consumed" id 7 in
+        // _requestedIds from the unresolved branch above.
+        host.Automation.Objects.Objects.Add(new PluginWorldObject(
+            7u, 0u, "Unresolved Trinket", PluginObjectClass.Jewelry, 0u, 500u, 0u)
+        {
+            HasAppraisalData = false,
+        });
+        host.Events.RaiseObjectChanged(7u, PluginObjectChangeKind.Created);
+
         Assert.Contains(7u, host.Automation.Objects.IdentifyRequests);
     }
 

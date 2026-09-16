@@ -164,6 +164,8 @@ public sealed class FakeEvents : IEvents
 
     public event Action<uint>? ContainerClosed;
 
+    public event Action<PluginConfirmation>? ConfirmationRequested;
+
     public int TickSubscriberCount => Tick?.GetInvocationList().Length ?? 0;
 
     public int LoginCompleteSubscriberCount =>
@@ -191,6 +193,15 @@ public sealed class FakeEvents : IEvents
     public void RaiseContainerOpened(uint containerObjectId) => ContainerOpened?.Invoke(containerObjectId);
 
     public void RaiseContainerClosed(uint containerObjectId) => ContainerClosed?.Invoke(containerObjectId);
+
+    public void RaiseConfirmationRequested(PluginConfirmation confirmation)
+        => ConfirmationRequested?.Invoke(confirmation);
+
+    event Action<PluginConfirmation> IEvents.ConfirmationRequested
+    {
+        add => ConfirmationRequested += value;
+        remove => ConfirmationRequested -= value;
+    }
 
     event Action<PluginObjectChange> IEvents.ObjectChanged
     {

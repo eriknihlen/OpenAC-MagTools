@@ -32,6 +32,8 @@ public sealed class FakeAutomation : IAutomationSurface
 
     public FakeEquipment Equipment { get; } = new();
 
+    public FakeDialogAutomation Dialogs { get; } = new();
+
     ICharacterInfo IAutomationSurface.Character => Character;
     ISpellCatalog IAutomationSurface.Spells => Spells;
     IMagicCommands IAutomationSurface.Magic => Magic;
@@ -43,6 +45,22 @@ public sealed class FakeAutomation : IAutomationSurface
     IFellowshipAutomation IAutomationSurface.Fellowship => Fellowship;
     ICombatAutomation IAutomationSurface.Combat => Combat;
     IEquipmentAutomation IAutomationSurface.Equipment => Equipment;
+    IDialogAutomation IAutomationSurface.Dialogs => Dialogs;
+}
+
+/// <summary>Records every <see cref="Answer"/> call; a test can pre-arm which context ids it accepts.</summary>
+public sealed class FakeDialogAutomation : IDialogAutomation
+{
+    public List<(uint ContextId, bool Accept)> Answers { get; } = [];
+
+    /// <summary>Context ids <see cref="Answer"/> reports as outstanding (returns true for).</summary>
+    public HashSet<uint> OutstandingContextIds { get; } = [];
+
+    public bool Answer(uint contextId, bool accept)
+    {
+        Answers.Add((contextId, accept));
+        return OutstandingContextIds.Contains(contextId);
+    }
 }
 
 public sealed class FakeCharacter : ICharacterInfo

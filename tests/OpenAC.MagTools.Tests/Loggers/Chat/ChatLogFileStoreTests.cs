@@ -19,9 +19,14 @@ public sealed class ChatLogFileStoreTests
             timestamp, ChatClassifier.ChatChannels.Area, "You say, \"hi\""));
         store.Flush(Key);
 
+        // Written in the machine's LOCAL time (see the M4 fix note on
+        // Flush()), so the expected digits are computed the same way rather
+        // than hardcoded to a UTC stamp that would only match on a UTC box.
+        string expectedStamp = timestamp.ToLocalTime().ToString(
+            "yyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
         string? text = storage.ReadText(Key);
         Assert.Equal(
-            "260916123000,1,You say, \"hi\"\n",
+            expectedStamp + ",1,You say, \"hi\"\n",
             text);
     }
 
@@ -58,10 +63,13 @@ public sealed class ChatLogFileStoreTests
     public void FlushRollsAnOversizedFileToADatedNameBeforeAppending()
     {
         var storage = new MemoryStorage();
-        // Cheap stand-in for a 100MB file: seed content at/over the roll
-        // threshold directly rather than actually building 100MB of text.
-        storage.Seed(Key, new string('x', 100_000_000));
-        var store = new ChatLogFileStore(storage);
+        // The roll threshold is an injected constructor parameter (rather
+        // than a fixed 100MB constant), so the test can exercise the exact
+        // same rolling logic against a few bytes instead of paying to
+        // allocate and scan a 100MB string on every run.
+        const int rollThreshold = 32;
+        storage.Seed(Key, new string('x', rollThreshold));
+        var store = new ChatLogFileStore(storage, rollThreshold);
 
         store.Enqueue(new LoggedChatEntry(
             DateTimeOffset.UtcNow, ChatClassifier.ChatChannels.Area, "fresh line"));
@@ -72,11 +80,30 @@ public sealed class ChatLogFileStoreTests
             + ".txt";
 
         string current = storage.ReadText(Key)!;
-        Assert.True(current.Length < 100_000_000, "the current file must have rolled, not grown");
+        Assert.True(current.Length < rollThreshold, "the current file must have rolled, not grown");
         Assert.Contains("fresh line", current, StringComparison.Ordinal);
         string rolled = storage.ReadText(datedKey)!;
-        Assert.Equal(100_000_000, rolled.Length);
+        Assert.Equal(rollThreshold, rolled.Length);
         Assert.DoesNotContain("fresh line", rolled, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FlushKeepsPendingLinesWhenStorageIsUnavailable()
+    {
+        var storage = new MemoryStorage { IsAvailable = false };
+        var store = new ChatLogFileStore(storage);
+
+        store.Enqueue(new LoggedChatEntry(
+            DateTimeOffset.UtcNow, ChatClassifier.ChatChannels.Area, "queued while down"));
+        store.Flush(Key);
+        Assert.Equal(0, storage.WriteCount);
+
+        storage.IsAvailable = true;
+        store.Flush(Key);
+
+        string? text = storage.ReadText(Key);
+        Assert.NotNull(text);
+        Assert.Contains("queued while down", text, StringComparison.Ordinal);
     }
 
     [Fact]

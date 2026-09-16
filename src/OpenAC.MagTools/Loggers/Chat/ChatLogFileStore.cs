@@ -21,16 +21,20 @@ namespace OpenAC.MagTools.Loggers.Chat;
 /// </remarks>
 public sealed class ChatLogFileStore
 {
-    private const long RollSizeBytes = 100_000_000;
+    private const long DefaultRollSizeBytes = 100_000_000;
     private const int DefaultImportLimitBytes = 1_048_576;
 
     private readonly IPluginStorage _storage;
+    private readonly long _rollSizeBytes;
     private readonly List<LoggedChatEntry> _pending = [];
 
-    public ChatLogFileStore(IPluginStorage storage)
+    public ChatLogFileStore(IPluginStorage storage, long rollSizeBytes = DefaultRollSizeBytes)
     {
         ArgumentNullException.ThrowIfNull(storage);
+        if (rollSizeBytes < 1)
+            throw new ArgumentOutOfRangeException(nameof(rollSizeBytes));
         _storage = storage;
+        _rollSizeBytes = rollSizeBytes;
     }
 
     public void Enqueue(LoggedChatEntry entry) => _pending.Add(entry);
@@ -46,14 +50,17 @@ public sealed class ChatLogFileStore
 
         if (!_storage.IsAvailable)
         {
-            _pending.Clear();
+            // Keep what is buffered rather than dropping it: storage coming
+            // back before the next flush (or before Enqueue() stops being
+            // called) still gets to write it, instead of silently losing
+            // lines to a transient unavailability.
             return;
         }
 
         string? existing = _storage.ReadText(storageKey);
 
         if (existing is not null
-            && Encoding.UTF8.GetByteCount(existing) >= RollSizeBytes)
+            && Encoding.UTF8.GetByteCount(existing) >= _rollSizeBytes)
         {
             _storage.WriteText(RolledKey(storageKey), existing);
             _storage.Delete(storageKey);
@@ -64,7 +71,13 @@ public sealed class ChatLogFileStore
         foreach (LoggedChatEntry entry in _pending)
         {
             builder
-                .Append(entry.TimeStamp.ToString(
+                // Written in local time to match TryParseLine's read-back,
+                // which treats an Unspecified-kind parse as local
+                // (DateTimeOffset(DateTime) does that automatically for a
+                // Kind.Unspecified value) — without ToLocalTime() here, a
+                // UTC-kind TimeStamp would format its own UTC clock digits
+                // and then be misread as local time on the next import.
+                .Append(entry.TimeStamp.ToLocalTime().ToString(
                     "yyMMddHHmmss", CultureInfo.InvariantCulture))
                 .Append(',')
                 .Append(((int)entry.ChatType).ToString(CultureInfo.InvariantCulture))

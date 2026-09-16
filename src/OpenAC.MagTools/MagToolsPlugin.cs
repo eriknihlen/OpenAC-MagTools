@@ -64,6 +64,7 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
     private Action<ItemIdentArgs>? _onContainerItemIdentified;
     private Action<double>? _tick;
     private Action? _onSessionLoginComplete;
+    private Action? _onSessionReady;
     private Action? _onSessionLogoff;
     private IDisposable? _commandRegistration;
     private IDisposable? _mainPanelRegistration;
@@ -203,8 +204,10 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
             () => _oneTouchHeal?.TryHeal());
 
         _onSessionLoginComplete = OnSessionLoginComplete;
+        _onSessionReady = OnSessionReady;
         _onSessionLogoff = OnSessionLogoff;
         _session.LoginComplete += _onSessionLoginComplete;
+        _session.SessionReady += _onSessionReady;
         _session.Logoff += _onSessionLogoff;
         _session.Subscribe();
 
@@ -291,10 +294,13 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         {
             if (_onSessionLoginComplete is not null)
                 _session.LoginComplete -= _onSessionLoginComplete;
+            if (_onSessionReady is not null)
+                _session.SessionReady -= _onSessionReady;
             if (_onSessionLogoff is not null)
                 _session.Logoff -= _onSessionLogoff;
         }
         _onSessionLoginComplete = null;
+        _onSessionReady = null;
         _onSessionLogoff = null;
 
         // Anything the debounce still owes is written before we go.
@@ -314,18 +320,19 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _host?.Log.Info("Mag-Tools disabled");
     }
 
+    /// <summary>
+    /// Starts every owner that does NOT need the character/world/account
+    /// names — those wait for <see cref="OnSessionReady"/>, which only fires
+    /// once <see cref="SessionContext"/> has confirmed all three are
+    /// non-empty. See <see cref="SessionContext.SessionReady"/>'s remarks.
+    /// </summary>
     private void OnSessionLoginComplete()
     {
-        if (_session is null || _scheduler is null)
+        if (_scheduler is null)
             return;
         _chatDispatcher?.Start();
-        _chatLogger?.Start(_scheduler, _session.WorldName, _session.CharacterName);
-        _combatTrackerHost?.Start(_scheduler, _session.WorldName, _session.CharacterName);
         _equipmentTrackerHost?.Start(_scheduler);
         _inventoryTrackerHost?.Start(_scheduler);
-        _corpseTrackerHost?.Start(_scheduler, _session.WorldName, _session.CharacterName);
-        _playerTrackerHost?.Start(_scheduler, _session.WorldName, _session.CharacterName);
-        _inventoryLogger?.Start(_session.WorldName, _session.CharacterName);
         _idleActionManager?.Start(_scheduler);
         _tinkeringToolsHost?.Attach(_scheduler);
         _autoRecharge?.Start(_scheduler);
@@ -333,10 +340,28 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _autoBuySell?.Start(_scheduler);
         _autoTradeAdd?.Start(_scheduler);
         _looter?.Start(_scheduler);
-        _inventoryPacker?.Bind(_scheduler);
 
-        // Character/server scope depends on the live account/server/character,
-        // which is only known once this edge has fired.
+        _openMainPackOnLogin?.Run();
+    }
+
+    /// <summary>
+    /// Starts every owner that is scoped by the character/world/account
+    /// names — <see cref="SessionContext"/> guarantees all three are
+    /// non-empty by the time this fires, so none of these can ever write a
+    /// tracker/log file with a missing character segment.
+    /// </summary>
+    private void OnSessionReady()
+    {
+        if (_session is null || _scheduler is null)
+            return;
+
+        _chatLogger?.Start(_scheduler, _session.WorldName, _session.CharacterName);
+        _combatTrackerHost?.Start(_scheduler, _session.WorldName, _session.CharacterName);
+        _corpseTrackerHost?.Start(_scheduler, _session.WorldName, _session.CharacterName);
+        _playerTrackerHost?.Start(_scheduler, _session.WorldName, _session.CharacterName);
+        _inventoryLogger?.Start(_session.WorldName, _session.CharacterName);
+        _inventoryPacker?.Bind(_scheduler, _session.CharacterName);
+
         string characterScope = SettingsScope.Character(
             _session.AccountName, _session.WorldName, _session.CharacterName);
         string serverScope = SettingsScope.Server(_session.WorldName);
@@ -344,7 +369,6 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _main?.CharacterCommands.Bind(characterScope);
         _main?.ServerCommands.Bind(serverScope);
 
-        _openMainPackOnLogin?.Run();
         _loginActions?.Run(_scheduler, characterScope, serverScope);
         _periodicCommands?.Start(_scheduler, characterScope, serverScope);
     }

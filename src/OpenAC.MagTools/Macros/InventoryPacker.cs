@@ -117,10 +117,22 @@ public sealed class InventoryPacker
     /// <summary>Bound once at session start so a hotkey/chat/command trigger can call the no-argument <see cref="Start()"/>.</summary>
     private TickScheduler? _boundScheduler;
 
-    public void Bind(TickScheduler scheduler)
+    /// <summary>
+    /// The character name to resolve the profile against, captured from
+    /// <see cref="SessionContext.CharacterName"/> once <see cref="MagToolsPlugin"/>
+    /// hears <see cref="SessionContext.SessionReady"/> — never read live off
+    /// <see cref="IAutomationSurface"/>, which can still report an empty name
+    /// for a tick or two after <c>LoginComplete</c> (see the host defect
+    /// recorded in <c>docs/live-results.md</c>'s defect #1).
+    /// </summary>
+    private string _characterName = string.Empty;
+
+    public void Bind(TickScheduler scheduler, string characterName)
     {
         ArgumentNullException.ThrowIfNull(scheduler);
+        ArgumentNullException.ThrowIfNull(characterName);
         _boundScheduler = scheduler;
+        _characterName = characterName;
     }
 
     /// <summary>
@@ -133,8 +145,7 @@ public sealed class InventoryPacker
         if (_running || _boundScheduler is null)
             return;
 
-        string characterName = _host.Automation.Character.Name;
-        string primary = characterName + ".AutoPack";
+        string primary = _characterName + ".AutoPack";
         const string fallback = "Default.AutoPack";
 
         if (_lootRules.ProfileExists(primary))

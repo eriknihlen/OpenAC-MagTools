@@ -8,11 +8,13 @@ public sealed class SessionContextTests
     private readonly SessionContext _session;
     private int _logins;
     private int _logoffs;
+    private int _sessionReadies;
 
     public SessionContextTests()
     {
         _session = new SessionContext(_host, new ChatOutput(_host));
         _session.LoginComplete += () => _logins++;
+        _session.SessionReady += () => _sessionReadies++;
         _session.Logoff += () => _logoffs++;
     }
 
@@ -136,6 +138,91 @@ public sealed class SessionContextTests
         _host.Events.RaiseLogoff();
 
         Assert.Equal("+Acdream", seen);
+    }
+
+    [Fact]
+    public void SessionReadyFiresImmediatelyWhenNamesAreAlreadyKnown()
+    {
+        _session.Subscribe();
+        GoInWorld();
+        _host.Events.RaiseLoginComplete();
+
+        Assert.Equal(1, _sessionReadies);
+        Assert.Equal("+Acdream", _session.CharacterName);
+    }
+
+    [Fact]
+    public void SessionReadyWaitsUntilTheNamesResolveOnALaterTick()
+    {
+        // The host defect this guards: ICharacterInfo.Name (and friends) can
+        // still be empty on the exact tick LoginComplete fires — the player
+        // object exists in the object table before its name arrives. Every
+        // name-scoped owner must wait for SessionReady, not LoginComplete.
+        _session.Subscribe();
+
+        _host.Automation.IsAvailable = true;
+        _host.Automation.Character.IsInWorld = true;
+        _host.Automation.Character.Name = string.Empty;
+        _host.Automation.Character.WorldName = string.Empty;
+        _host.Automation.Character.AccountName = string.Empty;
+        _host.Events.RaiseLoginComplete();
+
+        Assert.True(_session.IsInWorld);
+        Assert.Equal(1, _logins);
+        Assert.Equal(0, _sessionReadies);
+        Assert.Equal(string.Empty, _session.CharacterName);
+
+        // Tick 1: still empty.
+        _host.Events.RaiseTick(0.1);
+        Assert.Equal(0, _sessionReadies);
+
+        // Tick 2: the host has now populated the name.
+        _host.Automation.Character.Name = "+Acdream";
+        _host.Automation.Character.WorldName = "Frostfell";
+        _host.Automation.Character.AccountName = "testaccount";
+        _host.Events.RaiseTick(0.1);
+
+        Assert.Equal(1, _sessionReadies);
+        Assert.Equal("+Acdream", _session.CharacterName);
+        Assert.Equal("Frostfell", _session.WorldName);
+        Assert.Equal("testaccount", _session.AccountName);
+
+        // The tick subscription is dropped once resolved, so a further tick
+        // does not re-raise SessionReady.
+        _host.Events.RaiseTick(0.1);
+        Assert.Equal(1, _sessionReadies);
+    }
+
+    [Fact]
+    public void SessionReadyNeverFiresIfTheNameNeverArrivesBeforeLogoff()
+    {
+        _session.Subscribe();
+
+        _host.Automation.IsAvailable = true;
+        _host.Automation.Character.IsInWorld = true;
+        _host.Automation.Character.Name = string.Empty;
+        _host.Automation.Character.WorldName = string.Empty;
+        _host.Automation.Character.AccountName = string.Empty;
+        _host.Events.RaiseLoginComplete();
+
+        _host.Events.RaiseTick(0.1);
+        _host.Events.RaiseTick(0.1);
+
+        Assert.Equal(0, _sessionReadies);
+
+        _host.Automation.Character.IsInWorld = false;
+        _host.Events.RaiseLogoff();
+
+        Assert.Equal(0, _sessionReadies);
+        Assert.Equal(1, _logoffs);
+        Assert.Contains(
+            ((RecordingLogger)_host.Log).Messages,
+            message => message.StartsWith("warn: ", StringComparison.Ordinal));
+
+        // A further tick after logoff must not resurrect the check (the
+        // Tick subscription was dropped at Logoff).
+        _host.Events.RaiseTick(0.1);
+        Assert.Equal(0, _sessionReadies);
     }
 
     [Fact]

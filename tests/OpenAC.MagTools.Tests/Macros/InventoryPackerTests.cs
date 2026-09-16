@@ -21,7 +21,7 @@ public sealed class InventoryPackerTests
         var scheduler = new OpenAC.MagTools.TickScheduler(host.Events, chat);
         var clock = new FakeTimeProvider();
         var macro = new InventoryPacker(host, chat, lootRules, clock);
-        macro.Bind(scheduler);
+        macro.Bind(scheduler, characterName);
         return (host, macro, scheduler, clock);
     }
 

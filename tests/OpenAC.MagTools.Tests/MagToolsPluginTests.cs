@@ -232,6 +232,8 @@ public sealed class MagToolsPluginTests
     {
         var host = new FakeHost { HasUi = false };
         host.Automation.Character.Name = "Acdream";
+        host.Automation.Character.WorldName = "Frostfell";
+        host.Automation.Character.AccountName = "testaccount";
         host.LootClassifiers.Available.Add(
             new AcDream.Plugin.Abstractions.PluginLootClassifierInfo("plugin/moss-tank", "MossTank"));
         host.LootClassifiers.ProfileClassifyHandler = (profile, _)

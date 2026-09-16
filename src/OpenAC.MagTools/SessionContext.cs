@@ -20,7 +20,9 @@ public sealed class SessionContext
     private readonly ChatOutput _chat;
     private readonly Action _onLoginComplete;
     private readonly Action _onLogoff;
+    private readonly Action<double> _onNameResolutionTick;
     private bool _subscribed;
+    private bool _nameResolutionPending;
 
     public SessionContext(IPluginHost host, ChatOutput chat)
     {
@@ -30,6 +32,7 @@ public sealed class SessionContext
         _chat = chat;
         _onLoginComplete = OnLoginComplete;
         _onLogoff = OnLogoff;
+        _onNameResolutionTick = OnNameResolutionTick;
     }
 
     /// <summary>True between the login edge and the matching logoff edge.</summary>
@@ -43,6 +46,19 @@ public sealed class SessionContext
 
     /// <summary>Raised once each time the session becomes in-world.</summary>
     public event Action? LoginComplete;
+
+    /// <summary>
+    /// Raised once each time the character/world/account names are all
+    /// known — always at or after <see cref="LoginComplete"/>, never before.
+    /// The host can report <see cref="IAutomationSurface.Character"/> with an
+    /// empty <see cref="ICharacterInfo.Name"/> for a tick or two after
+    /// <see cref="LoginComplete"/> fires (the player object exists in the
+    /// object table before its name arrives), so every name-scoped owner —
+    /// character-scoped command lists, tracker files, the chat logger, the
+    /// inventory packer's profile lookup, the inventory logger — must start
+    /// from this edge, never from <see cref="LoginComplete"/> directly.
+    /// </summary>
+    public event Action? SessionReady;
 
     /// <summary>Raised once each time an in-world session goes away.</summary>
     public event Action? Logoff;
@@ -82,6 +98,7 @@ public sealed class SessionContext
 
         _host.Events.LoginComplete -= _onLoginComplete;
         _host.Events.Logoff -= _onLogoff;
+        StopNameResolution();
         _subscribed = false;
     }
 
@@ -95,9 +112,6 @@ public sealed class SessionContext
             return;
 
         ICharacterInfo character = _host.Automation.Character;
-        CharacterName = character.Name;
-        WorldName = character.WorldName;
-        AccountName = character.AccountName;
         IsInWorld = true;
 
         int population = character.ServerPopulation;
@@ -108,6 +122,60 @@ public sealed class SessionContext
                 : "Plugin now online.");
 
         LoginComplete?.Invoke();
+
+        BeginNameResolution();
+    }
+
+    /// <summary>
+    /// Tries to resolve all three names immediately; if the host hasn't
+    /// populated them yet, arms a per-tick recheck instead of raising
+    /// <see cref="SessionReady"/> with an empty segment.
+    /// </summary>
+    private void BeginNameResolution()
+    {
+        if (TryResolveNames())
+        {
+            SessionReady?.Invoke();
+            return;
+        }
+
+        _nameResolutionPending = true;
+        _host.Events.Tick += _onNameResolutionTick;
+    }
+
+    private void OnNameResolutionTick(double elapsedSeconds)
+    {
+        if (!TryResolveNames())
+            return;
+
+        StopNameResolution();
+        SessionReady?.Invoke();
+    }
+
+    private bool TryResolveNames()
+    {
+        ICharacterInfo character = _host.Automation.Character;
+        string name = character.Name;
+        string worldName = character.WorldName;
+        string accountName = character.AccountName;
+
+        if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(worldName)
+            || string.IsNullOrEmpty(accountName))
+            return false;
+
+        CharacterName = name;
+        WorldName = worldName;
+        AccountName = accountName;
+        return true;
+    }
+
+    private void StopNameResolution()
+    {
+        if (!_nameResolutionPending)
+            return;
+
+        _host.Events.Tick -= _onNameResolutionTick;
+        _nameResolutionPending = false;
     }
 
     private void OnLogoff()
@@ -117,6 +185,19 @@ public sealed class SessionContext
         // subscriber's teardown for a session that already ended.
         if (!IsInWorld)
             return;
+
+        // The session ended before the name ever resolved: no name-scoped
+        // owner ever started, so nothing was written under a wrong or empty
+        // segment — but say so, since this is otherwise a silent no-op.
+        if (_nameResolutionPending)
+        {
+            StopNameResolution();
+            _host.Log.Warn(
+                "Session ended before the character/world/account names "
+                + "resolved; name-scoped state (tracker files, the chat "
+                + "logger, the inventory logger, character-scoped command "
+                + "lists) never started this session.");
+        }
 
         IsInWorld = false;
         Logoff?.Invoke();

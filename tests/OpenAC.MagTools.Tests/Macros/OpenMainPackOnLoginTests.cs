@@ -1,3 +1,4 @@
+using AcDream.Plugin.Abstractions;
 using OpenAC.MagTools.Macros;
 using OpenAC.MagTools.Settings;
 using OpenAC.MagTools.Tests.Fakes;
@@ -8,42 +9,51 @@ namespace OpenAC.MagTools.Tests.Macros;
 public sealed class OpenMainPackOnLoginTests
 {
     [Fact]
-    public void UsesTheLocalPlayersOwnObjectIdWhenEnabled()
+    public void ShowsTheInventoryWindowWhenEnabled()
     {
-        var host = new FakeHost();
-        host.Automation.Character.ObjectId = 555u;
+        // A6: the mechanism moved from Items.Use(self) to the direct
+        // client-window surface; same observable result (the pack opens).
+        var host = new FakeHost { HasUi = true };
         var setting = new Setting<bool>(new SettingsFile(host.Storage), "Misc/OpenMainPackOnLogin", "Open Main Pack On Login", true);
         var macro = new OpenMainPackOnLogin(host, setting);
 
         macro.Run();
 
-        Assert.Contains(("use", 555u, 0u), host.Automation.Items.Calls);
+        Assert.Contains(PluginClientWindow.Inventory, host.Ui.ShowClientWindowCalls);
     }
 
     [Fact]
     public void DoesNothingWhenDisabled()
     {
-        var host = new FakeHost();
-        host.Automation.Character.ObjectId = 555u;
+        var host = new FakeHost { HasUi = true };
         var setting = new Setting<bool>(new SettingsFile(host.Storage), "Misc/OpenMainPackOnLogin", "Open Main Pack On Login", true);
         setting.Value = false;
         var macro = new OpenMainPackOnLogin(host, setting);
 
         macro.Run();
 
-        Assert.Empty(host.Automation.Items.Calls);
+        Assert.Empty(host.Ui.ShowClientWindowCalls);
     }
 
     [Fact]
-    public void LogsAWarningWhenTheHostRejectsTheUseCommand()
+    public void DoesNothingOnANoWindowHost()
     {
-        // H1: the host rejects Items.Use(self) (IsPlayerOwned excludes the
-        // player object); the result must never be swallowed silently.
-        var host = new FakeHost();
-        host.Automation.Character.ObjectId = 42u;
-        host.Automation.Items.UseResult =
-            new AcDream.Plugin.Abstractions.PluginItemCommandResult(
-                AcDream.Plugin.Abstractions.PluginItemCommandStatus.InvalidItem);
+        var host = new FakeHost { HasUi = false };
+        var setting = new Setting<bool>(new SettingsFile(host.Storage), "Misc/OpenMainPackOnLogin", "Open Main Pack On Login", true);
+        var macro = new OpenMainPackOnLogin(host, setting);
+
+        macro.Run();
+
+        Assert.Empty(host.Ui.ShowClientWindowCalls);
+        Assert.Empty(((RecordingLogger)host.Log).Messages);
+    }
+
+    [Fact]
+    public void LogsAWarningWhenTheHostRefusesTheWindow()
+    {
+        // The result must never be swallowed silently.
+        var host = new FakeHost { HasUi = true };
+        host.Ui.ShowClientWindowResult = false;
         var setting = new Setting<bool>(new SettingsFile(host.Storage), "Misc/OpenMainPackOnLogin", "Open Main Pack On Login", true);
         var macro = new OpenMainPackOnLogin(host, setting);
 
@@ -53,10 +63,9 @@ public sealed class OpenMainPackOnLoginTests
     }
 
     [Fact]
-    public void DoesNotWarnWhenTheHostAcceptsTheUseCommand()
+    public void DoesNotWarnWhenTheHostShowsTheWindow()
     {
-        var host = new FakeHost();
-        host.Automation.Character.ObjectId = 42u;
+        var host = new FakeHost { HasUi = true };
         var setting = new Setting<bool>(new SettingsFile(host.Storage), "Misc/OpenMainPackOnLogin", "Open Main Pack On Login", true);
         var macro = new OpenMainPackOnLogin(host, setting);
 
@@ -70,13 +79,12 @@ public sealed class OpenMainPackOnLoginTests
     {
         // The original default: true. Confirms a freshly-constructed setting
         // (no stored value yet) still opens the pack.
-        var host = new FakeHost();
-        host.Automation.Character.ObjectId = 1u;
+        var host = new FakeHost { HasUi = true };
         var settings = new SettingsManager(new SettingsFile(host.Storage));
         var macro = new OpenMainPackOnLogin(host, settings.Misc.OpenMainPackOnLogin);
 
         macro.Run();
 
-        Assert.Contains(("use", 1u, 0u), host.Automation.Items.Calls);
+        Assert.Contains(PluginClientWindow.Inventory, host.Ui.ShowClientWindowCalls);
     }
 }

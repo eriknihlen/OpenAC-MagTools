@@ -389,6 +389,40 @@ public sealed class FakeUiRegistry : IUiRegistry
 {
     public List<RegisteredPanel> Panels { get; } = [];
 
+    /// <summary>Every <see cref="ShowClientWindow"/> call, in order -- a test sets <see cref="ShowClientWindowResult"/> to simulate the host refusing it.</summary>
+    public List<PluginClientWindow> ShowClientWindowCalls { get; } = [];
+
+    public bool ShowClientWindowResult { get; set; } = true;
+
+    public bool ShowClientWindow(PluginClientWindow window)
+    {
+        ShowClientWindowCalls.Add(window);
+        return ShowClientWindowResult;
+    }
+
+    public List<PluginClientWindow> HideClientWindowCalls { get; } = [];
+
+    public bool HideClientWindow(PluginClientWindow window)
+    {
+        HideClientWindowCalls.Add(window);
+        return true;
+    }
+
+    public List<PluginClientWindow> ToggleClientWindowCalls { get; } = [];
+
+    public bool ToggleClientWindowResult { get; set; } = true;
+
+    public bool ToggleClientWindow(PluginClientWindow window)
+    {
+        ToggleClientWindowCalls.Add(window);
+        return ToggleClientWindowResult;
+    }
+
+    public HashSet<PluginClientWindow> VisibleClientWindows { get; } = [];
+
+    public bool IsClientWindowVisible(PluginClientWindow window)
+        => VisibleClientWindows.Contains(window);
+
     public void AddMarkupPanel(string markupPath, object binding)
         => Panels.Add(new RegisteredPanel(
             new PluginPanelDescriptor(

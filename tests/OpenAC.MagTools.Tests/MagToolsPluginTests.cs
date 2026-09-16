@@ -286,15 +286,29 @@ public sealed class MagToolsPluginTests
     [Fact]
     public void LoginCompleteOpensTheMainPackByDefault()
     {
-        var host = new FakeHost { HasUi = false };
-        host.Automation.Character.ObjectId = 42u;
+        var host = new FakeHost { HasUi = true };
         var plugin = new MagToolsPlugin();
 
         plugin.Initialize(host);
         plugin.Enable();
         host.Events.RaiseLoginComplete();
 
-        Assert.Contains(("use", 42u, 0u), host.Automation.Items.Calls);
+        Assert.Contains(
+            AcDream.Plugin.Abstractions.PluginClientWindow.Inventory,
+            host.Ui.ShowClientWindowCalls);
+    }
+
+    [Fact]
+    public void LoginCompleteDoesNotOpenTheMainPackOnANoWindowHost()
+    {
+        var host = new FakeHost { HasUi = false };
+        var plugin = new MagToolsPlugin();
+
+        plugin.Initialize(host);
+        plugin.Enable();
+        host.Events.RaiseLoginComplete();
+
+        Assert.Empty(host.Ui.ShowClientWindowCalls);
     }
 
     [Fact]

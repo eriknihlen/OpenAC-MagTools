@@ -33,13 +33,15 @@ steps to close it. In short:
   reconnect/minute boundary), and Log Out on Death (which needs an actual
   in-world death). Both are unit-tested against the fake host but have not
   run against ACE.
-- **Open Main Pack On Login is blocked on a real host gap, not just untested
-  (H1)**: `IItemAutomation.Use` on the local player's own object id is
-  rejected by the current host (`IsPlayerOwned` excludes the player object),
-  and there is no other plugin-reachable route to the inventory window
-  today. The macro now warns instead of swallowing the rejection and is
-  marked Pending (not Shipped) in the parity checklist until OpenAC slice A6
-  (`IUiRegistry.ShowClientWindow`) lands and this is rewired to use it.
+- **Open Main Pack On Login's host gap (H1) is resolved**: `IItemAutomation.Use`
+  on the local player's own object id is still refused by the host
+  (`IsPlayerOwned` excludes the player object), but OpenAC slice A6 added a
+  direct client-window surface (`IUiRegistry.ShowClientWindow`), and the
+  macro now uses that instead -- same observable result (the pack opens),
+  different mechanism. It warns instead of swallowing a refusal, same as
+  before. Back to Shipped in the parity checklist; the NEW mechanism has not
+  been exercised against a live client yet (re-gate owed, see
+  `docs/live-results.md`).
 - **Everything that needs a scripted world event** (a real fight for the
   combat tracker, a real vendor for auto buy/sell, a real corpse/chest for
   the looter, a real low-mana item for auto recharge, real damage for
@@ -61,9 +63,9 @@ WAS run and failed is recorded as FAIL/PARTIAL in the Gated table with the
 host fix that resolved it (see below); every host gap found during P1–P7 live
 gating has since landed and re-gated PASS.
 
-## OpenAC API changes (branch `claude/magtools-plugin-api`, reviewed head `d5c37bb`)
+## OpenAC API changes (branch `claude/magtools-plugin-api`, reviewed head `d5c37bb`; A6 at `abc748d`)
 
-Five slices, each Sonnet-implemented and Opus dual-lens reviewed (contract
+Six slices, each Sonnet-implemented and Opus dual-lens reviewed (contract
 hygiene + parity), landed on this branch (not `main` — push/merge waits for
 the owner):
 
@@ -88,6 +90,11 @@ the owner):
   they never pop the client's own examination window (splitting appraisal
   *completion* from *presentation*, and refusing a plugin from evicting a
   user's own in-flight assess).
+- **A6** — client-window control: `IUiRegistry.ToggleClientWindow`/
+  `ShowClientWindow`/`HideClientWindow`/`IsClientWindowVisible(PluginClientWindow)`,
+  letting a plugin show/hide/query one of the client's own retained windows
+  (Inventory, Character, Spellbook, Map, …) directly, without a synthetic
+  "use self" or click. First consumer: `OpenMainPackOnLogin`.
 
 ### Host bugs found by live gates (all fixed and re-gated PASS)
 

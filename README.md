@@ -100,7 +100,7 @@ A Pending row is never claimed Shipped.
 | Tinkering tab: salvage-ID scan | Shipped | `TinkeringToolsHost` Start/Stop; requests ids for unidentified salvage bags matching the chosen material, one per second, until combat mode leaves Peace or nothing is left -- a salvage-ID helper, not tinkering itself, matching the original |
 | Mana management / auto recharge | Shipped | |
 | One-touch heal | Shipped | hotkey, unbound by default |
-| Open main pack on login | Pending (host gap) | `Misc/OpenMainPackOnLogin`, default true; `Items.Use(self)` is rejected by the host today (`IsPlayerOwned` excludes the player object) -- opens via `Ui.ShowClientWindow(Inventory)` once OpenAC slice A6 lands; OpenAC-native equivalent today: the client's F12 keybind |
+| Open main pack on login | Shipped | `Misc/OpenMainPackOnLogin`, default true; opens via `Ui.ShowClientWindow(PluginClientWindow.Inventory)` (OpenAC slice A6) rather than the original's `Items.Use(self)` -- see `docs/deviations.md` |
 | Maximize chat on login | Not applicable | chat window is a native retained window; see Maximize/Minimize Chat below |
 | Log out on death | Shipped | `Misc/LogOutOnDeath`, default false |
 | Remove window frame | Not applicable | see the not-applicable table |
@@ -132,9 +132,9 @@ A Pending row is never claimed Shipped.
 | Hotkey: Maximize Chat | Not applicable | see Maximize/Minimize Chat below |
 | Hotkey: Minimize Chat | Not applicable | see Maximize/Minimize Chat below |
 
-**Counts:** 36 shipped, 8 not applicable, 1 pending a host gap (45 checklist
-rows total; the not-applicable rows point at the detail tables below, which
-break each one down further by individual command/hotkey).
+**Counts:** 37 shipped, 8 not applicable (45 checklist rows total; the
+not-applicable rows point at the detail tables below, which break each one
+down further by individual command/hotkey).
 
 ### Not applicable (Decal / Win32 only, or no host equivalent)
 

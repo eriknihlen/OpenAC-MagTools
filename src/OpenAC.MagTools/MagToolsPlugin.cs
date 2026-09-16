@@ -379,7 +379,7 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _combatTrackerHost?.Start(_scheduler, _session.WorldName, _session.CharacterName);
         _corpseTrackerHost?.Start(_scheduler, _session.WorldName, _session.CharacterName);
         _playerTrackerHost?.Start(_scheduler, _session.WorldName, _session.CharacterName);
-        _inventoryLogger?.Start(_session.WorldName, _session.CharacterName);
+        _inventoryLogger?.Start(_session.WorldName, _session.CharacterName, _scheduler);
         _inventoryPacker?.Bind(_scheduler, _session.CharacterName);
 
         // Fallback for the (unobserved) case where WorldName itself was not

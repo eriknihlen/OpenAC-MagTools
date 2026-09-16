@@ -13,25 +13,47 @@ namespace OpenAC.MagTools.Loggers.Inventory;
 /// </summary>
 public sealed class InventoryLogger
 {
+    /// <summary>
+    /// How often the post-startup snapshot poll runs (HIGH-3, P10 review):
+    /// once per second through the plugin's one <see cref="TickScheduler"/>
+    /// clock, instead of a raw <see cref="IEvents.Tick"/> subscription
+    /// driving a full <see cref="IItemAutomation.CaptureOwnedItems"/> walk
+    /// (object-table walk + per-item projection/allocation + sort) every
+    /// single frame.
+    /// </summary>
+    private static readonly TimeSpan SnapshotPollInterval = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// How many 1-second polls to wait for the owned pack to stream in
+    /// before giving up on the startup capture entirely (HIGH-3) -- about a
+    /// minute. If the pack never populates, nothing was ever captured and
+    /// <see cref="Stop"/> will not write anything either (HIGH-2).
+    /// </summary>
+    private const int StartupGiveUpPolls = 60;
+
     private readonly IPluginHost _host;
     private readonly ChatOutput _chat;
     private readonly InventoryManagementSettings _settings;
     private readonly HashSet<uint> _requestedIds = [];
     private Action<PluginObjectChange>? _onObjectChanged;
-    private Action<double>? _onStartupTick;
     private string _storageKey = string.Empty;
     private bool _waitingForIdData;
     private bool _running;
-    private bool _startupCapturePending;
+    private IDisposable? _snapshotPoll;
+    private bool _startupCaptureDone;
+    private int _startupPollCount;
 
     /// <summary>
     /// The last non-empty owned-item snapshot this instance has actually
-    /// dumped from. <see cref="Stop"/> dumps from this rather than a fresh
+    /// captured. <see cref="Stop"/> dumps from this rather than a fresh
     /// <see cref="IItemAutomation.CaptureOwnedItems"/> call, because by the
     /// time logoff teardown runs the host has typically already released
     /// the owned objects -- a fresh capture there is reliably empty even
-    /// though real items were logged earlier in the session. See defect 8
-    /// in the live-gate results.
+    /// though real items were logged earlier in the session (defect 8).
+    /// Refreshed whenever <see cref="Dump"/> runs with real items AND on
+    /// every post-startup <see cref="OnSnapshotPoll"/> tick (HIGH-1, P10
+    /// review) -- not just at startup -- so it reflects anything looted,
+    /// bought, or tinkered mid-session, not only the login-time inventory.
     /// </summary>
     private IReadOnlyList<PluginInventoryItem> _lastOwnedSnapshot = [];
 
@@ -64,8 +86,16 @@ public sealed class InventoryLogger
         return false;
     }
 
-    public void Start(string server, string character)
+    /// <summary>
+    /// Starts the logger for a session. <paramref name="scheduler"/> is the
+    /// plugin's one <see cref="TickScheduler"/> clock (HIGH-3, P10 review) --
+    /// already constructed and running by the time <c>OnSessionReady</c>
+    /// calls this, so every poll this class needs hangs off it rather than
+    /// a raw <see cref="IEvents.Tick"/> subscription.
+    /// </summary>
+    public void Start(string server, string character, TickScheduler scheduler)
     {
+        ArgumentNullException.ThrowIfNull(scheduler);
         if (_running)
             return;
         _running = true;
@@ -73,6 +103,8 @@ public sealed class InventoryLogger
         _waitingForIdData = false;
         _storageKey = server + "/" + character + ".Inventory.xml";
         _lastOwnedSnapshot = [];
+        _startupCaptureDone = false;
+        _startupPollCount = 0;
 
         if (!_settings.InventoryLogger.Value)
         {
@@ -84,56 +116,63 @@ public sealed class InventoryLogger
         _onObjectChanged = OnObjectChanged;
         _host.Events.ObjectChanged += _onObjectChanged;
 
-        BeginStartupCapture();
-    }
-
-    /// <summary>
-    /// <see cref="Start"/> used to decide the fresh-file-vs-existing-file
-    /// branch and, in the existing-file branch, dump immediately using
-    /// whatever <see cref="IItemAutomation.CaptureOwnedItems"/> returned at
-    /// that instant. At <see cref="SessionContext.SessionReady"/> time the
-    /// owned pack has not necessarily streamed in yet, so that read a real
-    /// host's empty startup window and wrote (or immediately dumped)
-    /// nothing -- defect 8. This instead waits for the first
-    /// <see cref="IEvents.Tick"/> on which the owned-item count is non-zero
-    /// before doing anything the original did synchronously; if the pack is
-    /// already populated at <see cref="Start"/> time (the common case --
-    /// e.g. a reconnect where the character was already fully in-world),
-    /// it runs immediately, exactly like the original.
-    /// </summary>
-    private void BeginStartupCapture()
-    {
+        // At SessionReady time the owned pack has not necessarily streamed
+        // in yet (defect 8); if it's already populated (the common case --
+        // e.g. a reconnect where the character was already fully in-world)
+        // this runs immediately, exactly like the original.
         IReadOnlyList<PluginInventoryItem> items = _host.Automation.Items.CaptureOwnedItems();
         if (items.Count > 0)
         {
+            _startupCaptureDone = true;
+            RunStartupCapture(items);
+        }
+
+        // HIGH-3: poll through the plugin's one TickScheduler clock at 1 Hz
+        // instead of a raw Events.Tick subscription driving a full
+        // CaptureOwnedItems() walk every frame. Before the startup capture
+        // succeeds this also counts toward a bounded give-up
+        // (StartupGiveUpPolls); once it has succeeded, the SAME poll keeps
+        // _lastOwnedSnapshot fresh for the rest of the session (HIGH-1).
+        _snapshotPoll = scheduler.Every(SnapshotPollInterval, OnSnapshotPoll);
+    }
+
+    private void OnSnapshotPoll()
+    {
+        IReadOnlyList<PluginInventoryItem> items = _host.Automation.Items.CaptureOwnedItems();
+
+        if (items.Count == 0)
+        {
+            if (_startupCaptureDone)
+                return;
+
+            _startupPollCount++;
+            if (_startupPollCount < StartupGiveUpPolls)
+                return;
+
+            // Bounded give-up: the pack never populated within the wait
+            // window. Nothing was ever captured, so Stop() will not write
+            // anything either (HIGH-2).
+            _startupCaptureDone = true;
+            _host.Log.Warn(
+                "InventoryLogger: the owned pack never populated within the "
+                + StartupGiveUpPolls + "-second startup wait window; nothing "
+                + "was captured this session.");
+            return;
+        }
+
+        if (!_startupCaptureDone)
+        {
+            _startupCaptureDone = true;
             RunStartupCapture(items);
             return;
         }
 
-        _startupCapturePending = true;
-        _onStartupTick = OnStartupTick;
-        _host.Events.Tick += _onStartupTick;
-    }
-
-    private void OnStartupTick(double elapsedSeconds)
-    {
-        IReadOnlyList<PluginInventoryItem> items = _host.Automation.Items.CaptureOwnedItems();
-        if (items.Count == 0)
-            return;
-
-        StopStartupCapture();
-        RunStartupCapture(items);
-    }
-
-    private void StopStartupCapture()
-    {
-        if (!_startupCapturePending)
-            return;
-
-        if (_onStartupTick is not null)
-            _host.Events.Tick -= _onStartupTick;
-        _onStartupTick = null;
-        _startupCapturePending = false;
+        // HIGH-1: keep the snapshot fresh for the rest of the session, so a
+        // later Stop() -- which typically runs after the host has already
+        // torn the owned objects down -- dumps what was actually
+        // looted/bought/tinkered mid-session, not just the login-time
+        // snapshot.
+        _lastOwnedSnapshot = items.ToArray();
     }
 
     private void RunStartupCapture(IReadOnlyList<PluginInventoryItem> items)
@@ -177,14 +216,15 @@ public sealed class InventoryLogger
         if (!_running)
             return;
         _running = false;
-        StopStartupCapture();
+        _snapshotPoll?.Dispose();
+        _snapshotPoll = null;
 
-        // Dump from the last known-good (non-empty) snapshot rather than a
-        // fresh CaptureOwnedItems() call: by the time logoff teardown runs
-        // the host has typically already released the owned objects, so a
-        // fresh capture here is reliably empty even though real items were
-        // logged earlier in the session (defect 8).
-        if (_settings.InventoryLogger.Value)
+        // HIGH-2: skip the dump entirely when nothing was EVER captured
+        // this session (an empty character, or Disable()/logoff before the
+        // pack ever streamed in / the startup wait gave up) -- writing
+        // Export([]) in that case would silently overwrite a perfectly
+        // good pre-existing file with an empty document.
+        if (_settings.InventoryLogger.Value && _lastOwnedSnapshot.Count > 0)
             Dump(requestIdsIfMissing: false, _lastOwnedSnapshot);
 
         if (_onObjectChanged is not null)
@@ -215,15 +255,22 @@ public sealed class InventoryLogger
                 .Where(item => ObjectClassNeedsIdent(item.ObjectClass, item.Name))
                 .All(item => HasIdData(item));
 
-            if (!allIdentified)
+            if (allIdentified)
+            {
+                _waitingForIdData = false;
+                Dump(requestIdsIfMissing: false, currentItems);
+                _chat.Write("Requesting id information for all armor/weapon inventory completed. Log file written.");
                 return;
+            }
 
-            _waitingForIdData = false;
-            if (currentItems.Count > 0)
-                _lastOwnedSnapshot = currentItems.ToArray();
-            Dump(requestIdsIfMissing: false, currentItems);
-            _chat.Write("Requesting id information for all armor/weapon inventory completed. Log file written.");
-            return;
+            // LOW-9 (P10 review): fall through to the per-item identify path
+            // below instead of returning here. An item that arrives DURING
+            // the wait (e.g. looted mid-startup) was never in the original
+            // request loop, and nothing else would ever request its id --
+            // the wait would then hang forever, since the completeness check
+            // above now also covers this new item. The per-item path below
+            // (H7-ordered) requests it exactly like any other newly-seen
+            // item.
         }
 
         // A TryGet miss means the object already left the table between the
@@ -235,13 +282,20 @@ public sealed class InventoryLogger
             return;
         if (wo.HasAppraisalData || !ObjectClassNeedsIdent(wo.ObjectClass, wo.Name))
             return;
-        // H7: the container check must run BEFORE marking the id as
+        // H7: the ownership check must run BEFORE marking the id as
         // requested. An object seen on the ground (not yet in my container)
         // must not get poisoned into _requestedIds -- otherwise once it's
         // picked up, this handler fires again for the same id but
         // _requestedIds.Add already returns false, and its id is never
         // actually requested.
-        if (wo.ContainerObjectId != _host.Automation.Character.ObjectId)
+        //
+        // MEDIUM-5: an item equipped mid-session has ContainerObjectId ==
+        // whatever it was equipped FROM (or 0), never the player -- the
+        // wielding entity's id lives in WielderObjectId instead (the same
+        // host-shape fact behind defect 9's IsEquippedByMe fix). Checking
+        // ContainerObjectId alone silently dropped every mid-session equip.
+        uint myId = _host.Automation.Character.ObjectId;
+        if (wo.ContainerObjectId != myId && wo.WielderObjectId != myId)
             return;
         if (!_requestedIds.Add(change.ObjectId))
             return;
@@ -261,6 +315,14 @@ public sealed class InventoryLogger
 
     private void Dump(bool requestIdsIfMissing, IReadOnlyList<PluginInventoryItem> items)
     {
+        // HIGH-1: refresh the last-known-good snapshot whenever this call
+        // actually has real items, so a later Stop() dump (which typically
+        // runs after the host has already torn the owned objects down)
+        // reflects the most recently captured inventory, not whatever was
+        // last captured at startup.
+        if (items.Count > 0)
+            _lastOwnedSnapshot = items as PluginInventoryItem[] ?? items.ToArray();
+
         List<MyWorldObjectRecord> previous = [];
         if (_host.Storage.ReadText(_storageKey) is { } content)
         {

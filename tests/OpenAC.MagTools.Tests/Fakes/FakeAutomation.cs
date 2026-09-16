@@ -252,7 +252,13 @@ public sealed class FakeItems : IItemAutomation
 
     public List<(string Command, uint ObjectId, uint TargetObjectId)> Calls { get; } = [];
 
+    /// <summary>Keyed by object id; set by a test to make <see cref="TryCaptureProperties"/> answer.</summary>
+    public Dictionary<uint, PluginItemProperties> Properties { get; } = [];
+
     public IReadOnlyList<PluginInventoryItem> CaptureOwnedItems() => Owned;
+
+    public bool TryCaptureProperties(uint objectId, out PluginItemProperties properties)
+        => Properties.TryGetValue(objectId, out properties);
 
     public PluginItemCommandResult Use(uint objectId)
     {
@@ -301,7 +307,12 @@ public sealed class FakeLoot : ILootAutomation
 
     public List<uint> Opened { get; } = [];
 
+    public Dictionary<uint, PluginItemProperties> Properties { get; } = [];
+
     public IReadOnlyList<PluginInventoryItem> CaptureCurrentContents() => Contents;
+
+    public bool TryCaptureProperties(uint objectId, out PluginItemProperties properties)
+        => Properties.TryGetValue(objectId, out properties);
 
     public PluginItemCommandResult Open(uint containerObjectId)
     {
@@ -320,7 +331,13 @@ public sealed class FakeObjects : IWorldObjectAutomation
 {
     public bool IsAvailable { get; set; } = true;
 
+    public uint OpenContainerObjectId { get; set; }
+
     public List<PluginWorldObject> Objects { get; } = [];
+
+    public Dictionary<uint, PluginItemProperties> Properties { get; } = [];
+
+    public List<uint> IdentifyRequests { get; } = [];
 
     public IReadOnlyList<PluginWorldObject> CaptureObjects() => Objects;
 
@@ -336,6 +353,29 @@ public sealed class FakeObjects : IWorldObjectAutomation
 
         value = default;
         return false;
+    }
+
+    public bool TryCaptureProperties(uint objectId, out PluginItemProperties properties)
+        => Properties.TryGetValue(objectId, out properties);
+
+    public PluginItemCommandResult Identify(uint objectId)
+    {
+        IdentifyRequests.Add(objectId);
+        return new PluginItemCommandResult(PluginItemCommandStatus.Started);
+    }
+
+    /// <summary>Replaces a tracked object's snapshot (e.g. to flip <c>HasAppraisalData</c>).</summary>
+    public void Replace(PluginWorldObject value)
+    {
+        for (int index = 0; index < Objects.Count; index++)
+        {
+            if (Objects[index].ObjectId != value.ObjectId)
+                continue;
+            Objects[index] = value;
+            return;
+        }
+
+        Objects.Add(value);
     }
 
     /// <summary>

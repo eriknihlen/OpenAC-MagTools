@@ -26,6 +26,10 @@ public sealed class FakeHost : IPluginHost
 
     public FakeAutomation Automation { get; } = new();
 
+    public FakeLootClassifierRegistry LootClassifiers { get; } = new();
+
+    public FakeClipboard Clipboard { get; } = new();
+
     IEvents IPluginHost.Events => Events;
 
     ISelectionService IPluginHost.Selection => Selection;
@@ -38,8 +42,90 @@ public sealed class FakeHost : IPluginHost
 
     IAutomationSurface IPluginHost.Automation => Automation;
 
+    IPluginLootClassifierRegistry IPluginHost.LootClassifiers => LootClassifiers;
+
+    IPluginClipboard IPluginHost.Clipboard => Clipboard;
+
     /// <summary>The chat lines the plugin posted, in order.</summary>
     public IReadOnlyList<string> ChatLines => Automation.Chat.Posted;
+}
+
+/// <summary>A settable <see cref="IPluginClipboard"/>: records every write, can fail on demand.</summary>
+public sealed class FakeClipboard : IPluginClipboard
+{
+    public List<string> Written { get; } = [];
+
+    public bool Available { get; set; } = true;
+
+    public bool TrySetText(string text)
+    {
+        if (!Available)
+            return false;
+        Written.Add(text);
+        return true;
+    }
+}
+
+/// <summary>
+/// A settable <see cref="IPluginLootClassifierRegistry"/>: one test-controlled
+/// classifier answers <see cref="TryClassify"/>/<see cref="TryNeedsIdentification"/>/
+/// <see cref="TryClassifyWithProfile"/>, or the registry reports no classifier
+/// registered at all (the "VTank isn't loaded" degradation path) when
+/// <see cref="Available"/> is left empty.
+/// </summary>
+public sealed class FakeLootClassifierRegistry : IPluginLootClassifierRegistry
+{
+    public List<PluginLootClassifierInfo> Available { get; } = [];
+
+    /// <summary>What <see cref="TryClassify"/> returns for any classifier id.</summary>
+    public PluginLootClassification? ClassificationResult { get; set; }
+
+    /// <summary>What <see cref="TryNeedsIdentification"/> returns for any classifier id.</summary>
+    public bool NeedsIdentificationResult { get; set; }
+
+    /// <summary>What <see cref="TryClassifyWithProfile"/> returns for any classifier id.</summary>
+    public PluginLootClassification? ProfileClassificationResult { get; set; }
+
+    public List<string> ClassifyCalls { get; } = [];
+
+    IReadOnlyList<PluginLootClassifierInfo> IPluginLootClassifierRegistry.Available => Available;
+
+    public bool TryClassify(
+        string classifierId,
+        in PluginLootClassificationContext context,
+        out PluginLootClassification classification)
+    {
+        ClassifyCalls.Add(classifierId);
+        if (ClassificationResult is { } result)
+        {
+            classification = result;
+            return true;
+        }
+
+        classification = default;
+        return false;
+    }
+
+    public bool TryNeedsIdentification(
+        string classifierId,
+        in PluginLootClassificationContext context)
+        => NeedsIdentificationResult;
+
+    public bool TryClassifyWithProfile(
+        string classifierId,
+        string profileName,
+        in PluginLootClassificationContext context,
+        out PluginLootClassification classification)
+    {
+        if (ProfileClassificationResult is { } result)
+        {
+            classification = result;
+            return true;
+        }
+
+        classification = default;
+        return false;
+    }
 }
 
 public sealed class RecordingLogger : IPluginLogger
@@ -72,6 +158,12 @@ public sealed class FakeEvents : IEvents
 
     public event Action<string>? LocalPlayerDied;
 
+    public event Action<PluginObjectChange>? ObjectChanged;
+
+    public event Action<uint>? ContainerOpened;
+
+    public event Action<uint>? ContainerClosed;
+
     public int TickSubscriberCount => Tick?.GetInvocationList().Length ?? 0;
 
     public int LoginCompleteSubscriberCount =>
@@ -90,6 +182,33 @@ public sealed class FakeEvents : IEvents
 
     public void RaiseLocalPlayerDied(string deathMessage)
         => LocalPlayerDied?.Invoke(deathMessage);
+
+    public void RaiseObjectChanged(PluginObjectChange change) => ObjectChanged?.Invoke(change);
+
+    public void RaiseObjectChanged(uint objectId, PluginObjectChangeKind kind)
+        => ObjectChanged?.Invoke(new PluginObjectChange(objectId, kind));
+
+    public void RaiseContainerOpened(uint containerObjectId) => ContainerOpened?.Invoke(containerObjectId);
+
+    public void RaiseContainerClosed(uint containerObjectId) => ContainerClosed?.Invoke(containerObjectId);
+
+    event Action<PluginObjectChange> IEvents.ObjectChanged
+    {
+        add => ObjectChanged += value;
+        remove => ObjectChanged -= value;
+    }
+
+    event Action<uint> IEvents.ContainerOpened
+    {
+        add => ContainerOpened += value;
+        remove => ContainerOpened -= value;
+    }
+
+    event Action<uint> IEvents.ContainerClosed
+    {
+        add => ContainerClosed += value;
+        remove => ContainerClosed -= value;
+    }
 
     event Action<WorldEntitySnapshot> IEvents.EntitySpawned
     {

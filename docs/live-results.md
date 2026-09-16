@@ -92,10 +92,16 @@ are described under "Harness notes" at the bottom.
 
 ## Defects found in the 2026-09-16 gate round
 
-1. **`ICharacterInfo.Name` is empty at the LoginComplete edge** (host) and is
+Status as of the P9 fix round (plugin repo): each item below says whether the
+plugin-side symptom is fixed here, or whether it is still waiting on the host
+(tracked as OpenAC slice A7). A defect can be BOTH -- the plugin can be made
+robust to the host's current behavior while the underlying host bug is still
+open.
+
+1. **`ICharacterInfo.Name` is empty at the LoginComplete edge** (host) and was
    cached there by the plugin (`src/OpenAC.MagTools/SessionContext.cs:98`).
-   Every character-scoped name derived from it is wrong for the whole session.
-   Observed consequences, each independently reproduced:
+   Every character-scoped name derived from it was wrong for the whole
+   session. Observed consequences, each independently reproduced:
    - character-scoped On-Login / On-Login-Complete / Periodic command lists
      never dispatch (the identical server-scoped lists do);
    - tracker files are written as `sawato/.CorpseTracker.xml` and
@@ -107,16 +113,46 @@ are described under "Harness notes" at the bottom.
    Host side: `src/AcDream.App/Plugins/AppAutomationSurface.cs:804-816` reads
    the name off the player object in the object table, which has no name yet at
    that moment. The live read works later in the session.
+   **PLUGIN-SIDE FIXED (P9):** `SessionContext` now re-checks the name every
+   tick after `LoginComplete` until it (and WorldName/AccountName) resolve,
+   then raises a new `SessionReady` event that every name-scoped owner in the
+   list above now waits for instead of `LoginComplete`; a session that ends
+   before the name ever resolves logs a warning instead of writing a file
+   with an empty character segment. Server-scoped work (which only needs
+   WorldName, never broken by this defect) was ALSO moved off the
+   `SessionReady` wait, back onto `LoginComplete`, so it is no longer
+   needlessly delayed by a fix aimed at the character-scoped half (P9
+   MEDIUM-4). **HOST-SIDE STILL OPEN (A7):** the underlying
+   `AppAutomationSurface.cs:804-816` read-too-early bug is unchanged; A7 is
+   the host fix that makes the FIRST read correct instead of relying on the
+   plugin to poll around it.
 2. **Clipboard export never reaches the clipboard.** Both Tools -> Inventory
    buttons print their start and completion messages, but the Windows clipboard
    stays empty when read from another process during and after the session.
-   `src/OpenAC.MagTools/Inventory/InventoryExporter.cs:192` discards
-   `IPluginClipboard.TrySetText`'s result, so the success message is printed
+   `src/OpenAC.MagTools/Inventory/InventoryExporter.cs:192` discarded
+   `IPluginClipboard.TrySetText`'s result, so the success message was printed
    unconditionally.
+   **PLUGIN-SIDE FIXED (P9):** `ExportObjects` now returns `TrySetText`'s
+   result; a refused write prints (and logs) "Clipboard is unavailable;
+   nothing was copied." instead of the success line. **HOST-SIDE:** whatever
+   made the live clipboard write itself fail (as opposed to just misreporting
+   success) is outside this plugin -- if `TrySetText` keeps returning `false`
+   on the same build, that is a host clipboard-backend question, not this
+   defect's plugin-side half.
 3. **Inventory logger writes an empty document.** With
    `InventoryManagement/InventoryLogger` on, a fresh session produced
    `<ArrayOfMyWorldObject />` and printed no `Requesting id information...`
    lines.
+   **PLUGIN-SIDE FIXED (P9):** two independent plugin bugs contributed and are
+   both fixed: (a) `Dump()` dropped any owned item the object table had no
+   full `PluginWorldObject` for yet instead of including it with
+   `HasIdData=false` (now via `MyWorldObjectRecord.CreateUnresolved`, which
+   also looks the id up in the previous file and keeps its id data via
+   `Combine` rather than overwriting it with an empty stub -- see HIGH-1);
+   (b) defect #1's empty character name meant every session's storage key
+   was the same wrong path, so the "does the file already exist" check saw a
+   leftover file from a PRIOR (also-misnamed) session and skipped the
+   request-line branch entirely -- fixed by #1's `SessionReady` fix.
 4. **Plugin-issued `Items.Use` on a landscape object never opens its panel or
    container.** Two independent cases: `/mt usel closestvendor` resolves a
    Vendor-class object (no `Nothing found named:` message) and issues `Use`,
@@ -125,16 +161,33 @@ are described under "Harness notes" at the bottom.
    `Use`, but no container opens and no loot line follows in 45 s. Because
    `Macros/Looter.cs:90` triggers on `ContainerOpened`, this also keeps the
    auto-looter from ever running.
+   **PLUGIN-SIDE FIXED (P9):** `/mt use*` now prints the
+   `PluginItemCommandResult` status (preferring its `Notice` text) whenever
+   the result is not `Started`, so a refused/no-op host response is visible
+   instead of silent -- see the deviations-doc row. **HOST-SIDE STILL OPEN
+   (A7, host defect D2):** the underlying "resolves the object, issues the
+   command, but nothing happens" behavior (no walk, no panel, no container)
+   is unchanged; this plugin fix only makes that host behavior observable
+   instead of silent.
 5. **`/mt castp <spell> on <target>` is silent.** No cast, no
    `No spell named:`/`No target found named:` message, no server reaction.
+   **FIXED (P9):** the router called the plain `IMagicCommands.Cast` bool and
+   never examined the return value -- a refusal produced zero output. Now
+   calls `RequestCast` and prints `Cast refused: <status>` for anything other
+   than `Sent`.
 6. **`/mt fellow create <name>` is silent.** No plugin output and no server
    response.
+   **FIXED (P9):** same shape as #5 -- `Accepted(result)` examined the status
+   but never printed it. Now prints `Fellowship request refused: <status>`
+   for anything other than `Accepted` (still silent on `Accepted`, matching
+   the original).
 7. **Host shutdown crashes after a clean session** (OpenAC, not the plugin):
    two runs ended with `Fatal error 0xC0000005` in
    `Silk.NET.Vulkan.Vk.DestroyDevice` from
    `VulkanGraphicsContext.Dispose`, and one with `0xC0000374` (heap
    corruption), each AFTER `graceful logout confirmed` and
    `Mag-Tools disabled`.
+   **HOST-SIDE STILL OPEN:** out of scope for this (plugin) repository.
 
 ## Harness notes (2026-09-16)
 

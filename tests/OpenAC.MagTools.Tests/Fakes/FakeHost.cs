@@ -87,6 +87,13 @@ public sealed class FakeLootClassifierRegistry : IPluginLootClassifierRegistry
     /// <summary>What <see cref="TryNeedsIdentification"/> returns for any classifier id.</summary>
     public bool NeedsIdentificationResult { get; set; }
 
+    /// <summary>
+    /// When set, overrides <see cref="NeedsIdentificationResult"/> with a
+    /// per-context verdict -- for a test where only SOME items in a
+    /// container still need identification.
+    /// </summary>
+    public Func<PluginLootClassificationContext, bool>? NeedsIdentificationHandler { get; set; }
+
     /// <summary>What <see cref="TryClassifyWithProfile"/> returns for any classifier id.</summary>
     public PluginLootClassification? ProfileClassificationResult { get; set; }
 
@@ -145,7 +152,7 @@ public sealed class FakeLootClassifierRegistry : IPluginLootClassifierRegistry
     public bool TryNeedsIdentification(
         string classifierId,
         in PluginLootClassificationContext context)
-        => NeedsIdentificationResult;
+        => NeedsIdentificationHandler is { } handler ? handler(context) : NeedsIdentificationResult;
 
     public bool TryClassifyWithProfile(
         string classifierId,

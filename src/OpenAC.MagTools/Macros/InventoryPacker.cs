@@ -44,9 +44,28 @@ public sealed class InventoryPacker
 
     private IDisposable? _thinkRegistration;
     private IDisposable? _chatFilterRegistration;
-    private readonly HashSet<uint> _idRequested = [];
+
+    /// <summary>
+    /// Per-item "how long have we been waiting for THIS item's id" clocks --
+    /// several items can legitimately be waiting on their own independent id
+    /// requests at once, unlike <see cref="_workingItemId"/> below (M5).
+    /// </summary>
+    private readonly Dictionary<uint, DateTime> _idWaitStartedUtc = [];
     private readonly HashSet<uint> _blacklistedIds = [];
-    private readonly Dictionary<uint, DateTime> _attemptStartedUtc = [];
+
+    /// <summary>
+    /// The single move/merge "currently being attempted" id and when that
+    /// attempt started (M4) -- NOT a per-id dictionary. Upstream tracks one
+    /// working id at a time and restarts the clock the moment a DIFFERENT
+    /// item becomes the one being moved/merged; a per-id map would instead
+    /// let an item's very first (and possibly only) attempt, from many
+    /// ticks ago, silently accumulate wall-clock age while other items were
+    /// actually being worked on, and blacklist it the moment it was
+    /// reconsidered even though it was never actually stuck.
+    /// </summary>
+    private uint _workingItemId;
+    private DateTime _workingSinceUtc;
+
     private string _profileName = string.Empty;
     private bool _running;
 
@@ -126,9 +145,9 @@ public sealed class InventoryPacker
             return;
 
         _running = true;
-        _idRequested.Clear();
+        _idWaitStartedUtc.Clear();
         _blacklistedIds.Clear();
-        _attemptStartedUtc.Clear();
+        _workingItemId = 0u;
 
         _chat.Write("Auto Pack - Started.");
         _thinkRegistration = _boundScheduler.Every(ThinkInterval, Think);
@@ -139,9 +158,9 @@ public sealed class InventoryPacker
         _thinkRegistration?.Dispose();
         _thinkRegistration = null;
         _running = false;
-        _idRequested.Clear();
+        _idWaitStartedUtc.Clear();
         _blacklistedIds.Clear();
-        _attemptStartedUtc.Clear();
+        _workingItemId = 0u;
     }
 
     private void Think()
@@ -149,17 +168,39 @@ public sealed class InventoryPacker
         if (!_running)
             return;
 
+        // M5: retried every think (not one-shot) until either appraised or
+        // stuck long enough to blacklist -- a Refused/Busy identify (see
+        // docs/plugin-api.md's Identify section) must get another chance
+        // next think, and an item that NEVER gains appraisal data must not
+        // pin `pendingId` (and therefore this whole run) forever.
         bool pendingId = false;
+        DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
         foreach (PluginInventoryItem item in _host.Automation.Items.CaptureOwnedItems())
         {
-            if (item.IsEquipped)
+            if (item.IsEquipped || _blacklistedIds.Contains(item.ObjectId))
                 continue;
             if (TryHasAppraisal(item.ObjectId))
+            {
+                _idWaitStartedUtc.Remove(item.ObjectId);
                 continue;
+            }
+
+            if (!_idWaitStartedUtc.TryGetValue(item.ObjectId, out DateTime waitStartUtc))
+            {
+                _idWaitStartedUtc[item.ObjectId] = now;
+                waitStartUtc = now;
+            }
+
+            if (now - waitStartUtc > StuckWindow)
+            {
+                _chat.Write("Blacklisting item: " + item.ObjectId + ", " + item.Name);
+                _blacklistedIds.Add(item.ObjectId);
+                _idWaitStartedUtc.Remove(item.ObjectId);
+                continue;
+            }
 
             pendingId = true;
-            if (_idRequested.Add(item.ObjectId))
-                _host.Automation.Objects.Identify(item.ObjectId);
+            _host.Automation.Objects.Identify(item.ObjectId);
         }
 
         if (_host.Automation.Items.IsBusy)
@@ -182,16 +223,23 @@ public sealed class InventoryPacker
         _thinkRegistration?.Dispose();
         _thinkRegistration = null;
         _running = false;
-        _idRequested.Clear();
+        _idWaitStartedUtc.Clear();
         _blacklistedIds.Clear();
-        _attemptStartedUtc.Clear();
+        _workingItemId = 0u;
     }
 
     private bool TryHasAppraisal(uint objectId)
         => _host.Automation.Objects.TryGet(objectId, out PluginWorldObject world)
             && world.HasAppraisalData;
 
-    /// <summary>Merges the first pair of same-name, non-full stackable items sharing a container. One merge per tick.</summary>
+    /// <summary>
+    /// Merges the first pair of same-name, non-full stackable items sharing
+    /// a container. One merge per tick. H2: consults the SAME id blacklist
+    /// and shared 10-second stuck timer <c>DoAutoPack</c> uses -- a merge
+    /// the host keeps rejecting must blacklist its source item and move on,
+    /// exactly like a stuck move does, rather than retrying the identical
+    /// merge forever and never letting <c>DoAutoPack</c> get a turn.
+    /// </summary>
     private bool DoAutoStack()
     {
         IReadOnlyList<PluginInventoryItem> owned = _host.Automation.Items.CaptureOwnedItems();
@@ -200,6 +248,8 @@ public sealed class InventoryPacker
         {
             PluginInventoryItem item = owned[i];
             if (item.IsEquipped || item.MaximumStackSize <= 1 || item.StackSize >= item.MaximumStackSize)
+                continue;
+            if (_blacklistedIds.Contains(item.ObjectId))
                 continue;
 
             for (int j = 0; j < owned.Count; j++)
@@ -210,10 +260,20 @@ public sealed class InventoryPacker
                 if (other.IsEquipped || other.MaximumStackSize <= 1
                     || other.StackSize >= other.MaximumStackSize)
                     continue;
+                if (_blacklistedIds.Contains(other.ObjectId))
+                    continue;
                 if (other.ContainerObjectId != item.ContainerObjectId)
                     continue;
                 if (!string.Equals(other.Name, item.Name, StringComparison.Ordinal))
                     continue;
+
+                if (IsStuck(item.ObjectId))
+                {
+                    _chat.Write("Blacklisting item: " + item.ObjectId + ", " + item.Name);
+                    _blacklistedIds.Add(item.ObjectId);
+                    _workingItemId = 0u;
+                    break;
+                }
 
                 _host.Automation.Items.Merge(item.ObjectId, other.ObjectId);
                 return true;
@@ -272,7 +332,7 @@ public sealed class InventoryPacker
                 {
                     _chat.Write("Blacklisting item: " + item.ObjectId + ", " + item.Name);
                     _blacklistedIds.Add(item.ObjectId);
-                    _attemptStartedUtc.Remove(item.ObjectId);
+                    _workingItemId = 0u;
                     continue;
                 }
 
@@ -284,16 +344,25 @@ public sealed class InventoryPacker
         return false;
     }
 
+    /// <summary>
+    /// M4: a SINGLE working-item/started-at pair, not a per-id dictionary --
+    /// the moment a DIFFERENT item becomes the one being attempted, the
+    /// clock restarts for it. This means an item that was tried once, set
+    /// aside while other items made progress, and only reconsidered many
+    /// ticks later gets a FRESH 10-second window rather than being judged
+    /// against how long ago its very first attempt happened to be.
+    /// </summary>
     private bool IsStuck(uint objectId)
     {
         DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
-        if (!_attemptStartedUtc.TryGetValue(objectId, out DateTime startedUtc))
+        if (objectId != _workingItemId)
         {
-            _attemptStartedUtc[objectId] = now;
+            _workingItemId = objectId;
+            _workingSinceUtc = now;
             return false;
         }
 
-        return now - startedUtc > StuckWindow;
+        return now - _workingSinceUtc > StuckWindow;
     }
 
     private Dictionary<int, uint> BuildPacks()

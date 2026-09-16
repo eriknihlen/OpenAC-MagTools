@@ -169,16 +169,25 @@ public sealed class Looter
         if (_host.Automation.Loot.IsBusy)
             return;
 
-        // One id request per think, for the first item that still needs one.
-        foreach (PluginInventoryItem item in contents)
+        // One id request per think, for the first item that still needs one
+        // -- H1: this used to `return` right after issuing that request,
+        // which meant a single item that kept coming back Refused/Busy (or
+        // simply never got appraised) stalled looting of every OTHER,
+        // already-appraised item in the container forever. It now falls
+        // through to PickNext below in the same tick, which already skips
+        // anything still needing identification on its own (upstream's
+        // `waitingForIds` equivalent) -- so identification and looting make
+        // progress in parallel instead of the id pass gating the loot pass.
+        if (!_isMyCorpse)
         {
-            if (_isMyCorpse)
-                break;
-            if (!NeedsIdentification(item))
-                continue;
+            foreach (PluginInventoryItem item in contents)
+            {
+                if (!NeedsIdentification(item))
+                    continue;
 
-            _host.Automation.Loot.Identify(item.ObjectId);
-            return;
+                _host.Automation.Loot.Identify(item.ObjectId);
+                break;
+            }
         }
 
         PluginInventoryItem? pick = PickNext(contents);

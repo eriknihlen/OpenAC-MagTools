@@ -148,6 +148,45 @@ public sealed class LooterTests
         Assert.Contains(host.ChatLines, line => line.Contains("No more lootable items found.", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void AnItemThatNeverGainsAnIdDoesNotStallLootingOfOtherItems()
+    {
+        // H1: the id-request pass used to `return` right after issuing a
+        // request, which meant one item that never becomes identified
+        // stalled the WHOLE run -- PickNext (the loot pass) never even ran.
+        (FakeHost host, _, OpenAC.MagTools.TickScheduler scheduler, _) = Build();
+        OpenContainer(host, 5u, "Treasure Chest", PluginObjectClass.Container);
+
+        PluginInventoryItem stuckItem = new PluginWorldObjectItem(1u, "Mystery Box", PluginObjectClass.Misc).ToItem();
+        PluginInventoryItem readyItem = new PluginWorldObjectItem(2u, "Rusty Shortsword", PluginObjectClass.Misc).ToItem();
+        host.Automation.Loot.Contents.Add(stuckItem);
+        host.Automation.Loot.Contents.Add(readyItem);
+
+        // Item 1 always reports "still needs an id" (simulating an identify
+        // that keeps coming back Refused/Busy); item 2 never needs one.
+        host.LootClassifiers.NeedsIdentificationHandler = context => context.Item.ObjectId == 1u;
+        host.LootClassifiers.ClassifyHandler = context => context.Item.ObjectId == 2u
+            ? new PluginLootClassification(Matched: true, Action: PluginLootAction.Keep)
+            : null;
+
+        scheduler.Tick(0.1);
+
+        // The stuck item gets an id request...
+        Assert.Contains(1u, host.Automation.Loot.IdentifyRequests);
+        // ... but item 2 still gets picked up in the SAME tick, not stalled behind it.
+        Assert.Contains(2u, host.Automation.Loot.PickedUp);
+
+        // Once the ready item is gone (as if it had actually been removed
+        // from the container after being picked up) and only the perpetually
+        // unidentified item remains, the run completes rather than hanging.
+        host.Automation.Loot.Contents.Remove(readyItem);
+        host.Automation.Loot.PickedUp.Clear();
+        scheduler.Tick(0.1);
+
+        Assert.Empty(host.Automation.Loot.PickedUp);
+        Assert.Contains(host.ChatLines, line => line.Contains("No more lootable items found.", StringComparison.Ordinal));
+    }
+
     /// <summary>Tiny helper so a test can build a corpse-content item without repeating the 27-arg constructor.</summary>
     private readonly record struct PluginWorldObjectItem(uint ObjectId, string Name, PluginObjectClass ObjectClass)
     {

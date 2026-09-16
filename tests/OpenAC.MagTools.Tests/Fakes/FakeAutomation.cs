@@ -622,6 +622,8 @@ public sealed class FakeLoot : ILootAutomation
 
     public List<uint> Opened { get; } = [];
 
+    public List<uint> IdentifyRequests { get; } = [];
+
     public Dictionary<uint, PluginItemProperties> Properties { get; } = [];
 
     public IReadOnlyList<PluginInventoryItem> CaptureCurrentContents() => Contents;
@@ -632,6 +634,12 @@ public sealed class FakeLoot : ILootAutomation
     public PluginItemCommandResult Open(uint containerObjectId)
     {
         Opened.Add(containerObjectId);
+        return new PluginItemCommandResult(PluginItemCommandStatus.Started);
+    }
+
+    public PluginItemCommandResult Identify(uint objectId)
+    {
+        IdentifyRequests.Add(objectId);
         return new PluginItemCommandResult(PluginItemCommandStatus.Started);
     }
 

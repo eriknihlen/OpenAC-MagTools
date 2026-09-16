@@ -345,7 +345,7 @@ public sealed class InventoryManagementSettings
     public Setting<bool> KeyDeringer { get; }
 }
 
-public sealed class ItemInfoOnIdentSettings
+public sealed class ItemInfoOnIdentSettings : OpenAC.MagTools.ItemInfo.ISettings
 {
     public ItemInfoOnIdentSettings(SettingsFile file)
     {
@@ -385,6 +385,9 @@ public sealed class ItemInfoOnIdentSettings
     public Setting<bool> ShowValueAndBurden { get; }
     public Setting<bool> LeftClickIdent { get; }
     public Setting<bool> AutoClipboard { get; }
+
+    bool OpenAC.MagTools.ItemInfo.ISettings.ShowBuffedValues => ShowBuffedValues.Value;
+    bool OpenAC.MagTools.ItemInfo.ISettings.ShowValueAndBurden => ShowValueAndBurden.Value;
 }
 
 public sealed class CombatTrackerSettings

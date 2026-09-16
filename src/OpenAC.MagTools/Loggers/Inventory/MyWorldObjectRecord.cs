@@ -25,9 +25,9 @@ public sealed class MyWorldObjectRecord
     /// Fallback for an owned item the object table has no full
     /// <see cref="PluginWorldObject"/> for yet — the item is still real and
     /// owned, so it belongs in the dump, just with no property/spell data
-    /// and <see cref="HasIdData"/> false, exactly like the original always
-    /// wrote every owned item and let unresolved ones show up with an empty
-    /// id block rather than silently dropping them.
+    /// beyond its name and <see cref="HasIdData"/> false, exactly like the
+    /// original always wrote every owned item and let unresolved ones show
+    /// up with an empty id block rather than silently dropping them.
     /// </summary>
     public static MyWorldObjectRecord CreateUnresolved(PluginInventoryItem item)
         => new()
@@ -36,6 +36,12 @@ public sealed class MyWorldObjectRecord
             Id = item.ObjectId,
             LastIdTime = 0,
             ObjectClass = (int)item.ObjectClass,
+            // PropertyString.Name == 1, same key Create() reads from
+            // properties.Strings -- the only property this fallback can
+            // actually know without a resolved PluginWorldObject.
+            StringValues = string.IsNullOrEmpty(item.Name)
+                ? new Dictionary<int, string>()
+                : new Dictionary<int, string> { [1] = item.Name },
         };
 
     /// <summary><c>MyWorldObjectCreator.Create</c>.</summary>

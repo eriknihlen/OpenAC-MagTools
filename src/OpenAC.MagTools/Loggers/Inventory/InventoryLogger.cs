@@ -181,15 +181,29 @@ public sealed class InventoryLogger
             // An owned item the object table has no full PluginWorldObject
             // for yet (not yet resolved/appraised) is still owned and still
             // belongs in the dump -- the original always wrote every owned
-            // item, with an empty id block for anything unresolved. See
-            // defect #3/#5 in docs/live-results.md: this `continue` used to
-            // drop it outright, so a fresh dump before ident data arrived
-            // came out as an effectively-empty document.
+            // item, with an empty id block for anything unresolved. See the
+            // P9 fix round (docs/live-results.md) for the "empty document"
+            // symptom this addresses. A previously-persisted record for this
+            // id must survive a thin object-table dump unchanged: look it up
+            // in `previous` and Combine rather than overwriting good id data
+            // with an empty unresolved stub (HIGH-1).
             if (!_host.Automation.Objects.TryGet(item.ObjectId, out PluginWorldObject wo))
             {
-                if (requestIdsIfMissing && ObjectClassNeedsIdent(item.ObjectClass, item.Name))
+                MyWorldObjectRecord unresolved = MyWorldObjectRecord.CreateUnresolved(item);
+                MyWorldObjectRecord? previousMatch = previous.FirstOrDefault(
+                    prev => prev.Id == unresolved.Id && prev.ObjectClass == unresolved.ObjectClass);
+                bool alreadyHasIdData = previousMatch is not null && previousMatch.HasIdData;
+
+                if (requestIdsIfMissing && !alreadyHasIdData
+                    && ObjectClassNeedsIdent(item.ObjectClass, item.Name))
+                {
                     _host.Automation.Objects.Identify(item.ObjectId);
-                current.Add(MyWorldObjectRecord.CreateUnresolved(item));
+                    _requestedIds.Add(item.ObjectId);
+                }
+
+                current.Add(previousMatch is null
+                    ? unresolved
+                    : MyWorldObjectRecord.Combine(previousMatch, unresolved));
                 continue;
             }
 

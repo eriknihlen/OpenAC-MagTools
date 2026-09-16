@@ -109,7 +109,7 @@ public sealed class InventoryLoggerTests
     [Fact]
     public void AnOwnedItemWithNoWorldObjectYetIsStillDumpedNotDropped()
     {
-        // Defect #3/#5: an owned item the object table has no full
+        // Defect #3: an owned item the object table has no full
         // PluginWorldObject for yet (only the lightweight
         // PluginInventoryItem snapshot exists) used to be dropped from the
         // dump entirely instead of appearing with HasIdData=false, like the
@@ -134,10 +134,61 @@ public sealed class InventoryLoggerTests
         Assert.Equal(7u, record.Id);
         Assert.False(record.HasIdData);
         Assert.Equal((int)PluginObjectClass.Jewelry, record.ObjectClass);
+        // MEDIUM-3: the name is the one piece of real data this fallback can
+        // still carry, under PropertyString.Name's key (1) -- same
+        // convention Create() uses from properties.Strings.
+        Assert.Equal("Unresolved Trinket", record.StringValues[1]);
 
         // It also should have had an id requested for it, same as any other
         // ident-worthy owned item.
         Assert.Contains(7u, host.Automation.Objects.IdentifyRequests);
+    }
+
+    [Fact]
+    public void APreviouslyAppraisedItemMissingFromTheObjectTableKeepsItsIdData()
+    {
+        // HIGH-1: a thin object-table dump (the item is still owned but this
+        // session's object table hasn't resolved it yet -- e.g. right after
+        // a reconnect, before the world repopulates) must not overwrite a
+        // persisted, previously-appraised record with an empty unresolved
+        // stub. The previous record's id data has to survive via Combine.
+        (FakeHost host, ChatOutput chat, InventoryManagementSettings settings) = Make();
+        var previouslyAppraised = new MyWorldObjectRecord
+        {
+            HasIdData = true,
+            Id = 7u,
+            LastIdTime = 12345,
+            ObjectClass = (int)PluginObjectClass.Jewelry,
+            StringValues = new Dictionary<int, string> { [1] = "Ring of Fortitude" },
+            IntValues = new Dictionary<int, int> { [1] = 42 },
+        };
+        host.Storage.WriteText(
+            "ACServer/Acdream.Inventory.xml", InventoryLoggerXml.Export([previouslyAppraised]));
+
+        // Owned this session, but the object table has no full
+        // PluginWorldObject for it yet -- deliberately no matching entry in
+        // host.Automation.Objects.Objects.
+        host.Automation.Items.Owned.Add(new PluginInventoryItem(
+            7u, 0u, "Ring of Fortitude", 0u, 500u, 0u, 0u, 0u, 0u, 0u, 0u,
+            1, 0, 0, 0u, 0, 0, 0u, false, 0d, 0, 0, 0, 0, 0, 0, 0)
+        {
+            ObjectClass = PluginObjectClass.Jewelry,
+        });
+
+        var logger = new InventoryLogger(host, chat, settings);
+        logger.Start("ACServer", "Acdream"); // existing file -> dumps immediately
+
+        string? xml = host.Storage.ReadText("ACServer/Acdream.Inventory.xml");
+        Assert.NotNull(xml);
+        Assert.True(InventoryLoggerXml.TryImport(xml!, out List<MyWorldObjectRecord> records));
+        MyWorldObjectRecord record = Assert.Single(records);
+        Assert.Equal(7u, record.Id);
+        Assert.True(record.HasIdData);
+        Assert.Equal("Ring of Fortitude", record.StringValues[1]);
+        Assert.Equal(42, record.IntValues[1]);
+
+        // Already had id data -- must not re-request.
+        Assert.DoesNotContain(7u, host.Automation.Objects.IdentifyRequests);
     }
 
     [Fact]

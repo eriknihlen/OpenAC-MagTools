@@ -214,19 +214,17 @@ public sealed class MtCommandRouter
                 return false;
             }
 
-            return Report(
-                fellowship.Create(createName, shareExperience: true),
-                "Fellowship created.");
+            return Report(fellowship.Create(createName, shareExperience: true));
         }
 
         if (argument == "open")
-            return Report(fellowship.SetOpen(true), "Fellowship opened.");
+            return Report(fellowship.SetOpen(true));
         if (argument == "close")
-            return Report(fellowship.SetOpen(false), "Fellowship closed.");
+            return Report(fellowship.SetOpen(false));
         if (argument == "disband")
-            return Report(fellowship.Quit(disband: true), "Fellowship disbanded.");
+            return Report(fellowship.Quit(disband: true));
         if (argument == "quit")
-            return Report(fellowship.Quit(disband: false), "Left the fellowship.");
+            return Report(fellowship.Quit(disband: false));
 
         if (Matches(argument, "recruit"))
         {
@@ -238,25 +236,23 @@ public sealed class MtCommandRouter
                 return false;
             }
 
-            return Report(fellowship.Recruit(id), "Invited " + name + " to the fellowship.");
+            return Report(fellowship.Recruit(id));
         }
 
         _chat.Write(
             "Usage: /mt fellow create <name>|open|close|disband|quit|recruit <player>");
         return false;
 
-        // Every fellowship action must print SOMETHING -- previously a
-        // Rejected/Unavailable result (the server refusing the request, or
-        // no fellowship API available at all) was swallowed silently and
-        // looked identical to the command never running. See defect #4 in
-        // docs/live-results.md.
-        bool Report(PluginFellowshipCommandResult result, string confirmation)
+        // A refused fellowship action (Rejected/Unavailable -- the server
+        // refusing the request, or no fellowship API available at all) must
+        // print SOMETHING, or it is indistinguishable from the command never
+        // running. Accepted stays silent, same as the original (the server's
+        // own reaction, e.g. the roster/panel update, is the confirmation).
+        // See defect #6 in docs/live-results.md.
+        bool Report(PluginFellowshipCommandResult result)
         {
             if (result.Accepted)
-            {
-                _chat.Write(confirmation);
                 return true;
-            }
 
             _chat.Write("Fellowship request refused: " + result.Status);
             return false;
@@ -365,9 +361,7 @@ public sealed class MtCommandRouter
             }
 
             _host.Selection.Select(targetId);
-            return ReportUse(
-                _host.Automation.Items.Apply(sourceId, targetId),
-                itemName + " on " + targetName);
+            return ReportUse(_host.Automation.Items.Apply(sourceId, targetId));
         }
 
         uint id = ResolveUseTarget(itemName, scope, partial);
@@ -377,26 +371,27 @@ public sealed class MtCommandRouter
             return false;
         }
 
-        return ReportUse(_host.Automation.Items.Use(id), itemName);
+        return ReportUse(_host.Automation.Items.Use(id));
     }
 
     /// <summary>
-    /// Every <c>/mt use*</c> outcome must print SOMETHING -- previously a
+    /// A refused <c>/mt use*</c> outcome must print SOMETHING -- previously a
     /// refused command (InvalidItem, InvalidTarget, Busy, Refused,
     /// Unavailable) resolved a real object and issued the command with no
     /// chat output at all, indistinguishable from a host that silently did
-    /// nothing (see defect #4/#6 in docs/live-results.md, e.g.
-    /// <c>/mt usel closestvendor</c> against a real vendor).
+    /// nothing (see defect #4 in docs/live-results.md, e.g.
+    /// <c>/mt usel closestvendor</c> against a real vendor). Started stays
+    /// silent, same as the original. Prefers the host's own
+    /// <see cref="PluginItemCommandResult.Notice"/> when it supplied one
+    /// (a more specific reason than the bare status) and falls back to the
+    /// status name otherwise.
     /// </summary>
-    private bool ReportUse(PluginItemCommandResult result, string what)
+    private bool ReportUse(PluginItemCommandResult result)
     {
         if (result.Status == PluginItemCommandStatus.Started)
-        {
-            _chat.Write("Using " + what + ".");
             return true;
-        }
 
-        _chat.Write("Use refused: " + result.Status);
+        _chat.Write("Use refused: " + (result.Notice ?? result.Status.ToString()));
         return false;
     }
 

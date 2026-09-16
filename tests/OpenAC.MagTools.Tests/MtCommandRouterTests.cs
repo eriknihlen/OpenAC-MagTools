@@ -190,17 +190,19 @@ public sealed class MtCommandRouterTests
     }
 
     [Fact]
-    public void FellowCreatePrintsAConfirmationWhenAccepted()
+    public void FellowCreateStaysSilentWhenAccepted()
     {
+        // Matches the original: Accepted prints nothing (the server's own
+        // reaction -- the roster/panel update -- is the confirmation).
         Assert.True(_router.Execute("fellow create Bob's Fellowship"));
-        Assert.Equal(Line("Fellowship created."), Assert.Single(Chat));
+        Assert.Empty(Chat);
     }
 
     [Fact]
     public void FellowCreatePrintsTheRefusalWhenNotAccepted()
     {
         // Before this fix, a Rejected/Unavailable result was swallowed --
-        // no chat line, no server response visible to the user. Defect #4.
+        // no chat line, no server response visible to the user. Defect #6.
         _host.Automation.Fellowship.Result =
             new PluginFellowshipCommandResult(PluginFellowshipCommandStatus.Rejected);
 
@@ -294,18 +296,19 @@ public sealed class MtCommandRouterTests
     }
 
     [Fact]
-    public void UsePrintsAConfirmationWhenStarted()
+    public void UseStaysSilentWhenStarted()
     {
+        // Matches the original: Started prints nothing.
         _host.Automation.Items.Owned.Add(FakeItems.Item(3u, "Lockpick"));
 
         Assert.True(_router.Execute("use lockpick"));
-        Assert.Equal(Line("Using lockpick."), Assert.Single(Chat));
+        Assert.Empty(Chat);
     }
 
     [Fact]
     public void UsePrintsTheRefusalWhenNotStarted()
     {
-        // Defect #4/#6: a resolved use that the host refuses (InvalidItem,
+        // Defect #4: a resolved use that the host refuses (InvalidItem,
         // Busy, Refused, ...) used to print nothing at all -- indistinguishable
         // from the command never running, e.g. /mt usel closestvendor against
         // a real vendor the live host never opened a panel for.
@@ -315,6 +318,19 @@ public sealed class MtCommandRouterTests
 
         Assert.False(_router.Execute("use lockpick"));
         Assert.Equal(Line("Use refused: InvalidItem"), Assert.Single(Chat));
+    }
+
+    [Fact]
+    public void UseRefusalPrefersTheHostsOwnNoticeOverTheBareStatus()
+    {
+        _host.Automation.Items.Owned.Add(FakeItems.Item(3u, "Lockpick"));
+        _host.Automation.Items.UseResult = new PluginItemCommandResult(
+            PluginItemCommandStatus.Refused, Notice: "The vendor is busy with someone else.");
+
+        Assert.False(_router.Execute("use lockpick"));
+        Assert.Equal(
+            Line("Use refused: The vendor is busy with someone else."),
+            Assert.Single(Chat));
     }
 
     [Fact]
@@ -329,7 +345,7 @@ public sealed class MtCommandRouterTests
         Assert.True(_router.Execute("use lockpick on chest key"));
         Assert.Equal(("apply", 3u, 4u), Assert.Single(_host.Automation.Items.Calls));
         Assert.Equal(4u, _host.Selection.SelectedObjectId);
-        Assert.Equal(Line("Using lockpick on chest key."), Assert.Single(Chat));
+        Assert.Empty(Chat);
     }
 
     [Fact]

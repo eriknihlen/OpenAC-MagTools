@@ -52,6 +52,50 @@ public sealed class CombatTrackerHostTests
     }
 
     [Fact]
+    public void SystemKindMagicDamageLineReachesTheTrackers()
+    {
+        // A server-composed magic-damage-received line is host text, not a
+        // host-composed evade/damage/kill line, so it rides Kind == System.
+        (FakeHost host, _, CombatTrackerHost combatHost) = Build();
+        var scheduler = new TickScheduler(host.Events, new ChatOutput(host));
+        combatHost.Start(scheduler, "Frostfell", "Acdream");
+
+        host.System("Crystal Shard Sentinel scorches you for 47 points with Flame Arc VII.");
+
+        CombatInfo info = Assert.Single(combatHost.Current.CombatInfos);
+        Assert.Equal("Crystal Shard Sentinel", info.SourceName);
+        Assert.Equal("Acdream", info.TargetName);
+    }
+
+    [Fact]
+    public void SystemKindResistLineReachesTheTrackers()
+    {
+        (FakeHost host, _, CombatTrackerHost combatHost) = Build();
+        var scheduler = new TickScheduler(host.Events, new ChatOutput(host));
+        combatHost.Start(scheduler, "Frostfell", "Acdream");
+
+        host.System("You resist the spell cast by Virindi Rival");
+
+        CombatInfo info = Assert.Single(combatHost.Current.CombatInfos);
+        Assert.Equal("Virindi Rival", info.SourceName);
+        Assert.Equal("Acdream", info.TargetName);
+        Assert.Equal(1, info.FailedAttacks);
+    }
+
+    [Fact]
+    public void SystemKindCloakSurgeLineReachesTheTrackers()
+    {
+        (FakeHost host, _, CombatTrackerHost combatHost) = Build();
+        var scheduler = new TickScheduler(host.Events, new ChatOutput(host));
+        combatHost.Start(scheduler, "Frostfell", "Acdream");
+
+        host.System("You cast Cloaked in Skill on yourself");
+
+        Assert.Single(combatHost.Current.CloakInfos);
+        Assert.Single(combatHost.Persistent.CloakInfos);
+    }
+
+    [Fact]
     public void OneChatLineFeedsBothCurrentAndPersistentTrackers()
     {
         (FakeHost host, _, CombatTrackerHost combatHost) = Build();

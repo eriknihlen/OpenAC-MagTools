@@ -245,14 +245,13 @@ public sealed class CombatPageViewModel
         IReadOnlyList<string> MonsterKillingBlows,
         IReadOnlyList<string> MonsterDamageReceived,
         IReadOnlyList<string> MonsterDamageGiven,
-        IReadOnlyList<string?> MonsterTargetNames,
         IReadOnlyList<string> DamageLabels,
         IReadOnlyList<string> DamageMeleeMissile,
         IReadOnlyList<string> DamageMagic,
         IReadOnlyList<string> DamageStatLabels,
         IReadOnlyList<string> DamageStatValues)
     {
-        public static readonly CombatColumns Empty = new([], [], [], [], [], [], [], [], [], []);
+        public static readonly CombatColumns Empty = new([], [], [], [], [], [], [], [], []);
 
         public static CombatColumns Build(
             CombatTracker tracker, string localPlayerName, bool sortAlphabetically, int selectedMonsterRow)
@@ -270,7 +269,6 @@ public sealed class CombatPageViewModel
             var killingBlows = new string[monsterCount];
             var damageReceived = new string[monsterCount];
             var damageGiven = new string[monsterCount];
-            var targetNames = new string?[monsterCount];
             for (int i = 0; i < monsterCount; i++)
             {
                 CombatTrackerRows.MonsterRow monsterRow = monsterRows[i];
@@ -278,7 +276,6 @@ public sealed class CombatPageViewModel
                 killingBlows[i] = monsterRow.KillingBlows;
                 damageReceived[i] = monsterRow.DamageReceived;
                 damageGiven[i] = monsterRow.DamageGiven;
-                targetNames[i] = monsterRow.TargetName;
             }
 
             int damageCount = damageRows.Count;
@@ -298,7 +295,7 @@ public sealed class CombatPageViewModel
             }
 
             return new CombatColumns(
-                names, killingBlows, damageReceived, damageGiven, targetNames,
+                names, killingBlows, damageReceived, damageGiven,
                 labels, meleeMissile, magic, statLabels, statValues);
         }
     }

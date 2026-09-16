@@ -182,6 +182,41 @@ public sealed class StandardTrackerTests
         Assert.True(args.IsRecklessness);
     }
 
+    [Fact]
+    public void CriticalHitSneakAttackMeleeReceivedStripsThePrefixBehindTheAnchor()
+    {
+        // The host's own text builder (DefenderLineForBodyPartText) writes
+        // "Critical hit! " BEFORE "Sneak Attack! "/"Reckless! ", so the
+        // Dirty Fighting prefix can appear stuck behind the received
+        // tables' own "Critical hit! " anchor — StripReceivedPrefixes must
+        // pull the anchor off, strip what follows, then put the anchor back.
+        CombatEventArgs? args = StandardTracker.Parse(
+            "Critical hit! Sneak Attack! Drudge Prowler mangles your arm for 12 points of slashing damage!",
+            Me);
+
+        Assert.NotNull(args);
+        Assert.Equal("Drudge Prowler", args!.SourceName);
+        Assert.Equal(Me, args.TargetName);
+        Assert.Equal(12, args.DamageAmount);
+        Assert.True(args.IsCriticalHit);
+        Assert.True(args.IsSneakAttack);
+    }
+
+    [Fact]
+    public void CriticalHitRecklessMagicReceivedStripsThePrefixBehindTheAnchor()
+    {
+        CombatEventArgs? args = StandardTracker.Parse(
+            "Critical hit! Reckless! Crystal Shard Sentinel scorches you for 47 points with Flame Arc VII.",
+            Me);
+
+        Assert.NotNull(args);
+        Assert.Equal("Crystal Shard Sentinel", args!.SourceName);
+        Assert.Equal(Me, args.TargetName);
+        Assert.Equal(AttackType.Magic, args.AttackType);
+        Assert.True(args.IsCriticalHit);
+        Assert.True(args.IsRecklessness);
+    }
+
     // ── Melee/missile given — the load-bearing spacing + ordering fix ──────
 
     [Fact]

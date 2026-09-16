@@ -10,10 +10,15 @@ namespace OpenAC.MagTools.Trackers.Combat;
 /// docs/plugin-ui-markup.md), so both lists are genuine multi-column lists
 /// here — monster list 111/37/55/*, damage list 40/52/52/45/*. Every VALUE
 /// and PERCENTAGE computation is byte-for-byte the same math as the
-/// original; the one real gap is that the markup has no per-column
-/// alignment attribute, so a numeric cell is right-aligned by padding the
-/// string itself (<see cref="PadRightAligned"/>) rather than by a column
-/// property. See docs/deviations.md.
+/// original. Cells are left-aligned, unpadded strings: the host's
+/// <c>UiMarkupList</c> draws each cell left-aligned and clips it to the
+/// column's pixel width with no ellipsis (<c>UiMarkupList.cs</c>'s
+/// <c>DrawTextCell</c>/<c>PushClip</c>), so left-padding a numeric string to
+/// fake right-alignment would push its least-significant digits past the
+/// column edge and silently clip them off — worse than no alignment at all.
+/// The markup's <c>&lt;column&gt;</c> element has no alignment attribute, so
+/// right-alignment for these columns is simply not reproduced here. See
+/// docs/deviations.md.
 /// </summary>
 public static class CombatTrackerRows
 {
@@ -115,25 +120,8 @@ public static class CombatTrackerRows
         string rcvd = damageReceived == 0 ? "" : NumberFormatter.Format(damageReceived, "#,##0", 9999999);
         string givn = damageGiven == 0 ? "" : NumberFormatter.Format(damageGiven, "#,##0", 99999999);
 
-        return new MonsterRow(
-            displayName,
-            PadRightAligned(kb, 6),
-            PadRightAligned(rcvd, 10),
-            PadRightAligned(givn, 10),
-            targetName);
+        return new MonsterRow(displayName, kb, rcvd, givn, targetName);
     }
-
-    /// <summary>
-    /// Right-aligns a numeric/percentage cell by padding on the left, since
-    /// the markup's <c>&lt;column&gt;</c> element has no alignment
-    /// attribute (see the class remarks and docs/deviations.md). The pad
-    /// widths below reuse the character counts the original single-string
-    /// layout used (<c>"{1,6} {2,10} {3,10}"</c> for the monster list,
-    /// <c>"{1,9} {2,9} ... {4,9}"</c> for the damage list) as a best-effort
-    /// approximation of the authored pixel column widths — there is no
-    /// pixel-to-character metric available to compute this exactly.
-    /// </summary>
-    private static string PadRightAligned(string value, int width) => value.PadLeft(width);
 
     // ── Damage/info list ────────────────────────────────────────────────────
 
@@ -198,7 +186,7 @@ public static class CombatTrackerRows
 
         static string Cell(Dictionary<DamageElement, int> bucket, DamageElement element)
             => bucket.TryGetValue(element, out int value) && value != 0
-                ? PadRightAligned(value.ToString("#,##0", CultureInfo.InvariantCulture), 9)
+                ? value.ToString("#,##0", CultureInfo.InvariantCulture)
                 : "";
 
         // Attacks / evades / resists.
@@ -317,31 +305,31 @@ public static class CombatTrackerRows
 
         return
         [
-            new DamageRow("", "Mel/Msl", "Magic", "Attacks", PadRightAligned(attacksCell, 9)),
+            new DamageRow("", "Mel/Msl", "Magic", "Attacks", attacksCell),
             new DamageRow(
                 "Typeless",
                 Cell(receivedMeleeMissile, DamageElement.Typeless),
                 Cell(receivedMagic, DamageElement.Typeless),
                 "Evades",
-                PadRightAligned(evadesCell, 9)),
+                evadesCell),
             new DamageRow(
                 "Slash",
                 Cell(receivedMeleeMissile, DamageElement.Slash),
                 Cell(receivedMagic, DamageElement.Slash),
                 "Resists",
-                PadRightAligned(resistsCell, 9)),
+                resistsCell),
             new DamageRow(
                 "Pierce",
                 Cell(receivedMeleeMissile, DamageElement.Pierce),
                 Cell(receivedMagic, DamageElement.Pierce),
                 "A.Surges",
-                PadRightAligned(aSurgesCell, 9)),
+                aSurgesCell),
             new DamageRow(
                 "Bludge",
                 Cell(receivedMeleeMissile, DamageElement.Bludge),
                 Cell(receivedMagic, DamageElement.Bludge),
                 "C.Surges",
-                PadRightAligned(cSurgesCell, 9)),
+                cSurgesCell),
             new DamageRow(
                 "Fire",
                 Cell(receivedMeleeMissile, DamageElement.Fire),
@@ -353,26 +341,26 @@ public static class CombatTrackerRows
                 Cell(receivedMeleeMissile, DamageElement.Cold),
                 Cell(receivedMagic, DamageElement.Cold),
                 "Av/Mx",
-                PadRightAligned(avgMaxCell, 9)),
+                avgMaxCell),
             new DamageRow(
                 "Acid",
                 Cell(receivedMeleeMissile, DamageElement.Acid),
                 Cell(receivedMagic, DamageElement.Acid),
                 "Crits",
-                PadRightAligned(critsCell, 9)),
+                critsCell),
             new DamageRow(
                 "Electric",
                 Cell(receivedMeleeMissile, DamageElement.Electric),
                 Cell(receivedMagic, DamageElement.Electric),
                 "Av/Mx",
-                PadRightAligned(critsAvgMaxCell, 9)),
+                critsAvgMaxCell),
             new DamageRow("", "", "", "", ""),
             new DamageRow(
                 "Total",
-                totalMeleeMissile == 0 ? "" : PadRightAligned(totalMeleeMissile.ToString("#,##0", CultureInfo.InvariantCulture), 9),
-                totalMagic == 0 ? "" : PadRightAligned(totalMagic.ToString("#,##0", CultureInfo.InvariantCulture), 9),
+                totalMeleeMissile == 0 ? "" : totalMeleeMissile.ToString("#,##0", CultureInfo.InvariantCulture),
+                totalMagic == 0 ? "" : totalMagic.ToString("#,##0", CultureInfo.InvariantCulture),
                 "Total",
-                PadRightAligned(totalDamageCell, 9)),
+                totalDamageCell),
         ];
     }
 

@@ -29,7 +29,7 @@ public static class CombatMessages
     /// Prefixes retail can put in front of a RECEIVED melee/missile or magic
     /// damage line when the attacking monster's AI used the Dirty Fighting
     /// skill against the local player: "Sneak Attack! ", "Reckless! " (the
-    /// defender-side wording — see <c>CombatNotificationText.DefenderLine</c>
+    /// defender-side wording — see <c>CombatNotificationText.DefenderLineForBodyPartText</c>
     /// in the acdream host, which emits "Reckless! " rather than
     /// "Recklessness! " for an incoming attack), and "Recklessness! " (kept
     /// as a defensive fallback in case a build ever emits the attacker-side
@@ -46,13 +46,43 @@ public static class CombatMessages
         ["Sneak Attack! ", "Reckless! ", "Recklessness! "];
 
     /// <summary>
+    /// The literal leading anchors <see cref="MeleeMissileReceivedAttacks"/>/
+    /// <see cref="MagicReceivedAttacks"/> match on, longest first. The
+    /// host's own text builder writes these BEFORE the Dirty Fighting
+    /// prefixes (<c>DefenderLineForBodyPartText</c>: "Critical hit! " then
+    /// "Sneak Attack! " then "Reckless! "), so a line can read
+    /// "Critical hit! Sneak Attack! Drudge Prowler mangles ..." — the anchor
+    /// itself is not something <see cref="ReceivedPrefixesToStrip"/> would
+    /// ever remove, but it also is not what pollutes the captured name; the
+    /// Dirty Fighting text stuck BEHIND it is. <see cref="StripReceivedPrefixes"/>
+    /// pulls the anchor off first, strips the Dirty Fighting prefixes from
+    /// what is left, then re-prepends the anchor so the received tables'
+    /// own "Critical hit! "/"Overpower! " literals still match.
+    /// </summary>
+    private static readonly string[] ReceivedAnchors =
+        ["Critical hit! Overpower! ", "Critical hit! ", "Overpower! "];
+
+    /// <summary>
     /// Strips every leading combination of <see cref="ReceivedPrefixesToStrip"/>
     /// from <paramref name="text"/> (retail can combine "Sneak Attack! " with
-    /// "Reckless! " on the same line) so a received-side regex match never
-    /// captures the prefix as part of the attacker's name.
+    /// "Reckless! " on the same line), tolerating a leading
+    /// <see cref="ReceivedAnchors"/> crit/overpower prefix in front of them,
+    /// so a received-side regex match never captures the prefix as part of
+    /// the attacker's name.
     /// </summary>
     public static string StripReceivedPrefixes(string text)
     {
+        string anchor = string.Empty;
+        foreach (string candidate in ReceivedAnchors)
+        {
+            if (text.StartsWith(candidate, StringComparison.Ordinal))
+            {
+                anchor = candidate;
+                text = text[candidate.Length..];
+                break;
+            }
+        }
+
         bool strippedAny;
         do
         {
@@ -68,7 +98,7 @@ public static class CombatMessages
         }
         while (strippedAny);
 
-        return text;
+        return anchor + text;
     }
 
     // ── Failed attacks (evade / resist) — direction inferred by the caller ──

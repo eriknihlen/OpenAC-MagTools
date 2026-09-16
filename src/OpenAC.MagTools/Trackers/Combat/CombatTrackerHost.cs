@@ -22,6 +22,7 @@ public sealed class CombatTrackerHost
     private readonly ChatOutput _chat;
     private readonly SettingsManager _settings;
     private readonly OpenAC.MagTools.Chat.ChatClassificationDispatcher? _dispatcher;
+    private readonly Action<string> _writeDiagnostic;
     private Action<PluginChatMessage>? _onReceived;
     private Action<PluginChatMessage, ChatClassifier.ChatLine>? _onClassified;
     private IDisposable? _saveRegistration;
@@ -48,6 +49,10 @@ public sealed class CombatTrackerHost
         _chat = chat;
         _settings = settings;
         _dispatcher = dispatcher;
+        // Cached once instead of allocated per delivered line — see
+        // OnClassified, which only ever passes this same delegate (or null)
+        // to StandardTracker.Parse.
+        _writeDiagnostic = diagnosticText => _chat.Write(diagnosticText);
     }
 
     public CombatTracker Current { get; } = new();
@@ -224,10 +229,9 @@ public sealed class CombatTrackerHost
         // The original's "Unable to parse ..." diagnostics
         // (StandardTracker's Debug.WriteToChat calls) only ever printed when
         // debugging was turned on — see docs/deviations.md and the Misc ->
-        // Options "Debugging Enabled" toggle.
-        Action<string>? diagnostic = _settings.Misc.DebuggingEnabled.Value
-            ? diagnosticText => _chat.Write(diagnosticText)
-            : null;
+        // Options "Debugging Enabled" toggle, which defaults to true (same
+        // as the original), so these diagnostics print by default.
+        Action<string>? diagnostic = _settings.Misc.DebuggingEnabled.Value ? _writeDiagnostic : null;
 
         CombatEventArgs? combatEvent = StandardTracker.Parse(text, localPlayerName, diagnostic);
         if (combatEvent is not null)

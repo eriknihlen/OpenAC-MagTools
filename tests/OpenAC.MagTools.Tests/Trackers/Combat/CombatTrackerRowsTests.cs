@@ -82,17 +82,20 @@ public sealed class CombatTrackerRowsTests
         IReadOnlyList<CombatTrackerRows.MonsterRow> rows =
             CombatTrackerRows.BuildMonsterRows(tracker, Me, sortAlphabetically: false);
 
-        // Exact padded values (right-aligned into the column's pad width via
-        // PadRightAligned), not a bare Contains — "Contains("1")" would also
-        // match "10", "15", "21", etc. and prove nothing.
+        // Exact unpadded values, not a bare Contains — "Contains("1")" would
+        // also match "10", "15", "21", etc. and prove nothing. Cells are
+        // left-aligned and NOT padded (see the class remarks and
+        // docs/deviations.md): the host clips a cell to its column's pixel
+        // width with no ellipsis, so left-padding a value could push its
+        // digits past the clip edge and lose them.
         CombatTrackerRows.MonsterRow allRow = rows[1];
-        Assert.Equal("     1", allRow.KillingBlows); // one killing blow, padded to 6
-        Assert.Equal("        30", allRow.DamageGiven); // 10 + 20 damage given, padded to 10
-        Assert.Equal("         5", allRow.DamageReceived); // damage received, padded to 10
+        Assert.Equal("1", allRow.KillingBlows); // one killing blow
+        Assert.Equal("30", allRow.DamageGiven); // 10 + 20 damage given
+        Assert.Equal("5", allRow.DamageReceived); // damage received
     }
 
     [Fact]
-    public void MonsterRowNumericColumnsAreRightAlignedByPadding()
+    public void MonsterRowNumericColumnsAreNotPadded()
     {
         var tracker = new CombatTracker();
         tracker.OnCombatEvent(Hit(Me, "Drudge", 10), Me);
@@ -101,10 +104,11 @@ public sealed class CombatTrackerRowsTests
         CombatTrackerRows.MonsterRow allRow =
             CombatTrackerRows.BuildMonsterRows(tracker, Me, sortAlphabetically: false)[1];
 
-        // Right-aligned via left-padding, per docs/deviations.md — there is
-        // no per-column alignment attribute in the markup.
-        Assert.EndsWith("1", allRow.KillingBlows);
-        Assert.StartsWith(" ", allRow.KillingBlows);
+        // No left-padding, per docs/deviations.md: the host's list draws
+        // each cell left-aligned and clips at the column's pixel width with
+        // no ellipsis, so padding a value to fake right-alignment risks
+        // clipping off its own least-significant digits.
+        Assert.Equal("1", allRow.KillingBlows);
     }
 
     [Fact]

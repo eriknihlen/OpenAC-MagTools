@@ -94,4 +94,30 @@ public sealed class CombatMessagesTests
     [InlineData("Critical hit! Drudge hits you.", "Critical hit! Drudge hits you.")]
     public void StripReceivedPrefixesRemovesEveryLeadingDirtyFightingPrefix(string text, string expected)
         => Assert.Equal(expected, CombatMessages.StripReceivedPrefixes(text));
+
+    /// <summary>
+    /// The host's DefenderLineForBodyPartText writes "Critical hit! " (or
+    /// "Overpower! ", or both) BEFORE the Dirty Fighting prefixes, so the
+    /// Sneak Attack/Reckless text is stuck BEHIND the received tables' own
+    /// crit/overpower anchor, not at the very start of the line.
+    /// StripReceivedPrefixes must pull the anchor off, strip what follows,
+    /// then put the anchor back so "Critical hit! "/"Overpower! " still
+    /// anchors the received regex tables.
+    /// </summary>
+    [Theory]
+    [InlineData(
+        "Critical hit! Sneak Attack! Drudge hits you.",
+        "Critical hit! Drudge hits you.")]
+    [InlineData(
+        "Critical hit! Reckless! Drudge hits you.",
+        "Critical hit! Drudge hits you.")]
+    [InlineData(
+        "Overpower! Sneak Attack! Drudge hits you.",
+        "Overpower! Drudge hits you.")]
+    [InlineData(
+        "Critical hit! Overpower! Sneak Attack! Reckless! Drudge hits you.",
+        "Critical hit! Overpower! Drudge hits you.")]
+    public void StripReceivedPrefixesStripsDirtyFightingTextBehindTheCritOverpowerAnchor(
+        string text, string expected)
+        => Assert.Equal(expected, CombatMessages.StripReceivedPrefixes(text));
 }

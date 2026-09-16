@@ -416,6 +416,14 @@ public sealed class CorpsePageViewModel : ListPageViewModel
     private readonly CorpseTrackerHost? _corpseTrackerHost;
     private readonly IPluginHost? _host;
 
+    private IReadOnlyList<CorpseRow> _cachedRows = [];
+    private IReadOnlyList<string> _cachedTimes = [];
+    private IReadOnlyList<string> _cachedNames = [];
+    private IReadOnlyList<string> _cachedCoordinates = [];
+    private bool _dirty = true;
+    private Action<TrackedCorpse>? _onChanged;
+    private bool _subscribed;
+
     public CorpsePageViewModel(
         SettingsManager settings,
         CorpseTrackerHost? corpseTrackerHost = null,
@@ -437,11 +445,50 @@ public sealed class CorpsePageViewModel : ListPageViewModel
         ToggleTrackPermitted = () =>
             _settings.TrackPermittedCorpses.Value =
                 !_settings.TrackPermittedCorpses.Value;
+
+        Resubscribe();
     }
 
-    /// <summary>Recomputed on every access -- newest first, opened corpses excluded (see CorpseTrackerRows).</summary>
+    public void Dispose()
+    {
+        if (_corpseTrackerHost is null || !_subscribed)
+            return;
+        _subscribed = false;
+        _corpseTrackerHost.Tracker.ItemAdded -= _onChanged!;
+        _corpseTrackerHost.Tracker.ItemChanged -= _onChanged!;
+        _corpseTrackerHost.Tracker.ItemRemoved -= _onChanged!;
+    }
+
+    public void Resubscribe()
+    {
+        if (_corpseTrackerHost is null || _subscribed)
+            return;
+        _subscribed = true;
+        _onChanged = _ => _dirty = true;
+        _corpseTrackerHost.Tracker.ItemAdded += _onChanged;
+        _corpseTrackerHost.Tracker.ItemChanged += _onChanged;
+        _corpseTrackerHost.Tracker.ItemRemoved += _onChanged;
+    }
+
+    /// <summary>
+    /// Cached until the tracker reports a change (LOW: this used to rebuild
+    /// AND reallocate fresh Times/Names/Coordinates lists on every single
+    /// poll, dirty or not).
+    /// </summary>
     private IReadOnlyList<CorpseRow> Rows
-        => _corpseTrackerHost is null ? [] : CorpseTrackerRows.Build(_corpseTrackerHost.Tracker);
+    {
+        get
+        {
+            if (!_dirty)
+                return _cachedRows;
+            _dirty = false;
+            _cachedRows = _corpseTrackerHost is null ? [] : CorpseTrackerRows.Build(_corpseTrackerHost.Tracker);
+            _cachedTimes = _cachedRows.Select(row => row.Time).ToList();
+            _cachedNames = _cachedRows.Select(row => row.Name).ToList();
+            _cachedCoordinates = _cachedRows.Select(row => row.Coords).ToList();
+            return _cachedRows;
+        }
+    }
 
     /// <summary>Selects through the SAME row projection the display properties below read (M5).</summary>
     protected override void OnRowSelected(int index)
@@ -453,9 +500,9 @@ public sealed class CorpsePageViewModel : ListPageViewModel
             _host.Selection.Select(rows[index].ObjectId);
     }
 
-    public IReadOnlyList<string> Times => Rows.Select(row => row.Time).ToList();
-    public IReadOnlyList<string> Names => Rows.Select(row => row.Name).ToList();
-    public IReadOnlyList<string> Coordinates => Rows.Select(row => row.Coords).ToList();
+    public IReadOnlyList<string> Times { get { _ = Rows; return _cachedTimes; } }
+    public IReadOnlyList<string> Names { get { _ = Rows; return _cachedNames; } }
+    public IReadOnlyList<string> Coordinates { get { _ = Rows; return _cachedCoordinates; } }
 
     public Action ClearHistory { get; }
 

@@ -272,10 +272,15 @@ public sealed class ItemModel
         // SalvageWorkmanship has no real-property fallback in the retained
         // ConvertToDouble table — it only ever comes from the typed field.
         SalvageWorkmanshipPseudoKey => _inventoryItem is { Workmanship: not 0 },
+        // A zero WeaponOffense/DamageMod on a present profile is treated as
+        // absent, not a real value — every real weapon's multiplier is
+        // strictly positive (1.0 = no bonus), so a hard zero means the
+        // profile hasn't populated this field, matching the Damage == -1
+        // "this field unknown" convention on the same struct.
         AttackBonusPseudoKey =>
-            WeaponProfile is not null || _properties.Floats.ContainsKey((uint)AttackBonusRealKey),
+            WeaponProfile is { WeaponOffense: not 0d } || _properties.Floats.ContainsKey((uint)AttackBonusRealKey),
         DamageBonusPseudoKey =>
-            WeaponProfile is not null || _properties.Floats.ContainsKey((uint)DamageBonusRealKey),
+            WeaponProfile is { DamageMod: not 0d } || _properties.Floats.ContainsKey((uint)DamageBonusRealKey),
         SlashProtKey => ArmorProfile is not null || _properties.Floats.ContainsKey((uint)SlashProtKey),
         PierceProtKey => ArmorProfile is not null || _properties.Floats.ContainsKey((uint)PierceProtKey),
         BludgeonProtKey => ArmorProfile is not null || _properties.Floats.ContainsKey((uint)BludgeonProtKey),
@@ -293,10 +298,10 @@ public sealed class ItemModel
             : _inventoryItem?.DamageVariance
                 ?? (_properties.Floats.TryGetValue((uint)DamageVarianceRealKey, out double variance) ? variance : defaultValue),
         SalvageWorkmanshipPseudoKey => _inventoryItem?.Workmanship ?? defaultValue,
-        AttackBonusPseudoKey => WeaponProfile is { } wpa
+        AttackBonusPseudoKey => WeaponProfile is { WeaponOffense: not 0d } wpa
             ? wpa.WeaponOffense
             : (_properties.Floats.TryGetValue((uint)AttackBonusRealKey, out double a) ? a : defaultValue),
-        DamageBonusPseudoKey => WeaponProfile is { } wpd
+        DamageBonusPseudoKey => WeaponProfile is { DamageMod: not 0d } wpd
             ? wpd.DamageMod
             : (_properties.Floats.TryGetValue((uint)DamageBonusRealKey, out double d) ? d : defaultValue),
         // The seven protections ArmorProfile reports (Nether is excluded —

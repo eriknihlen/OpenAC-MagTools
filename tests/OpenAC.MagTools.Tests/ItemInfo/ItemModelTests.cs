@@ -271,6 +271,27 @@ public sealed class ItemModelTests
     }
 
     [Fact]
+    public void ZeroWeaponOffenseOrDamageModIsTreatedAsAbsentAndFallsThroughToTheProperty()
+    {
+        // LOW fix: a zeroed WeaponOffense/DamageMod on a present profile
+        // means the field is unpopulated (every real value is a strictly
+        // positive multiplier, 1.0 = no bonus), not a literal zero bonus.
+        var wo = ItemInfoFixtures.Wo(1, "Odd Weapon", PluginObjectClass.MeleeWeapon);
+        var profile = new PluginWeaponProfile(
+            DamageType: 4, WeaponTime: 0, WeaponSkill: 5, Damage: 10, DamageVariance: 0.2,
+            DamageMod: 0d, WeaponLength: 0, MaxVelocity: 0, WeaponOffense: 0d, MaxVelocityEstimated: 0);
+        var model = ItemInfoFixtures.Model(
+            wo,
+            floats: new Dictionary<uint, double> { { 62, 1.2 }, { 63, 1.1 } }, // AttackBonus/DamageBonus real keys
+            weaponProfile: profile);
+
+        Assert.Equal(1.2, model.AttackBonus);
+        Assert.Equal(1.1, model.DamageBonus);
+        Assert.True(model.HasDouble(167772172));
+        Assert.True(model.HasDouble(167772174));
+    }
+
+    [Fact]
     public void ArmorProfileSuppliesTheSevenProtectionsAndExcludesNether()
     {
         var wo = ItemInfoFixtures.Wo(1, "Plate", PluginObjectClass.Armor);

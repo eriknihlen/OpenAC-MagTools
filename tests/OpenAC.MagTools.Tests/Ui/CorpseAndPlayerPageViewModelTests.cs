@@ -116,6 +116,31 @@ public sealed class CorpseAndPlayerPageViewModelTests
     }
 
     [Fact]
+    public void CorpsePageCachesRowsUntilTheTrackerReportsAChange()
+    {
+        var host = new FakeHost();
+        var settings = new SettingsManager(new SettingsFile(host.Storage));
+        var corpseHost = new CorpseTrackerHost(host, settings.CorpseTracker);
+        corpseHost.Tracker.ProcessWorldObject(
+            new CorpseObservation(1u, 1, 10, 20, 0, "Corpse of Acdream", 0, false, null),
+            "Acdream", false, _ => { });
+
+        var vm = new CorpsePageViewModel(settings, corpseHost, host);
+
+        IReadOnlyList<string> first = vm.Names;
+        IReadOnlyList<string> second = vm.Names;
+        Assert.Same(first, second); // no rebuild -- same cached list instance
+
+        corpseHost.Tracker.ProcessWorldObject(
+            new CorpseObservation(2u, 1, 10, 20, 0, "Corpse of a Drudge", 0, false, null),
+            "Acdream", true, _ => { });
+
+        IReadOnlyList<string> third = vm.Names;
+        Assert.NotSame(second, third);
+        Assert.Equal(2, third.Count);
+    }
+
+    [Fact]
     public void PageViewModelsWithNoHostProjectEmptyListsAndToleraSelection()
     {
         var settings = new SettingsManager(new SettingsFile(new FakeHost().Storage));

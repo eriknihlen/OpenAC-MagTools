@@ -62,9 +62,9 @@ the graphical primary session per the design doc's live-gate protocol (§8).
 | `/mt fellow create` | 2026-09-16 | same | r9: `/mt fellow create MagToolsGate` with no fellowship active, then `/mt fellow disband` | no chat output from the plugin and no server response of any kind; a fellowship was not observed to form (the social panel was not opened to confirm) | PENDING (inconclusive; needs a Fellowship-panel or second-party check) |
 | Mana auto recharge | 2026-09-16 | same | r19/r20/r23 idle sessions with `ManaManagement/AutoRecharge` at its default True | never triggered. The port keys on a server line containing `Your` and ` is low on Mana.` (`AutoRecharge.cs:77-79`) and deliberately ignores your own `/say` echo, so it cannot be hand-provoked; +Acdream's equipped items read `294 / 294` once appraised, so the server never emits the warning. The `The Leather Gauntlets is already full of mana.` lines seen in r19 came from MossTank's own recharger, not Mag-Tools -- they do not appear in a Mag-Tools-only session | PENDING (trigger not provokable on this character) |
 | Auto buy/sell at a real vendor | 2026-09-16 | same | r24/r25/r28: `@telepoi Holtburg`, `/mt usel closestvendor` (twice, 20 s + 15 s), `/mt usel closestnpc`, then `click at <npc>` + `input press UseSelected` | no vendor panel ever opened, the character never moved, nothing was printed. `/mt usel closestvendor` DID resolve a Vendor-class object (it never printed `Nothing found named:`) and issued `Items.Use`, but no walk-to-use and no panel followed. Harness blocker on the alternative path: the UI probe's `click at` goes through `UiRoot` only (`RetailUiAutomationProbe.ClickAtPoint`), so a 3-D world object cannot be picked or selected from a route | PENDING (vendor could not be opened; plugin path and harness path both blocked) |
-| Auto looting (chests, corpses, salvage) | 2026-09-16 | same | r15/r18 with MossTank loaded; `/vt loot load MTGateAll` (a Keep-everything profile) | the classifier plumbing is proven: `Loaded loot profile MTGateAll.` and `Loaded loot profile +Acdream.AutoPack.` (h16), so MossTank registers as `moss-tank` and MagTools' `LootRuleProcessor` reaches a named profile. The looting itself was not exercised: the kill in that run did not land, and no chest is creatable at the login spot | PENDING |
-| Auto add to trade / auto trade accept / `/mt trade *` full flows | 2026-09-16 | same | -- | not attempted. Needs a second live session (`testaccount2`/`+Horan`) beside +Acdream and a trade opened from the graphical side; both of the client's trade-open paths start from a world selection, which the probe cannot do (see the vendor row) | PENDING |
-| Player tracker live tracking | 2026-09-16 | same | -- | not attempted; needs `+Horan` standing next to +Acdream | PENDING |
+| Auto looting (chests, corpses, salvage) | 2026-09-16 | same | r15/r18/r30/r31 with MossTank loaded: `/vt loot load MTGateAll` (a Keep-everything profile), `@create drudgeprowler`, `/mt attack_melee closest` to the kill, then `/mt uselp corpse` to open the corpse; `Looting/AutoLootCorpses` at its default True | the classifier plumbing is proven: `Loaded loot profile MTGateAll.` and `Loaded loot profile +Acdream.AutoPack.` (h16), so MossTank registers as `moss-tank` and MagTools' `LootRuleProcessor` reaches a named profile. The looter itself never ran: it triggers on `ContainerOpened` (`Macros/Looter.cs:90`), and the corpse container could not be opened from a route. `/mt uselp corpse` resolved a corpse (no `Nothing found named:` message) and issued `Items.Use`, but no container window opened and no loot line printed in 45 s (k04/k05/k06) -- the same shape as the vendor row | PENDING (corpse container cannot be opened from a route) |
+| Auto add to trade / auto trade accept / `/mt trade *` full flows | 2026-09-16 | same | attempted to bring up the second party: `AcDream.Headless run --config bot.json` with `account: testaccount2`, `character: {index: 0}`, `policy: idle`, `loginCommands: ["@teleto +Acdream"]` | the second session never reached the world -- `testaccount2` with password `testpassword` fails at `System.TimeoutException: CharacterList not received` on two consecutive attempts with no other session on that account. Even with the bot up, both of the client's trade-open paths start from a world selection, which the probe cannot perform (see the vendor row) | PENDING (second-account credentials unknown; world selection also blocked) |
+| Player tracker live tracking | 2026-09-16 | same | same headless attempt as the trade row | blocked on the same `testaccount2` login failure, so no second player was ever near +Acdream | PENDING (second-account credentials unknown) |
 | One-touch heal real heal | 2026-09-16 | same | -- | `MagToolsPlugin.cs:199` registers the One Touch Heal hotkey with a `default` (unbound) chord, there is no `/mt` verb for it, and the probe can neither type into the rebind UI nor inject a plugin hotkey chord | PENDING (hotkey cannot be bound or fired from a route) |
 | Log out on death | 2026-09-16 | same | -- | not attempted deliberately: the only ways to kill +Acdream on this server (dropping its health to zero, or letting a monster finish it) cost the character its vitae and dropped items. Needs the owner's go-ahead | PENDING (destructive; owner approval needed) |
 
@@ -78,15 +78,15 @@ are described under "Harness notes" at the bottom.
 |---|---|---|
 | Chat filters: the 31 rules other than `MonsterDeaths` | needs a character that can miss, be evaded, be hit, fizzle, resist, salvage and use comps, plus an NPC/vendor to talk. +Acdream one-shots everything and is never hit | PENDING |
 | Auto buy/sell at a real vendor | the vendor panel could not be opened from a route: `/mt usel closestvendor` resolves a Vendor-class object and issues `Items.Use` but produces no movement, no panel and no message, and the UI probe's `click at` only reaches retained UI, so a 3-D world pick is impossible | PENDING |
-| Auto add to trade / auto trade accept / `/mt trade *` full flows | needs `testaccount2`/`+Horan` in a second session AND a world-selection-driven trade open, which the probe cannot perform | PENDING |
-| Auto looting (chests, corpses, salvage) | the loot-classifier path is proven (`/vt loot load <name>` works, MossTank registers as `moss-tank`), but a corpse/chest loot run was not driven to completion | PENDING |
+| Auto add to trade / auto trade accept / `/mt trade *` full flows | `testaccount2` will not log in with `testpassword` (`CharacterList not received`, twice, with no other session on that account) -- the correct second-account password is unknown here. A world-selection-driven trade open is blocked too | PENDING |
+| Auto looting (chests, corpses, salvage) | the loot-classifier path is proven (`/vt loot load <name>` works, MossTank registers as `moss-tank`) and `Looter` triggers on `ContainerOpened`, but a corpse container cannot be opened from a route: `/mt uselp corpse` resolves the corpse and issues `Items.Use` with no container and no message following | PENDING |
 | Inventory packer: items land in their profile-assigned pack | the Started/Completed lifecycle is PASS; the per-item placement was not verified (no per-item message; pack contents not diffed before/after) | PENDING |
 | Idle automation: heart carver / shattered-key fixer / key deringer | `Intricate Carving Tool` is not creatable on this ACE build (`@ci intricatecarvingtool` -> not a valid weenie) and is absent from the weenie class-name table | PENDING |
 | Mana auto recharge | the trigger is a server line containing `Your` + ` is low on Mana.`; +Acdream's equipped items are at full mana so the server never emits it, and the port deliberately ignores a self-`/say` echo | PENDING |
 | One-touch heal real heal | the hotkey is registered unbound (`default` chord), there is no `/mt` verb for it, and the probe can neither type into the rebind UI nor inject a plugin chord | PENDING |
 | Log out on death | killing +Acdream costs the owner's character vitae and dropped items; not attempted without the owner's go-ahead | PENDING |
 | Character/Server command tabs: Add | the UI probe has no text-entry verb, so the command text box cannot be filled | PENDING |
-| Player tracker live tracking | needs `+Horan` standing next to +Acdream | PENDING |
+| Player tracker live tracking | blocked on the same `testaccount2` login failure -- no second character could be brought in-world | PENDING |
 | `/mt fellow create` | issued live and produced no plugin output and no server response; a fellowship was not observed to form. Needs a Fellowship-panel or second-party confirmation before it can be called FAIL | PENDING |
 | Combat tracker `Dmg Rcvd` / `Dmg Givn` cells | never provoked: every +Acdream hit is a one-shot kill (kill message only, no damage line) and no monster landed a hit even with `@attackable on` | PENDING |
 
@@ -117,9 +117,14 @@ are described under "Harness notes" at the bottom.
    `InventoryManagement/InventoryLogger` on, a fresh session produced
    `<ArrayOfMyWorldObject />` and printed no `Requesting id information...`
    lines.
-4. **`/mt usel closestvendor` is a silent no-op.** A Vendor-class object is
-   resolved (no `Nothing found named:` message) and `Items.Use` is issued, but
-   the character does not walk and no vendor panel opens within 35 s.
+4. **Plugin-issued `Items.Use` on a landscape object never opens its panel or
+   container.** Two independent cases: `/mt usel closestvendor` resolves a
+   Vendor-class object (no `Nothing found named:` message) and issues `Use`,
+   but the character does not walk and no vendor panel opens within 35 s; and
+   `/mt uselp corpse`, standing on a fresh corpse, resolves it and issues
+   `Use`, but no container opens and no loot line follows in 45 s. Because
+   `Macros/Looter.cs:90` triggers on `ContainerOpened`, this also keeps the
+   auto-looter from ever running.
 5. **`/mt castp <spell> on <target>` is silent.** No cast, no
    `No spell named:`/`No target found named:` message, no server reaction.
 6. **`/mt fellow create <name>` is silent.** No plugin output and no server
@@ -158,6 +163,9 @@ are described under "Harness notes" at the bottom.
   `%LOCALAPPDATA%\acdream\vtank`: `MTGateAll.utl` (Keep everything),
   `+Acdream.AutoPack.utl` and `Default.AutoPack.utl` (KeepUpTo 1 on
   `Prismatic Taper`).
+- `testaccount2` (the second party for trade/player-tracker gates) could not
+  be logged in: `AcDream.Headless run` with `testpassword` fails at
+  `CharacterList not received` on two consecutive attempts.
 - Server toggles used and restored: `@attackable on` -> `@attackable off`
   (confirmed by `Monsters will only attack you if provoked by you first.`).
   `@telepoi Holtburg` was undone with

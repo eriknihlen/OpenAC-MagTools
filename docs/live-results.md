@@ -44,39 +44,122 @@ the graphical primary session per the design doc's live-gate protocol (§8).
 | `/mt logoff` | 2026-09-16 | same | probe 10 | log: `logout-confirmed`, `returning to character select`, `character logoff complete` — the client's own graceful logout | PASS |
 | Open main pack on login (P8, enabled default) | 2026-09-16 | plugin 5822062 / OpenAC abc748d | probe 12: login with `Misc/OpenMainPackOnLogin` at its default (true), screenshot at +10 s | `Inventory of +Acdream` window open at +10 s — `Ui.ShowClientWindow(PluginClientWindow.Inventory)` (OpenAC slice A6) opens the main pack the same as the original's `Actions.UseItem(myId, 0)` did | PASS |
 | Combat page after the P8 column polish | 2026-09-16 | plugin e8fba24 / OpenAC d5c37bb | probe 11: Trackers → Combat | `Typeless`/`Electric` labels and the `Dmg Rcvd`/`Dmg Givn` headers render in full (screenshot 35) | PASS |
+| Combat tracker live (real fight) | 2026-09-16 | plugin a016805 / OpenAC 669832d | r2/r3/r6/r8: `@create drudgeprowler` (plus tuskerguard/olthoisoldier/5 drudges), `/mt attack_melee closest` x3-8, `@smite all`; Trackers -> Combat -> Current Session Stats | monster list and counters populate live: `All 7`, `Drudge Prowler 5`, `Tusker Guard 1`, `Olthoi Soldier 1` with per-row KB's, plus `Attacks 7 (100%)`, `Av/Mx 0 / 0`, `Crits 0 (0.0%)` (screenshots g07/g23/g36). `Dmg Rcvd`/`Dmg Givn` stayed blank: +Acdream one-shots every spawn (kill message only, no damage line) and no monster ever landed a hit, even with `@attackable on` -- the damage cells were never provoked, not observed wrong | PARTIAL (rows + KB's + attack counter PASS; damage cells unprovoked) |
+| Corpse tracker live tracking | 2026-09-16 | same | r7/r16: `/mt opt set CorpseTracker.TrackAllCorpses true`, kill with `/mt attack_melee closest` and with `@smite all`, Trackers -> Corpse -> Tracked Corpses | one row per corpse with Time/Name/Coords: `Wed 16:3x  Corpse of Drudge Prowler  95.8S, 101.0W` (g27) and nine rows after a smite (Drudge Prowler + Mosswart Feeder/Creeper Mosswart, h05); persisted to `sawato/.CorpseTracker.xml`. With `TrackAllCorpses` off a monster corpse is correctly NOT tracked (the port's burden>6000 + killer-name rule) | PASS |
+| Chat filter `Filters.MonsterDeaths` | 2026-09-16 | same | baseline r2/r3/r6 (filter at its default False), then r16 with `Filters.MonsterDeaths=True` seeded in `Mag-Tools.xml`: `@create drudgeprowler` + `@smite all` | filter OFF: `You killed Mosswart Feeder!`, `You obliterate Drudge Prowler!`, `You cleave Drudge Prowler in twain!` all reach the transcript (g06/g10/g21). Filter ON: `@smite all` killed nine-plus monsters (proved by the nine Corpse-tracker rows, h05) and not one kill line reached the transcript (h04) | PASS (1 of 32 rules) |
+| Chat filters: the other 31 rules | 2026-09-16 | same | -- | never provoked this round. Blocker: +Acdream never misses, is never hit, never fizzles, never salvages, and met no vendor/NPC chatter, so AttackEvades/DefenseEvades/AttackResists/DefenseResists/NPKFails/DirtyFighting/SpellCasting*/SpellCastFizzles/CompUsage/SpellExpires/HealingKit*/Salvaging*/AuraOfCraftman/ManaStoneUsage/TradeBuffBotSpam/FailedAssess/KillTaskComplete/VendorTells/MonsterTell/NpcChatter/MasterArbitrator*/StatusText* had no matching line to suppress | PENDING (needs a character that can miss/be hit, and an NPC/vendor) |
+| Idle inventory automation: Aetheria revealer + key ringer | 2026-09-16 | same | r21: `/mt opt set InventoryManagement.AetheriaRevealer true` + `InventoryManagement.KeyRinger true`, then `@ci 42645` (Aetheria Mana Stone), `@ci 42635` (Coalesced Aetheria), `@ci 48746` (Aged Legendary Key), `@ci 48954` (Burning Sands Keyring); idle | both fired within one idle think, unattended: `A sigil rises to the surface as you bathe the aetheria in mana.` (twice) and `You add the key to the keyring.` (h31); the confirmation dialog was answered automatically | PASS |
+| Idle inventory automation: heart carver / shattered-key fixer / key deringer | 2026-09-16 | same | -- | all three need an `Intricate Carving Tool`; it has no entry in this ACE build's weenie class-name table and `@ci intricatecarvingtool` answers `intricatecarvingtool is not a valid weenie` | PENDING (item not creatable on this server) |
+| On-Login / On-Login-Complete / Periodic commands -- SERVER scope | 2026-09-16 | same | r11/r22/r23: `_sawato/OnLoginCommands` + `OnLoginCompleteCommands` + `PeriodicCommands offset=0 interval=1` pre-written into `Mag-Tools.xml`, reconnect | both lists dispatch in order one tick apart: `<{Mag-Tools}>: Failed to Get Charlie` (last On-Login row) then `<{Mag-Tools}>: Misc.OpenMainPackOnLogin = False` (On-Login-Complete row) (h38); the periodic command fires on each whole UTC minute, two `Misc.LogOutOnDeath = False` lines one minute apart (g55) | PASS |
+| On-Login / On-Login-Complete / Periodic commands -- CHARACTER scope | 2026-09-16 | same | r10: the identical three lists written under `_testaccount_sawato/_x002B_Acdream`, reconnect | nothing dispatched. Root cause: `ICharacterInfo.Name` is empty at the LoginComplete edge, so `SessionContext.cs:98` caches an empty character name and `SettingsScope.Character` builds `_testaccount_sawato/` + empty. The same defect names the tracker files `sawato/.CorpseTracker.xml` and `sawato/.Inventory.xml` with no character prefix | FAIL -> defect |
+| Open main pack on login: disabled setting | 2026-09-16 | same | r11 closed the inventory window with `input press ToggleInventoryPanel` and exited; r12/r22 then logged in with `Misc/OpenMainPackOnLogin=False` | the `Inventory of +Acdream` window does NOT open at LoginComplete (g56/h32); the enabled/default case stays PASS (probe 12) | PASS |
+| Character/Server command tabs: Move + Delete | 2026-09-16 | same | r23: three rows (`/mt opt get Alpha|Bravo|Charlie`) seeded in the server scope, Tools -> Server, click the up icon on row 2, then the delete icon on row 1 | the up icon swaps Bravo above Alpha and highlights the moved row (h39 -> h40); delete removes it (h41); both survive to disk, `Mag-Tools.xml`'s `_sawato/OnLoginCommands` ends as Alpha, Charlie | PASS (Move/Delete) |
+| Character/Server command tabs: Add | 2026-09-16 | same | -- | the UI probe has no text-entry verb (`click`/`hover`/`drag`/`input press|down|up <InputAction>` only), so the command text box cannot be filled and Add cannot be exercised meaningfully | PENDING (harness cannot type) |
+| Inventory packer real run | 2026-09-16 | same | r17/r18/r19 with MossTank loaded as the loot classifier: `Default.AutoPack.utl` (KeepUpTo, KeepCount 1, name regex `Prismatic Taper`) in `%LOCALAPPDATA%\acdream\vtank`, then `/mt autopack` | `<{Mag-Tools}>: Auto Pack - Started.` then `Auto Pack - Completed.` for both invocations (h18/h20). Two findings: (a) with only `+Acdream.AutoPack.utl` present the run is a silent no-op, the character-scoped profile name never resolves (same empty-`Character.Name` defect), and it only starts once `Default.AutoPack.utl` exists; (b) items actually landing in their profile-assigned side pack was not verified (no per-item message, pack contents not diffed) | PARTIAL |
+| Inventory export to clipboard | 2026-09-16 | same | r13/r14: Tools -> Inventory, click `Clipboard Worn Equipment` (808,398) then `Clipboard Inventory Info` (962,398); `Get-Clipboard` read from a separate PowerShell session both during the run (+65 s, client still up) and after a graceful exit | the plugin prints the exact messages, `Copying all inventory item info to clipboard...` then `All inventory item info has been copied to the clipboard.` (g62), but the Windows clipboard was EMPTY both times (a `Set-Clipboard`/`Get-Clipboard` self-test in the same shell round-trips fine). `InventoryExporter.cs:192` ignores `TrySetText`'s result, so the completion message prints whether or not the clipboard was set | FAIL -> defect |
+| Chat logger file | 2026-09-16 | same | r10/r11: `ChatLogger/Persistent=True` + `ChatLogger/Group1/Area=True` seeded, `/say ChatLoggerProbe alpha`, graceful logoff | the GUI transcript works, Loggers -> Chat Group 1 shows `26/09/16 16:5x  ChatLoggerProbe alpha` (g53), but no `<Server>/<Character>.ChatLogger.txt` is ever written. `Loggers/Chat/ChatLogger.cs:187` returns early from `Flush()` when `_character` is empty, and `_character` is the empty LoginComplete name | FAIL -> defect (same root cause) |
+| Inventory logger file | 2026-09-16 | same | r29: `InventoryManagement/InventoryLogger=True` seeded, fresh login, about 60 s in world, graceful logoff | a file IS written, but as `sawato/.Inventory.xml` (no character prefix) and empty: `<ArrayOfMyWorldObject />`. No `Requesting id information...` messages printed | PARTIAL -> defect (empty content plus missing character prefix) |
+| `/mt fellow create` | 2026-09-16 | same | r9: `/mt fellow create MagToolsGate` with no fellowship active, then `/mt fellow disband` | no chat output from the plugin and no server response of any kind; a fellowship was not observed to form (the social panel was not opened to confirm) | PENDING (inconclusive; needs a Fellowship-panel or second-party check) |
+| Mana auto recharge | 2026-09-16 | same | r19/r20/r23 idle sessions with `ManaManagement/AutoRecharge` at its default True | never triggered. The port keys on a server line containing `Your` and ` is low on Mana.` (`AutoRecharge.cs:77-79`) and deliberately ignores your own `/say` echo, so it cannot be hand-provoked; +Acdream's equipped items read `294 / 294` once appraised, so the server never emits the warning. The `The Leather Gauntlets is already full of mana.` lines seen in r19 came from MossTank's own recharger, not Mag-Tools -- they do not appear in a Mag-Tools-only session | PENDING (trigger not provokable on this character) |
+| Auto buy/sell at a real vendor | 2026-09-16 | same | r24/r25/r28: `@telepoi Holtburg`, `/mt usel closestvendor` (twice, 20 s + 15 s), `/mt usel closestnpc`, then `click at <npc>` + `input press UseSelected` | no vendor panel ever opened, the character never moved, nothing was printed. `/mt usel closestvendor` DID resolve a Vendor-class object (it never printed `Nothing found named:`) and issued `Items.Use`, but no walk-to-use and no panel followed. Harness blocker on the alternative path: the UI probe's `click at` goes through `UiRoot` only (`RetailUiAutomationProbe.ClickAtPoint`), so a 3-D world object cannot be picked or selected from a route | PENDING (vendor could not be opened; plugin path and harness path both blocked) |
+| Auto looting (chests, corpses, salvage) | 2026-09-16 | same | r15/r18 with MossTank loaded; `/vt loot load MTGateAll` (a Keep-everything profile) | the classifier plumbing is proven: `Loaded loot profile MTGateAll.` and `Loaded loot profile +Acdream.AutoPack.` (h16), so MossTank registers as `moss-tank` and MagTools' `LootRuleProcessor` reaches a named profile. The looting itself was not exercised: the kill in that run did not land, and no chest is creatable at the login spot | PENDING |
+| Auto add to trade / auto trade accept / `/mt trade *` full flows | 2026-09-16 | same | -- | not attempted. Needs a second live session (`testaccount2`/`+Horan`) beside +Acdream and a trade opened from the graphical side; both of the client's trade-open paths start from a world selection, which the probe cannot do (see the vendor row) | PENDING |
+| Player tracker live tracking | 2026-09-16 | same | -- | not attempted; needs `+Horan` standing next to +Acdream | PENDING |
+| One-touch heal real heal | 2026-09-16 | same | -- | `MagToolsPlugin.cs:199` registers the One Touch Heal hotkey with a `default` (unbound) chord, there is no `/mt` verb for it, and the probe can neither type into the rebind UI nor inject a plugin hotkey chord | PENDING (hotkey cannot be bound or fired from a route) |
+| Log out on death | 2026-09-16 | same | -- | not attempted deliberately: the only ways to kill +Acdream on this server (dropping its health to zero, or letting a monster finish it) cost the character its vitae and dropped items. Needs the owner's go-ahead | PENDING (destructive; owner approval needed) |
 
 ## Pending (owed before the port can be called fully live-gated)
 
-None of the rows below has been run. Each names the exact steps so a tester
-(or a future session) can close it without re-deriving them.
+Every row below carries the exact blocker that stopped it on 2026-09-16, so a
+future session does not re-derive it. The gate round's harness and its limits
+are described under "Harness notes" at the bottom.
 
-| Feature | Steps | Verdict |
+| Feature | Blocker | Verdict |
 |---|---|---|
-| Combat tracker live (real fight) | engage a nearby monster with +Acdream in melee/missile/magic; watch Trackers → Combat → Current Session Stats populate the monster list and damage breakdown; verify KB's/Dmg Rcvd/Dmg Givn and the Typeless/Slash/… rows against the fight's actual chat lines | PENDING (needs a live fight) |
-| Chat filters (32) suppress their configured lines | enable each filter via `/mt opt set Filters.<Name> true` in turn (or leave defaults) and provoke the matching chat line (an evade, a resist, a comp-usage message, a monster tell, …); confirm the line never reaches the transcript or `ChatLogger.txt` | PENDING (needs scripted chat provocation, one filter at a time) |
-| Auto buy/sell at a real vendor | approach a vendor with a `<CharacterName>.utl`/`Default.utl` loot profile loaded, `/mt opt set AutoBuySell.Enabled true`, open the vendor, confirm `AddToBuyList`/`AddToSellList`/`BuyAll`/`SellAll` fire and the chat reports match the original's `Buy Items:`/`Sell Items:`/`Nothing to Buy`/`Nothing to Sell` wording | PENDING (needs a live vendor + loot profile) |
-| Auto add to trade / mule loading | open a real trade with `testaccount2`/`+Horan`, `/mt opt set AutoTradeAdd.Enabled true`, confirm matching items are added and `Auto Add To Trade - Inventory scan complete.` prints | PENDING (needs two-client session) |
-| Auto trade accept | open a trade from `testaccount2`/`+Horan` (name on the whitelist) and confirm the primary session auto-accepts | PENDING (needs two-client session) |
-| Auto looting (chests, corpses, salvage) | kill a monster or open a chest with `Looting.AutoLootCorpses`/`AutoLootChests` on, confirm items move into inventory per the loot profile and `No more lootable items found.` prints at the end | PENDING (needs a live kill/chest) |
-| Inventory packer real run | `/mt autopack` (or Ctrl+P) with a real `<CharacterName>.AutoPack.utl`/`Default.AutoPack.utl` profile loaded and items scattered across packs; confirm `Auto Pack - Started.`/`Auto Pack - Completed.` and the items land in their profile-assigned side packs | PENDING (needs a live AutoPack profile) |
-| Idle inventory automation (Aetheria revealer, heart carver, shattered-key fixer, key ringer/deringer) | enable each `InventoryManagement.*` setting in turn and carry the matching item type (an Aetheria gem, a monster heart, a shattered key, a ring-able key); confirm the automated action fires within one idle think | PENDING (needs the specific item types on hand) |
-| Mana auto recharge | let an equipped item's mana run low with `ManaManagement.AutoRecharge` on and a mana stone/charge source available; confirm the recharge action fires and the Mana tab's `cur / max` updates | PENDING (needs a real low-mana item + charge source) |
-| One-touch heal real heal | take damage, press the One Touch Heal hotkey (bind it first — unbound by default), confirm a healing kit or food item is applied and health rises | PENDING (needs live damage + hotkey bind) |
-| On-Login / On-Login-Complete / Periodic commands (P8) | in Tools → Character (or Server), add an On-Login command (e.g. `/mt test`), an On-Login-Complete command, and a Periodic command (interval 1, offset 0); reconnect and confirm both lists dispatch in order one tick apart, then watch the periodic command fire on the next whole UTC minute | PENDING (P8 feature, not yet live-gated) |
-| Open main pack on login: disabled setting (P8) | `/mt opt set Misc.OpenMainPackOnLogin false`, reconnect, confirm the inventory window does NOT open at LoginComplete (the enabled/default case is PASS -- see the Gated table, probe 12) | PENDING (negative case not yet exercised live) |
-| Log out on death (P8) | `/mt opt set Misc.LogOutOnDeath true`, die in-world (or have a second character/monster kill +Acdream); confirm the client performs its own graceful logout immediately after the death message | PENDING (P8 feature, needs an actual live death) |
-| Character/Server command tabs: Add/Move/Delete UI (P8) | in Tools → Character and Tools → Server, type a command and click Add, confirm it appears in the list and the text box clears; click the up/down icons and confirm the rows swap; click the delete icon and confirm the row disappears; confirm each change survives a plugin Disable/Enable (i.e. is actually persisted to `Mag-Tools.xml`) | PENDING (P8 feature, not yet live-gated) |
-| Inventory export to clipboard | Tools → Inventory → Clipboard Worn Equipment / Clipboard Inventory Info; confirm the `Copying all inventory item info...`/`...copied to the clipboard.` messages print and the clipboard contains one `ItemInfo` line per item in the original's sort order | PENDING (needs clipboard inspection on the live host) |
-| Inventory logger file | `/mt opt set InventoryManagement.InventoryLogger true`, log in fresh (no existing `<Character>.Inventory.xml`); confirm the "Requesting id information..." messages print and the file is written with every armor/weapon/jewelry item's data | PENDING (needs a fresh character with unidentified gear) |
-| Chat logger file | enable a `ChatLogger/Group1` channel, generate matching chat, wait for the 10-minute flush (or log off) and confirm `<Server>/<Character>.ChatLogger.txt` contains the expected `yyMMddHHmmss,<channel>,<message>` lines | PENDING (needs a 10-minute window or a logoff-triggered flush) |
-| Corpse / player tracker live tracking | with `testaccount2`/`+Horan` nearby (and/or a monster corpse), confirm Trackers → Corpse and → Player populate with Time/Name/Coords rows and that clicking a row selects the object | PENDING (needs a second character / a kill, carried from the P7 gate round) |
-| `/mt trade *`, `/mt vendor *` full flows | with a real trade or vendor open, exercise `/mt trade add`, `/mt trade accept`, `/mt vendor addbuy`, `/mt vendor addsell`, `/mt vendor buy`, `/mt vendor sell` and confirm the transactions complete (carried from the P7 gate round, which only proved the no-target messages) | PENDING (needs a live vendor/trade partner) |
-| `/mt fellow create` | `/mt fellow create <name>` with no fellowship active; confirm a real fellowship forms (native `Fellowship.Create`, not the original's click-driven flow) | PENDING (not yet exercised live) |
+| Chat filters: the 31 rules other than `MonsterDeaths` | needs a character that can miss, be evaded, be hit, fizzle, resist, salvage and use comps, plus an NPC/vendor to talk. +Acdream one-shots everything and is never hit | PENDING |
+| Auto buy/sell at a real vendor | the vendor panel could not be opened from a route: `/mt usel closestvendor` resolves a Vendor-class object and issues `Items.Use` but produces no movement, no panel and no message, and the UI probe's `click at` only reaches retained UI, so a 3-D world pick is impossible | PENDING |
+| Auto add to trade / auto trade accept / `/mt trade *` full flows | needs `testaccount2`/`+Horan` in a second session AND a world-selection-driven trade open, which the probe cannot perform | PENDING |
+| Auto looting (chests, corpses, salvage) | the loot-classifier path is proven (`/vt loot load <name>` works, MossTank registers as `moss-tank`), but a corpse/chest loot run was not driven to completion | PENDING |
+| Inventory packer: items land in their profile-assigned pack | the Started/Completed lifecycle is PASS; the per-item placement was not verified (no per-item message; pack contents not diffed before/after) | PENDING |
+| Idle automation: heart carver / shattered-key fixer / key deringer | `Intricate Carving Tool` is not creatable on this ACE build (`@ci intricatecarvingtool` -> not a valid weenie) and is absent from the weenie class-name table | PENDING |
+| Mana auto recharge | the trigger is a server line containing `Your` + ` is low on Mana.`; +Acdream's equipped items are at full mana so the server never emits it, and the port deliberately ignores a self-`/say` echo | PENDING |
+| One-touch heal real heal | the hotkey is registered unbound (`default` chord), there is no `/mt` verb for it, and the probe can neither type into the rebind UI nor inject a plugin chord | PENDING |
+| Log out on death | killing +Acdream costs the owner's character vitae and dropped items; not attempted without the owner's go-ahead | PENDING |
+| Character/Server command tabs: Add | the UI probe has no text-entry verb, so the command text box cannot be filled | PENDING |
+| Player tracker live tracking | needs `+Horan` standing next to +Acdream | PENDING |
+| `/mt fellow create` | issued live and produced no plugin output and no server response; a fellowship was not observed to form. Needs a Fellowship-panel or second-party confirmation before it can be called FAIL | PENDING |
+| Combat tracker `Dmg Rcvd` / `Dmg Givn` cells | never provoked: every +Acdream hit is a one-shot kill (kill message only, no damage line) and no monster landed a hit even with `@attackable on` | PENDING |
 
-## Known host gaps carried into this port (tracked upstream, not in this repo)
+## Defects found in the 2026-09-16 gate round
 
-- None currently open — A3 (Identify), A4 (appraisal profiles), A5
-  (silent plugin-initiated appraisal) and A6 (client window control) all
-  landed; A3-A5 are re-gated PASS above, A6's enabled-default case is
-  re-gated PASS (probe 12), its disabled-setting negative case is still
-  PENDING.
+1. **`ICharacterInfo.Name` is empty at the LoginComplete edge** (host) and is
+   cached there by the plugin (`src/OpenAC.MagTools/SessionContext.cs:98`).
+   Every character-scoped name derived from it is wrong for the whole session.
+   Observed consequences, each independently reproduced:
+   - character-scoped On-Login / On-Login-Complete / Periodic command lists
+     never dispatch (the identical server-scoped lists do);
+   - tracker files are written as `sawato/.CorpseTracker.xml` and
+     `sawato/.Inventory.xml` (no `+Acdream` prefix);
+   - `Loggers/Chat/ChatLogger.cs:187` refuses to flush at all, so the chat log
+     file is never written;
+   - `Macros/InventoryPacker.cs:138` cannot resolve `+Acdream.AutoPack` and the
+     packer is a silent no-op unless `Default.AutoPack.utl` exists.
+   Host side: `src/AcDream.App/Plugins/AppAutomationSurface.cs:804-816` reads
+   the name off the player object in the object table, which has no name yet at
+   that moment. The live read works later in the session.
+2. **Clipboard export never reaches the clipboard.** Both Tools -> Inventory
+   buttons print their start and completion messages, but the Windows clipboard
+   stays empty when read from another process during and after the session.
+   `src/OpenAC.MagTools/Inventory/InventoryExporter.cs:192` discards
+   `IPluginClipboard.TrySetText`'s result, so the success message is printed
+   unconditionally.
+3. **Inventory logger writes an empty document.** With
+   `InventoryManagement/InventoryLogger` on, a fresh session produced
+   `<ArrayOfMyWorldObject />` and printed no `Requesting id information...`
+   lines.
+4. **`/mt usel closestvendor` is a silent no-op.** A Vendor-class object is
+   resolved (no `Nothing found named:` message) and `Items.Use` is issued, but
+   the character does not walk and no vendor panel opens within 35 s.
+5. **`/mt castp <spell> on <target>` is silent.** No cast, no
+   `No spell named:`/`No target found named:` message, no server reaction.
+6. **`/mt fellow create <name>` is silent.** No plugin output and no server
+   response.
+7. **Host shutdown crashes after a clean session** (OpenAC, not the plugin):
+   two runs ended with `Fatal error 0xC0000005` in
+   `Silk.NET.Vulkan.Vk.DestroyDevice` from
+   `VulkanGraphicsContext.Dispose`, and one with `0xC0000374` (heap
+   corruption), each AFTER `graceful logout confirmed` and
+   `Mag-Tools disabled`.
+
+## Harness notes (2026-09-16)
+
+- Client: `AcDream.App.exe` built from the final API branch head `669832d`
+  (`OpenAC/.worktrees/magtools-api-final`), plugin deployed from `a016805`.
+- Routes, logs and screenshots for this round live in the session scratchpad
+  under `live-gates/` (`r1.txt`..`r29.txt`, `launch-r*.log`,
+  `artifacts/screenshots/g01..g67`, `h01..h54`).
+- The UI probe's verbs are `dump`, `click`, `hover`, `mousemove`,
+  `doubleclick`, `drag`, `wait`, `sleep`, `assert`, `command`, `input`,
+  `mouselook`, `checkpoint`, `renderpack`, `potato`, `uionly`, `focus`,
+  `resize`, `screenshot`, `close-client`. `hover` and `doubleclick` take
+  `element <datId>` / `item <guid>` only -- there is no `hover at`/
+  `doubleclick at`. A bad verb aborts the script and leaves the client running
+  forever, which then needs a graceful `CloseMainWindow`.
+- `click at <x> <y>` dispatches through `UiRoot` only, so nothing in the 3-D
+  world can be picked or selected from a route. Every gate that starts from a
+  world selection (vendor, trade, corpse row selection) is blocked on that.
+- Mag-Tools window visibility persists across sessions; the selected tab does
+  not (it resets to Trackers -> Mana).
+- Loot-classifier gates need MossTank in the session's plugin list
+  (`"plugins": ["openac.magtools", "acdream.mosstank"]`); it registers the
+  `moss-tank` classifier that `LootRuleProcessor` resolves. MossTank stays
+  inert otherwise (autostart only acts on session settings).
+- `.utl` profiles written for this round and left in
+  `%LOCALAPPDATA%\acdream\vtank`: `MTGateAll.utl` (Keep everything),
+  `+Acdream.AutoPack.utl` and `Default.AutoPack.utl` (KeepUpTo 1 on
+  `Prismatic Taper`).
+- Server toggles used and restored: `@attackable on` -> `@attackable off`
+  (confirmed by `Monsters will only attack you if provoked by you first.`).
+  `@telepoi Holtburg` was undone with
+  `@teleloc 0x0108020D 46.438545 -54.503498 0.004200 -0.128570 0 0 -0.991700`.
+  `Mag-Tools.xml` was restored to its pre-round contents.

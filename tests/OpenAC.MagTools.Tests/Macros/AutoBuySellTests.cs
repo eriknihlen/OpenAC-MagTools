@@ -235,10 +235,12 @@ public sealed class AutoBuySellTests
     }
 
     [Fact]
-    public void BothPicksBeingTradeNotesRefusesTheRoundWithoutTouchingTheWire()
+    public void BothPicksBeingTradeNotesRefusesTheRoundSilentlyWithoutTouchingTheWire()
     {
-        // M1: restored both-TradeNotes guard -- trading a note for a note is
-        // never useful, so the original refused to kick off the round.
+        // M1 (corrected in the third fix round): trading a note for a note
+        // is never useful, so BOTH being TradeNotes refuses the round
+        // SILENTLY -- no message, no wire commands. (The message instead
+        // belongs to the NEITHER-is-a-TradeNote case; see the sibling test.)
         (FakeHost host, _, OpenAC.MagTools.TickScheduler scheduler) = Build();
         host.Automation.Vendor.Items.Add(
             new PluginVendorItem(1u, 100u, "Note of Recall", PluginObjectClass.TradeNote, 10, 1));
@@ -261,10 +263,86 @@ public sealed class AutoBuySellTests
         host.Automation.Vendor.RaiseOpened(9u);
         scheduler.Tick(0.1);
 
+        Assert.DoesNotContain(
+            host.ChatLines,
+            line => line.Contains(
+                "AutoBuySell: No TradeNotes to buy or sell. Check Loot Profile", StringComparison.Ordinal));
+        Assert.Empty(host.Automation.Vendor.Calls);
+    }
+
+    [Fact]
+    public void NeitherPickBeingATradeNotePrintsTheNoteMessageAndStillProceeds()
+    {
+        // MEDIUM (third fix round correction): upstream prints "No
+        // TradeNotes to buy or sell. Check Loot Profile" when NEITHER pick
+        // is a TradeNote -- it is informational, not a refusal, and the
+        // round still proceeds normally.
+        (FakeHost host, _, OpenAC.MagTools.TickScheduler scheduler) = Build();
+        host.Automation.Vendor.Items.Add(
+            new PluginVendorItem(1u, 100u, "Prismatic Taper", PluginObjectClass.Food, 10, 1));
+        host.Automation.Items.Owned.Add(FakeItems.Item(2u, "Rusty Shortsword"));
+
+        host.LootClassifiers.ProfileClassifyHandler = (_, context) => context.Item.Name switch
+        {
+            "Prismatic Taper" => Keep(),
+            "Rusty Shortsword" => Sell(),
+            _ => null,
+        };
+
+        host.Automation.Vendor.VendorName = "Fred";
+        host.Automation.Vendor.RaiseOpened(9u);
+        scheduler.Tick(0.1);
+
         Assert.Contains(
             host.ChatLines,
             line => line.Contains(
                 "AutoBuySell: No TradeNotes to buy or sell. Check Loot Profile", StringComparison.Ordinal));
+        Assert.Contains("buyall", host.Automation.Vendor.Calls);
+    }
+
+    [Fact]
+    public void MixedTradeNotePickGetsNeitherTradeNoteMessage()
+    {
+        // Exactly one side is a TradeNote -- neither TradeNote message
+        // applies, and the round proceeds.
+        (FakeHost host, _, OpenAC.MagTools.TickScheduler scheduler) = Build();
+        host.Automation.Vendor.Items.Add(
+            new PluginVendorItem(1u, 100u, "Note of Recall", PluginObjectClass.TradeNote, 10, 1));
+        host.Automation.Items.Owned.Add(FakeItems.Item(2u, "Rusty Shortsword"));
+
+        host.LootClassifiers.ProfileClassifyHandler = (_, context) => context.Item.Name switch
+        {
+            "Note of Recall" => Keep(),
+            "Rusty Shortsword" => Sell(),
+            _ => null,
+        };
+
+        host.Automation.Vendor.VendorName = "Fred";
+        host.Automation.Vendor.RaiseOpened(9u);
+        scheduler.Tick(0.1);
+
+        Assert.DoesNotContain(
+            host.ChatLines,
+            line => line.Contains(
+                "AutoBuySell: No TradeNotes to buy or sell. Check Loot Profile", StringComparison.Ordinal));
+        Assert.Contains("buyall", host.Automation.Vendor.Calls);
+    }
+
+    [Fact]
+    public void BothPicksEmptyPrintsBothNothingMessagesBeforeStopping()
+    {
+        // LOW: previously the "both empty, stop the round-trip loop" branch
+        // returned before either "Nothing to Buy"/"Nothing to Sell" line
+        // ever printed.
+        (FakeHost host, _, OpenAC.MagTools.TickScheduler scheduler) = Build();
+        host.LootClassifiers.ProfileClassifyHandler = (_, __) => null;
+
+        host.Automation.Vendor.VendorName = "Fred";
+        host.Automation.Vendor.RaiseOpened(9u);
+        scheduler.Tick(0.1);
+
+        Assert.Contains(host.ChatLines, line => line.Contains("AutoBuySell: Nothing to Buy", StringComparison.Ordinal));
+        Assert.Contains(host.ChatLines, line => line.Contains("AutoBuySell: Nothing to Sell", StringComparison.Ordinal));
         Assert.Empty(host.Automation.Vendor.Calls);
     }
 }

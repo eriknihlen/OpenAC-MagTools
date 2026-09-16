@@ -178,13 +178,60 @@ public sealed class LooterTests
 
         // Once the ready item is gone (as if it had actually been removed
         // from the container after being picked up) and only the perpetually
-        // unidentified item remains, the run completes rather than hanging.
+        // unidentified item remains, the run must NOT complete -- upstream's
+        // `waitingForIds` keeps it alive while anything still awaits an id,
+        // rather than reporting "No more lootable items found." just because
+        // nothing happens to be pickable this particular tick.
         host.Automation.Loot.Contents.Remove(readyItem);
         host.Automation.Loot.PickedUp.Clear();
         scheduler.Tick(0.1);
 
         Assert.Empty(host.Automation.Loot.PickedUp);
-        Assert.Contains(host.ChatLines, line => line.Contains("No more lootable items found.", StringComparison.Ordinal));
+        Assert.DoesNotContain(host.ChatLines, line => line.Contains("No more lootable items found.", StringComparison.Ordinal));
+        // The id request keeps going out every think, too.
+        Assert.Contains(1u, host.Automation.Loot.IdentifyRequests);
+    }
+
+    [Fact]
+    public void AllItemsUnidentifiedAtOpenGetLootedOnceAppraisedInsteadOfEndingTheRunEarly()
+    {
+        // The chest-all-unidentified case: on the very first think nothing
+        // has appraisal data yet, so only an id request goes out and the run
+        // must stay open (not report completion). Once the server answers
+        // (appraisal data arrives), both items get looted normally.
+        (FakeHost host, _, OpenAC.MagTools.TickScheduler scheduler, _) = Build();
+        OpenContainer(host, 5u, "Treasure Chest", PluginObjectClass.Container);
+
+        PluginInventoryItem itemA = new PluginWorldObjectItem(1u, "Ring", PluginObjectClass.Jewelry).ToItem();
+        PluginInventoryItem itemB = new PluginWorldObjectItem(2u, "Amulet", PluginObjectClass.Jewelry).ToItem();
+        host.Automation.Loot.Contents.Add(itemA);
+        host.Automation.Loot.Contents.Add(itemB);
+
+        var appraised = new HashSet<uint>();
+        host.LootClassifiers.NeedsIdentificationHandler = context => !appraised.Contains(context.Item.ObjectId);
+        host.LootClassifiers.ClassifyHandler = context => appraised.Contains(context.Item.ObjectId)
+            ? new PluginLootClassification(Matched: true, Action: PluginLootAction.Keep)
+            : null;
+
+        // Tick 1: neither item is appraised yet -- one id request goes out,
+        // nothing is picked up, and the run does not report completion.
+        scheduler.Tick(0.1);
+        Assert.Contains(1u, host.Automation.Loot.IdentifyRequests);
+        Assert.Empty(host.Automation.Loot.PickedUp);
+        Assert.DoesNotContain(
+            host.ChatLines, line => line.Contains("No more lootable items found.", StringComparison.Ordinal));
+
+        // Both items come back appraised (as if the server answered) --
+        // looting resumes and picks them up over subsequent ticks.
+        appraised.Add(1u);
+        appraised.Add(2u);
+
+        scheduler.Tick(0.1);
+        Assert.Contains(1u, host.Automation.Loot.PickedUp);
+
+        host.Automation.Loot.Contents.Remove(itemA);
+        scheduler.Tick(0.1);
+        Assert.Contains(2u, host.Automation.Loot.PickedUp);
     }
 
     [Fact]

@@ -186,6 +186,17 @@ public sealed class AutoBuySell
         BuyPick? buy = GetBuyItem();
         SellPick? sell = GetSellItem();
 
+        // M2: reported independently -- either side (or both) can be empty
+        // on a given round, and the original's own comment insists both get
+        // their own line. LOW: this now runs BEFORE the "both empty, stop"
+        // check below, so a round that ends the vendor visit still reports
+        // both "Nothing to Buy" AND "Nothing to Sell" once, instead of
+        // silently stopping without either message.
+        if (buy is null)
+            _chat.Write("AutoBuySell: Nothing to Buy");
+        if (sell is null)
+            _chat.Write("AutoBuySell: Nothing to Sell");
+
         if (buy is null && sell is null)
         {
             // Nothing left on either side of the profile — the round-trip
@@ -194,24 +205,26 @@ public sealed class AutoBuySell
             return;
         }
 
-        // M2: reported independently -- either side (or both) can be empty
-        // on a given round, and the original's own comment insists both get
-        // their own line.
-        if (buy is null)
-            _chat.Write("AutoBuySell: Nothing to Buy");
-        if (sell is null)
-            _chat.Write("AutoBuySell: Nothing to Sell");
-
-        // M1: restored both-TradeNotes guard. Trading a TradeNote in for
-        // another TradeNote is never useful, so the original refused to
-        // kick off the round at all when both picks landed on one --
-        // reproduced here as the SAME message rather than the upstream NRE
-        // (Appendix B #1) that guard was meant to prevent.
-        if (buy is { ObjectClass: PluginObjectClass.TradeNote }
-            && sell is { ObjectClass: PluginObjectClass.TradeNote })
+        // M1 (corrected in the third fix round): when BOTH picks exist,
+        // upstream checks whether either is a TradeNote. Trading a
+        // TradeNote in for another TradeNote is never useful, so BOTH being
+        // TradeNotes refuses the round silently (no wire commands, no
+        // message -- reproducing the INTENT of the guard the original's
+        // NRE, Appendix B #1, was meant to provide). NEITHER being a
+        // TradeNote instead prints "No TradeNotes to buy or sell. Check Loot
+        // Profile" as an informational note and still proceeds -- it is not
+        // a refusal. A MIXED pick (exactly one is a TradeNote) gets neither
+        // message and proceeds normally.
+        if (buy is { } buyPick && sell is { } sellPick)
         {
-            _chat.Write("AutoBuySell: No TradeNotes to buy or sell. Check Loot Profile");
-            return;
+            bool buyIsNote = buyPick.ObjectClass == PluginObjectClass.TradeNote;
+            bool sellIsNote = sellPick.ObjectClass == PluginObjectClass.TradeNote;
+
+            if (buyIsNote && sellIsNote)
+                return;
+
+            if (!buyIsNote && !sellIsNote)
+                _chat.Write("AutoBuySell: No TradeNotes to buy or sell. Check Loot Profile");
         }
 
         if (buy is { } picked)

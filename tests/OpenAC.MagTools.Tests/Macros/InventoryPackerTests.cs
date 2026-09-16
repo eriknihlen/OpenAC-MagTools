@@ -393,6 +393,46 @@ public sealed class InventoryPackerTests
         Assert.Contains((1u, 10u, 0u, 1), host.Automation.Items.Moves);
     }
 
+    [Fact]
+    public void ABusyIdentifySlotNeverBlacklistsAnItemBeforeItIsActuallyServed()
+    {
+        // MEDIUM (third fix round): the stuck clock must start only once
+        // Identify() actually returns Started -- appraisals serialize
+        // through one slot, so N items stuck behind a permanently Busy slot
+        // must never blacklist even well past the 10-second window, because
+        // none of their requests ever really landed.
+        (FakeHost host, InventoryPacker macro, OpenAC.MagTools.TickScheduler scheduler, FakeTimeProvider clock) = Build();
+        AllowProfile(host, "Default.AutoPack");
+        host.LootClassifiers.ProfileClassificationResult = new PluginLootClassification(Matched: false, Action: PluginLootAction.NoLoot);
+
+        host.Automation.Items.Owned.Add(FakeItems.Item(1u, "Alpha"));
+        host.Automation.Items.Owned.Add(FakeItems.Item(2u, "Beta"));
+        host.Automation.Items.Owned.Add(FakeItems.Item(3u, "Gamma"));
+        host.Automation.Objects.IdentifyResult = PluginItemCommandStatus.Busy;
+
+        macro.Start();
+        scheduler.Tick(0.1);
+
+        clock.Advance(TimeSpan.FromSeconds(30));
+        scheduler.Tick(0.1);
+        clock.Advance(TimeSpan.FromSeconds(30));
+        scheduler.Tick(0.1);
+
+        Assert.DoesNotContain(host.ChatLines, line => line.Contains("Blacklisting item:", StringComparison.Ordinal));
+
+        // The slot frees up: item 1's clock starts NOW, not retroactively.
+        host.Automation.Objects.IdentifyResultOverrides[1u] = PluginItemCommandStatus.Started;
+        scheduler.Tick(0.1);
+
+        clock.Advance(TimeSpan.FromSeconds(5));
+        scheduler.Tick(0.1);
+        Assert.DoesNotContain(host.ChatLines, line => line.Contains("Blacklisting item: 1,", StringComparison.Ordinal));
+
+        clock.Advance(TimeSpan.FromSeconds(6));
+        scheduler.Tick(0.1);
+        Assert.Contains(host.ChatLines, line => line.Contains("Blacklisting item: 1, Alpha", StringComparison.Ordinal));
+    }
+
     private static void MakeAppraised(FakeHost host, uint objectId, string name)
         => host.Automation.Objects.Objects.Add(new PluginWorldObject(
             objectId, 0u, name, PluginObjectClass.Misc, 0u, 0u, 0u)

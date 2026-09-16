@@ -156,4 +156,47 @@ public sealed class AutoTradeAddTests
 
         Assert.Empty(host.Automation.Trade.Calls);
     }
+
+    [Fact]
+    public void ABusyIdentifySlotNeverBlacklistsAnItemBeforeItIsActuallyServed()
+    {
+        // MEDIUM (third fix round): same shape as the packer's -- the stuck
+        // clock starts only once Identify() actually returns Started.
+        var clock = new FakeTimeProvider();
+        (FakeHost host, OpenAC.MagTools.TickScheduler scheduler) = Build(out AutoTradeAdd macro, clock);
+        host.Automation.Items.Owned.Add(FakeItems.Item(1u, "Alpha Ring"));
+        host.Automation.Items.Owned.Add(FakeItems.Item(2u, "Beta Ring"));
+        host.Automation.Objects.Objects.Add(FakeObjects.Landscape(3u, "Bob", PluginObjectClass.Player, 0));
+        host.Automation.Objects.IdentifyResult = PluginItemCommandStatus.Refused;
+        host.Automation.Trade.RaiseOpened(initiatorObjectId: 100u, partnerObjectId: 3u);
+
+        scheduler.Tick(0.1);
+        clock.Advance(TimeSpan.FromSeconds(30));
+        scheduler.Tick(0.1);
+
+        // Nothing was ever added (both still unidentified) and nothing
+        // silently dropped out via a premature blacklist -- both ids are
+        // still being requested every think.
+        Assert.Empty(host.Automation.Trade.Calls);
+        Assert.Contains(1u, host.Automation.Objects.IdentifyRequests);
+        Assert.Contains(2u, host.Automation.Objects.IdentifyRequests);
+
+        // Slot frees up for item 1 -- its clock starts now, not retroactively.
+        host.Automation.Objects.IdentifyResultOverrides[1u] = PluginItemCommandStatus.Started;
+        host.LootClassifiers.ProfileClassifyHandler = (_, context) => context.Item.Name switch
+        {
+            "Alpha Ring" => new PluginLootClassification(Matched: true, Action: PluginLootAction.Keep),
+            _ => null,
+        };
+        scheduler.Tick(0.1);
+
+        clock.Advance(TimeSpan.FromSeconds(5));
+
+        // If the clock had (wrongly) started 30+ seconds ago instead of at
+        // the point above, item 1 would already be blacklisted and skipped
+        // here instead of appraised and added.
+        MakeAppraised(host, 1u, "Alpha Ring");
+        scheduler.Tick(0.1);
+        Assert.Contains("add:1", host.Automation.Trade.Calls);
+    }
 }

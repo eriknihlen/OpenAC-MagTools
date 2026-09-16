@@ -185,13 +185,9 @@ public sealed class InventoryPacker
                 continue;
             }
 
-            if (!_idWaitStartedUtc.TryGetValue(item.ObjectId, out DateTime waitStartUtc))
-            {
-                _idWaitStartedUtc[item.ObjectId] = now;
-                waitStartUtc = now;
-            }
+            bool alreadyWaiting = _idWaitStartedUtc.TryGetValue(item.ObjectId, out DateTime waitStartUtc);
 
-            if (now - waitStartUtc > StuckWindow)
+            if (alreadyWaiting && now - waitStartUtc > StuckWindow)
             {
                 _chat.Write("Blacklisting item: " + item.ObjectId + ", " + item.Name);
                 _blacklistedIds.Add(item.ObjectId);
@@ -200,7 +196,17 @@ public sealed class InventoryPacker
             }
 
             pendingId = true;
-            _host.Automation.Objects.Identify(item.ObjectId);
+
+            // MEDIUM: the clock starts only once the host actually ACCEPTS
+            // the request (Started) -- appraisals serialise through one
+            // slot, so a Busy/Refused result means this item's request
+            // never even entered the queue yet and must not count toward
+            // its own 10-second stuck window (it is retried every think
+            // regardless, per M5, until it either lands or the window that
+            // DOES start once it lands runs out).
+            PluginItemCommandResult result = _host.Automation.Objects.Identify(item.ObjectId);
+            if (!alreadyWaiting && result.Status == PluginItemCommandStatus.Started)
+                _idWaitStartedUtc[item.ObjectId] = now;
         }
 
         if (_host.Automation.Items.IsBusy)

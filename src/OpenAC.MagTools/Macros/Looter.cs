@@ -179,14 +179,21 @@ public sealed class Looter
         // waiting on whatever unrelated inventory action is in flight.
         //
         // One id request per think, for the first item that still needs one
-        // -- H1: this used to `return` right after issuing that request,
-        // which meant a single item that kept coming back Refused/Busy (or
-        // simply never got appraised) stalled looting of every OTHER,
-        // already-appraised item in the container forever. It now falls
-        // through to PickNext below in the same tick, which already skips
-        // anything still needing identification on its own (upstream's
-        // `waitingForIds` equivalent) -- so identification and looting make
-        // progress in parallel instead of the id pass gating the loot pass.
+        // -- a DOCUMENTED port deviation, not upstream parity: the original
+        // requested every still-needing-id item's id in one pass, once, per
+        // think. This port issues at most one request per think instead
+        // (retried automatically next think for whatever is still
+        // outstanding, since NeedsIdentification is re-checked live rather
+        // than gated by a one-shot flag) to avoid bursting many identify
+        // calls at a busy appraisal queue in the same 100 ms window. H1: this
+        // used to `return` right after issuing that request, which meant a
+        // single item that kept coming back Refused/Busy (or simply never
+        // got appraised) stalled looting of every OTHER, already-appraised
+        // item in the container forever. It now falls through to PickNext
+        // below in the same tick, which already skips anything still
+        // needing identification on its own (upstream's `waitingForIds`
+        // equivalent) -- so identification and looting make progress in
+        // parallel instead of the id pass gating the loot pass.
         if (!_isMyCorpse)
         {
             foreach (PluginInventoryItem item in contents)
@@ -205,6 +212,15 @@ public sealed class Looter
         PluginInventoryItem? pick = PickNext(contents);
         if (pick is null)
         {
+            // HIGH: the run must not end while ANY item is still waiting on
+            // its own id -- upstream's `waitingForIds` keeps the loop alive
+            // rather than reporting completion just because nothing is
+            // pickable THIS tick. Once every remaining item is either
+            // appraised (and rule-excluded) or blacklisted, THEN it's really
+            // done.
+            if (!_isMyCorpse && AnyItemAwaitingIdentification(contents))
+                return;
+
             _workingItemId = 0u;
             if (!_isCorpse)
                 _chat.Write("No more lootable items found.");
@@ -228,6 +244,20 @@ public sealed class Looter
         }
 
         _host.Automation.Loot.Pickup(picked.ObjectId);
+    }
+
+    /// <summary>True when any non-blacklisted item in the container still needs identification.</summary>
+    private bool AnyItemAwaitingIdentification(IReadOnlyList<PluginInventoryItem> contents)
+    {
+        foreach (PluginInventoryItem item in contents)
+        {
+            if (_blacklistedNames.Contains(item.Name))
+                continue;
+            if (NeedsIdentification(item))
+                return true;
+        }
+
+        return false;
     }
 
     private bool NeedsIdentification(PluginInventoryItem item)

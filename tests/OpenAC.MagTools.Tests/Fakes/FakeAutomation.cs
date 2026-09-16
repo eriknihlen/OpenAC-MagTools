@@ -664,6 +664,12 @@ public sealed class FakeObjects : IWorldObjectAutomation
 
     public List<uint> IdentifyRequests { get; } = [];
 
+    /// <summary>What <see cref="Identify"/> returns by default for any object id not covered by <see cref="IdentifyResultOverrides"/>.</summary>
+    public PluginItemCommandStatus IdentifyResult { get; set; } = PluginItemCommandStatus.Started;
+
+    /// <summary>Per-object-id override for <see cref="Identify"/>'s returned status, checked before <see cref="IdentifyResult"/>.</summary>
+    public Dictionary<uint, PluginItemCommandStatus> IdentifyResultOverrides { get; } = [];
+
     public IReadOnlyList<PluginWorldObject> CaptureObjects() => Objects;
 
     public bool TryGet(uint objectId, out PluginWorldObject value)
@@ -686,7 +692,10 @@ public sealed class FakeObjects : IWorldObjectAutomation
     public PluginItemCommandResult Identify(uint objectId)
     {
         IdentifyRequests.Add(objectId);
-        return new PluginItemCommandResult(PluginItemCommandStatus.Started);
+        PluginItemCommandStatus status = IdentifyResultOverrides.TryGetValue(objectId, out PluginItemCommandStatus overridden)
+            ? overridden
+            : IdentifyResult;
+        return new PluginItemCommandResult(status);
     }
 
     /// <summary>Replaces a tracked object's snapshot (e.g. to flip <c>HasAppraisalData</c>).</summary>

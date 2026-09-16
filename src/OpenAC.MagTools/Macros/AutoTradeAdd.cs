@@ -155,20 +155,24 @@ public sealed class AutoTradeAdd
                 continue;
             }
 
-            if (!_idWaitStartedUtc.TryGetValue(item.ObjectId, out DateTime waitStartUtc))
-            {
-                _idWaitStartedUtc[item.ObjectId] = now;
-                waitStartUtc = now;
-            }
+            bool alreadyWaiting = _idWaitStartedUtc.TryGetValue(item.ObjectId, out DateTime waitStartUtc);
 
-            if (now - waitStartUtc > StuckWindow)
+            if (alreadyWaiting && now - waitStartUtc > StuckWindow)
             {
                 _blacklistedIds.Add(item.ObjectId);
                 _idWaitStartedUtc.Remove(item.ObjectId);
                 continue;
             }
 
-            _host.Automation.Objects.Identify(item.ObjectId);
+            // MEDIUM: the clock starts only once the host actually ACCEPTS
+            // the request (Started) -- appraisals serialise through one
+            // slot, so a Busy/Refused result means this item's request
+            // never even entered the queue yet and must not count toward
+            // its own 10-second stuck window.
+            PluginItemCommandResult result = _host.Automation.Objects.Identify(item.ObjectId);
+            if (!alreadyWaiting && result.Status == PluginItemCommandStatus.Started)
+                _idWaitStartedUtc[item.ObjectId] = now;
+
             anyPendingId = true;
         }
 

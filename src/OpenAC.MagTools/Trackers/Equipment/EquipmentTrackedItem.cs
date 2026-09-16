@@ -123,19 +123,12 @@ public sealed class EquipmentTrackedItem
         if (!HasIdData)
             return EquipmentTrackedItemState.Unknown;
 
-        if (Item.SpellId == 0u && Item.ItemMaximumMana == 0)
-        {
-            // No associated activation spell recorded and no mana pool at
-            // all — matches the original's "SpellCount == 0 || MaximumMana
-            // == 0" gate closely enough for the case that matters (a plain
-            // non-activatable piece of gear). See docs/deviations.md: the
-            // host does not expose a separate "spell count" distinct from
-            // the carried-spell id list used below.
-            if (SpellIds.Count == 0)
-                return EquipmentTrackedItemState.NotActivatable;
-        }
-
-        if (Item.ItemMaximumMana == 0)
+        // The original's "SpellCount == 0 || MaximumMana == 0" gate. The
+        // host does not expose a separate "spell count" distinct from the
+        // carried-spell id list used below, so an item with no carried
+        // spells at all reads the same way a zero spell count would.
+        // See docs/deviations.md.
+        if (SpellIds.Count == 0 || Item.ItemMaximumMana == 0)
             return EquipmentTrackedItemState.NotActivatable;
 
         if (Item.ItemCurrentMana == 0)
@@ -163,7 +156,7 @@ public sealed class EquipmentTrackedItem
                 continue; // cast-on-strike spells don't gate the "is it running" state
 
             bool satisfied = false;
-            foreach (uint activeSpellId in World.ActiveSpellIds)
+            foreach (uint activeSpellId in ActiveSpellIds)
             {
                 if (spells.TryGet(activeSpellId, out PluginSpellInfo activeInfo)
                     && activeInfo.Family == info.Family
@@ -196,8 +189,15 @@ public sealed class EquipmentTrackedItem
         return EquipmentTrackedItemState.Active;
     }
 
-    /// <summary>The item's carried spells (the appraisal-panel "Item is imbued with" list).</summary>
-    private IReadOnlyList<uint> SpellIds => World.SpellIds;
+    /// <summary>
+    /// The item's carried spells (the appraisal-panel "Item is imbued with"
+    /// list). Guarded against null: a default <see cref="PluginWorldObject"/>
+    /// (no matching world snapshot resolved yet) has null collection fields,
+    /// since struct field initializers do not run for <c>default</c>.
+    /// </summary>
+    private IReadOnlyList<uint> SpellIds => World.SpellIds ?? [];
+
+    private IReadOnlyList<uint> ActiveSpellIds => World.ActiveSpellIds ?? [];
 
     public int CalculatedCurrentMana(DateTime nowUtc, EquipmentTrackedItemState state)
     {

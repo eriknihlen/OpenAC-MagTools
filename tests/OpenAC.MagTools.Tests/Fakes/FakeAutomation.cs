@@ -52,6 +52,7 @@ public sealed class FakeCharacter : ICharacterInfo
     public string WorldName { get; set; } = string.Empty;
     public int ServerPopulation { get; set; } = -1;
     public string AccountName { get; set; } = string.Empty;
+    public int MainPackFreeSlots { get; set; }
     public uint ObjectId { get; set; }
     public uint CurrentHealth { get; set; }
     public uint MaxHealth { get; set; }

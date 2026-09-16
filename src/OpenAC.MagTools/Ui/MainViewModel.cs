@@ -35,13 +35,14 @@ public sealed class MainViewModel : IDisposable
     public MainViewModel(
         SettingsManager settings,
         ChatLoggerFeature chatLogger,
-        IPluginHost? host = null)
+        IPluginHost? host = null,
+        Trackers.Combat.CombatTrackerHost? combatTrackerHost = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(chatLogger);
 
         Mana = new ManaPageViewModel(settings);
-        Combat = new CombatPageViewModel(settings);
+        Combat = new CombatPageViewModel(settings, combatTrackerHost, host);
         Corpse = new CorpsePageViewModel(settings);
         Player = new PlayerPageViewModel(settings);
         InventoryItems = new InventoryItemsPageViewModel();

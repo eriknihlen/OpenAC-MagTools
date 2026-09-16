@@ -1,4 +1,6 @@
+using AcDream.Plugin.Abstractions;
 using OpenAC.MagTools.Settings;
+using OpenAC.MagTools.Trackers.Combat;
 
 namespace OpenAC.MagTools.Ui;
 
@@ -49,37 +51,141 @@ public sealed class ManaPageViewModel : ListPageViewModel
     public Action ToggleRecharge { get; }
 }
 
-/// <summary>Trackers → Combat. TODO(P4): the combat tracker fills these.</summary>
+/// <summary>
+/// Trackers → Combat. P4's <see cref="Trackers.Combat.CombatTrackerHost"/>
+/// fills the two Current/Persistent monster+damage lists; row strings are
+/// rebuilt lazily (only when the underlying tracker fires
+/// <see cref="Trackers.Combat.CombatTracker.Changed"/>, or the selection/sort
+/// toggle changes) so a per-frame binding poll never recomputes anything —
+/// see the class remarks on <see cref="Trackers.Combat.CombatTrackerRows"/>
+/// for the row-layout deviation from the original's 5-column widget.
+/// </summary>
 public sealed class CombatPageViewModel
 {
     private readonly CombatTrackerSettings _settings;
+    private readonly CombatTrackerHost? _combatTrackerHost;
+    private readonly IPluginHost? _host;
 
-    public CombatPageViewModel(SettingsManager settings)
+    private IReadOnlyList<CombatTrackerRows.MonsterRow> _currentMonsterRows = [];
+    private IReadOnlyList<string> _currentDamageRows = [];
+    private IReadOnlyList<CombatTrackerRows.MonsterRow> _persistentMonsterRows = [];
+    private IReadOnlyList<string> _persistentDamageRows = [];
+    private bool _currentDirty = true;
+    private bool _persistentDirty = true;
+
+    public CombatPageViewModel(
+        SettingsManager settings, CombatTrackerHost? combatTrackerHost = null, IPluginHost? host = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
         _settings = settings.CombatTracker;
+        _combatTrackerHost = combatTrackerHost;
+        _host = host;
 
-        SelectCurrentMonster = index => CurrentMonsterSelectedRow = index;
+        if (_combatTrackerHost is not null)
+        {
+            _combatTrackerHost.Current.Changed += () => _currentDirty = true;
+            _combatTrackerHost.Persistent.Changed += () => _persistentDirty = true;
+        }
+
+        SelectCurrentMonster = index =>
+        {
+            CurrentMonsterSelectedRow = NormalizeMonsterSelection(index);
+            CurrentDamageSelectedRow = -1;
+        };
         SelectCurrentDamage = index => CurrentDamageSelectedRow = index;
-        SelectPersistentMonster = index => PersistentMonsterSelectedRow = index;
+        SelectPersistentMonster = index =>
+        {
+            PersistentMonsterSelectedRow = NormalizeMonsterSelection(index);
+            PersistentDamageSelectedRow = -1;
+        };
         SelectPersistentDamage = index => PersistentDamageSelectedRow = index;
 
-        ClearCurrentStats = static () => { };
-        ExportCurrentStats = static () => { };
-        ClearPersistentStats = static () => { };
+        ClearCurrentStats = () => _combatTrackerHost?.ClearCurrent();
+        ExportCurrentStats = () => _combatTrackerHost?.ExportCurrent();
+        ClearPersistentStats = () => _combatTrackerHost?.ClearPersistent();
 
         ToggleExportOnLogOff = () =>
             _settings.ExportOnLogOff.Value = !_settings.ExportOnLogOff.Value;
         TogglePersistent = () =>
             _settings.Persistent.Value = !_settings.Persistent.Value;
         ToggleSortAlphabetically = () =>
+        {
             _settings.SortAlphabetically.Value = !_settings.SortAlphabetically.Value;
+            _currentDirty = true;
+            _persistentDirty = true;
+        };
     }
 
-    public IReadOnlyList<string> CurrentMonsterRows { get; } = [];
-    public IReadOnlyList<string> CurrentDamageRows { get; } = [];
-    public IReadOnlyList<string> PersistentMonsterRows { get; } = [];
-    public IReadOnlyList<string> PersistentDamageRows { get; } = [];
+    // Row 0 (header) always redirects to row 1 ("All") — same as the
+    // original's monsterList_Click: "if (row == 0) row = 1;".
+    private static int NormalizeMonsterSelection(int index) => index <= 0 ? 1 : index;
+
+    private string LocalPlayerName => _host?.Automation.Character.Name ?? string.Empty;
+
+    private void RefreshCurrentIfDirty()
+    {
+        if (!_currentDirty || _combatTrackerHost is null)
+            return;
+        _currentDirty = false;
+        _currentMonsterRows = CombatTrackerRows.BuildMonsterRows(
+            _combatTrackerHost.Current, LocalPlayerName, _settings.SortAlphabetically.Value);
+        _currentDamageRows = BuildDamageRows(_currentMonsterRows, CurrentMonsterSelectedRow, _combatTrackerHost.Current);
+    }
+
+    private void RefreshPersistentIfDirty()
+    {
+        if (!_persistentDirty || _combatTrackerHost is null)
+            return;
+        _persistentDirty = false;
+        _persistentMonsterRows = CombatTrackerRows.BuildMonsterRows(
+            _combatTrackerHost.Persistent, LocalPlayerName, _settings.SortAlphabetically.Value);
+        _persistentDamageRows = BuildDamageRows(
+            _persistentMonsterRows, PersistentMonsterSelectedRow, _combatTrackerHost.Persistent);
+    }
+
+    private IReadOnlyList<string> BuildDamageRows(
+        IReadOnlyList<CombatTrackerRows.MonsterRow> monsterRows, int selectedRow, CombatTracker tracker)
+    {
+        int row = NormalizeMonsterSelection(selectedRow < 0 ? 1 : selectedRow);
+        string? targetName = row < monsterRows.Count ? monsterRows[row].TargetName : LocalPlayerName;
+        return CombatTrackerRows.BuildDamageRows(tracker, targetName, LocalPlayerName);
+    }
+
+    public IReadOnlyList<string> CurrentMonsterRows
+    {
+        get
+        {
+            RefreshCurrentIfDirty();
+            return [.. _currentMonsterRows.Select(static row => row.Text)];
+        }
+    }
+
+    public IReadOnlyList<string> CurrentDamageRows
+    {
+        get
+        {
+            RefreshCurrentIfDirty();
+            return _currentDamageRows;
+        }
+    }
+
+    public IReadOnlyList<string> PersistentMonsterRows
+    {
+        get
+        {
+            RefreshPersistentIfDirty();
+            return [.. _persistentMonsterRows.Select(static row => row.Text)];
+        }
+    }
+
+    public IReadOnlyList<string> PersistentDamageRows
+    {
+        get
+        {
+            RefreshPersistentIfDirty();
+            return _persistentDamageRows;
+        }
+    }
 
     public int CurrentMonsterSelectedRow { get; private set; } = -1;
     public int CurrentDamageSelectedRow { get; private set; } = -1;

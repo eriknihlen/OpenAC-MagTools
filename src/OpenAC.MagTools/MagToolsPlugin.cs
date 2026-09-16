@@ -4,6 +4,7 @@ using OpenAC.MagTools.Commands;
 using OpenAC.MagTools.Inventory;
 using OpenAC.MagTools.ItemInfo;
 using OpenAC.MagTools.Settings;
+using OpenAC.MagTools.Trackers.Combat;
 using OpenAC.MagTools.Ui;
 
 namespace OpenAC.MagTools;
@@ -26,6 +27,7 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
     private SessionContext? _session;
     private ChatFilter? _chatFilter;
     private Loggers.Chat.ChatLogger? _chatLogger;
+    private CombatTrackerHost? _combatTrackerHost;
     private LootRuleProcessor? _lootRules;
     private ItemInfoPrinter? _itemInfoPrinter;
     private UserIdentDetector? _userIdentDetector;
@@ -50,7 +52,8 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _settings = new SettingsManager(_settingsFile);
         _chatFilter = new ChatFilter(host, _settings);
         _chatLogger = new Loggers.Chat.ChatLogger(host, _settings);
-        _main = new MainViewModel(_settings, _chatLogger, host);
+        _combatTrackerHost = new CombatTrackerHost(host, _chat, _settings);
+        _main = new MainViewModel(_settings, _chatLogger, host, _combatTrackerHost);
         _hud = new HudViewModel(host);
         _router = new MtCommandRouter(host, _chat, _settings);
         _session = new SessionContext(host, _chat);
@@ -185,6 +188,7 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         // the logger and flush what it has before we go, same as a real
         // logoff would.
         _chatLogger?.Stop();
+        _combatTrackerHost?.Stop();
 
         if (_session is not null)
         {
@@ -218,11 +222,13 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         if (_session is null || _scheduler is null)
             return;
         _chatLogger?.Start(_scheduler, _session.WorldName, _session.CharacterName);
+        _combatTrackerHost?.Start(_scheduler, _session.WorldName, _session.CharacterName);
     }
 
     private void OnSessionLogoff()
     {
         _chatLogger?.Stop();
+        _combatTrackerHost?.Stop();
         _chatFilter?.OnLogoff();
     }
 

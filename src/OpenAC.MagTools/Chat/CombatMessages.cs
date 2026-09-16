@@ -4,13 +4,97 @@ namespace OpenAC.MagTools.Chat;
 
 /// <summary>
 /// Port of the original's <c>Trackers.Combat.Standard.CombatMessages</c> —
-/// only <see cref="IsKilledByMeMessage"/> and the 36 "you killed it" regexes
-/// behind it. The rest of that class (failed-attack and damage-line parsing)
-/// belongs to the combat tracker slice; this table is pulled forward now
-/// because the chat filter's Monster Deaths rule needs it too.
+/// the full set of combat-line regex tables. <see cref="IsKilledByMeMessage"/>
+/// and the 36 "you killed it" regexes were pulled forward for the chat
+/// filter's Monster Deaths rule; the P4 combat tracker slice
+/// (<c>Trackers.Combat.StandardTracker</c>) adds the rest: failed-attack
+/// (evade/resist) lines, and melee/missile/magic damage-dealt and
+/// damage-received lines.
 /// </summary>
+/// <remarks>
+/// <see cref="MeleeMissileGivenAttacks"/> orders the Sneak-Attack/Recklessness
+/// variants BEFORE the plain "You [verb] X for N points..." pattern —
+/// deliberately different from the original's literal order, which listed the
+/// general pattern second (right after the plain-crit pattern). See
+/// docs/deviations.md for why: under .NET's default (non-Multiline) anchoring
+/// the general pattern's leading <c>^You</c> cannot actually match a line that
+/// starts with the literal text "Sneak Attack!" or "Recklessness!", so this
+/// reordering does not change which lines match — it only removes the
+/// visual/maintenance hazard the upstream ordering has (Appendix B item 5 of
+/// the port's research inventory).
+/// </remarks>
 public static class CombatMessages
 {
+    // ── Failed attacks (evade / resist) — direction inferred by the caller ──
+
+    /// <summary>
+    /// You evaded X! / X evaded your attack. / You resist the spell cast by
+    /// X / X resists your spell.
+    /// </summary>
+    public static readonly Regex[] FailedAttacks =
+    [
+        new(@"^You evaded (?<targetname>.+)!$"),
+        new(@"^(?<targetname>.+) evaded your attack\.$"),
+        new(@"^You resist the spell cast by (?<targetname>.+)$"),
+        new(@"^(?<targetname>.+) resists your spell$"),
+    ];
+
+    /// <summary>Melee/missile damage a monster dealt to the local player (received).</summary>
+    public static readonly Regex[] MeleeMissileReceivedAttacks =
+    [
+        new(@"^Critical hit! Overpower! (?<targetname>.+) [\w]+ your .+ for (?<points>.*) point.* of .+ damage.*$"),
+        new(@"^Critical hit! (?<targetname>.+) [\w]+ your .+ for (?<points>.*) point.* of .+ damage.*$"),
+        new(@"^Overpower! (?<targetname>.+) [\w]+ your .+ for (?<points>.+) point.* of .+ damage.*$"),
+        new(@"^(?<targetname>.+) [\w]+ your .+ for (?<points>.+) point.* of .+ damage.*$"),
+    ];
+
+    /// <summary>
+    /// Melee/missile damage the local player dealt (given). See the class
+    /// remarks for why the Sneak-Attack/Recklessness variants come before the
+    /// plain pattern here.
+    /// </summary>
+    public static readonly Regex[] MeleeMissileGivenAttacks =
+    [
+        new(@"^Critical hit!  Sneak Attack! You [\w]+ (?<targetname>.*) for (?<points>.+) point.* of .+ damage.*$"),
+        new(@"^Sneak Attack! Recklessness! You [\w]+ (?<targetname>.*) for (?<points>.+) point.* of .+ damage.*$"),
+        new(@"^Sneak Attack! You [\w]+ (?<targetname>.*) for (?<points>.+) point.* of .+ damage.*$"),
+        new(@"^Recklessness! You [\w]+ (?<targetname>.*) for (?<points>.+) point.* of .+ damage.*$"),
+        // Note the TWO spaces after "Critical hit!" here — retail's actual
+        // spacing on the "given" side, asymmetric with the one space on the
+        // "received" side above.
+        new(@"^Critical hit!  You [\w]+ (?<targetname>.*) for (?<points>.+) point.* of .+ damage.*$"),
+        new(@"^You [\w]+ (?<targetname>.*) for (?<points>.+) point.* of .+ damage.*$"),
+    ];
+
+    /// <summary>Magic damage a monster dealt to the local player (received).</summary>
+    public static readonly Regex[] MagicReceivedAttacks =
+    [
+        new(@"^Critical hit! Overpower! (?<targetname>.+) [\w]+ you for (?<points>.+) point.* with .+$"),
+        new(@"^Critical hit! (?<targetname>.+) [\w]+ you for (?<points>.+) point.* with .+$"),
+        new(@"^Overpower! (?<targetname>.+) [\w]+ you for (?<points>.+) point.* with .+$"),
+        new(@"^(?<targetname>.+) [\w]+ you for (?<points>.+) point.* with .+$"),
+        new(@"^Magical energies lose (?<points>.+) point.* of health due to (?<targetname>.+) casting .+$"),
+        new(@"^You lose (?<points>.+) point.* of health due to (?<targetname>.+) casting .+$"),
+        new(@"^(?<targetname>.+) casts .+ and drains (?<points>.+) point.* .+$"),
+    ];
+
+    /// <summary>Magic damage the local player dealt (given).</summary>
+    public static readonly Regex[] MagicGivenAttacks =
+    [
+        new(@"^Critical hit! You [\w]+ (?<targetname>.+) for (?<points>.+) point.* with .+$"),
+        new(@"^You [\w]+ (?<targetname>.+) for (?<points>.+) point.* with .+$"),
+    ];
+
+    /// <summary>
+    /// Attributes a target with zero damage (a buff-cast line, not an
+    /// attack) — used only to seed a <see cref="Combat.CombatInfo"/> pairing.
+    /// </summary>
+    public static readonly Regex[] MagicCastAttacks =
+    [
+        new(@"^You cast Gossamer Flesh on (?<targetname>((?!, ).)+)$"),
+        new(@"^You cast Gossamer Flesh on (?<targetname>.+), .+$"),
+    ];
+
     private static readonly Regex[] TargetKilledByMe =
     [
         // You flatten Noble Remains's body with the force of your assault!
@@ -96,5 +180,46 @@ public static class CombatMessages
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// True if <paramref name="text"/> matches one of <see cref="FailedAttacks"/>.
+    /// </summary>
+    public static bool IsFailedAttack(string text)
+    {
+        foreach (Regex regex in FailedAttacks)
+        {
+            if (regex.IsMatch(text))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Matches <paramref name="text"/> against every regex in
+    /// <paramref name="table"/> in order and returns the first successful
+    /// match, or null.
+    /// </summary>
+    public static Match? FirstMatch(IReadOnlyList<Regex> table, string text)
+    {
+        foreach (Regex regex in table)
+        {
+            Match match = regex.Match(text);
+            if (match.Success)
+                return match;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The killed-by-me target name, for the same "You killed it" table
+    /// <see cref="IsKilledByMeMessage"/> tests against.
+    /// </summary>
+    public static string? GetKilledByMeTarget(string text)
+    {
+        Match? match = FirstMatch(TargetKilledByMe, text);
+        return match?.Groups["targetname"].Value;
     }
 }

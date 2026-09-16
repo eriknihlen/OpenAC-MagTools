@@ -1,3 +1,4 @@
+using AcDream.Plugin.Abstractions;
 using OpenAC.MagTools.Settings;
 using ChatLoggerFeature = OpenAC.MagTools.Loggers.Chat.ChatLogger;
 
@@ -31,7 +32,10 @@ public sealed class MainViewModel : IDisposable
     private bool _corpseOptions;
     private bool _playerOptions;
 
-    public MainViewModel(SettingsManager settings, ChatLoggerFeature chatLogger)
+    public MainViewModel(
+        SettingsManager settings,
+        ChatLoggerFeature chatLogger,
+        IPluginHost? host = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(chatLogger);
@@ -42,7 +46,8 @@ public sealed class MainViewModel : IDisposable
         Player = new PlayerPageViewModel(settings);
         InventoryItems = new InventoryItemsPageViewModel();
         ChatLogger = new ChatLoggerPageViewModel(settings, chatLogger);
-        InventoryTools = new InventoryToolsPageViewModel();
+        InventoryTools = new InventoryToolsPageViewModel(
+            host, settings.ItemInfoOnIdent, host?.Automation.Spells);
         Tinkering = new TinkeringPageViewModel();
         CharacterCommands = new ScopedCommandsPageViewModel();
         ServerCommands = new ScopedCommandsPageViewModel();
@@ -387,7 +392,7 @@ public sealed class MainViewModel : IDisposable
     public Action<int> InventorySearchIconClicked => InventoryTools.RowIconClicked;
     public IReadOnlyList<string> InventorySearchNames => InventoryTools.ResultNames;
     public int InventorySearchSelectedRow => InventoryTools.SelectedRow;
-    public Action<int> SelectInventorySearchRow => InventoryTools.Select;
+    public Action<int> SelectInventorySearchRow => InventoryTools.SelectResultRow;
     public IReadOnlyList<string> InventoryItemInfoLines => InventoryTools.ItemInfoLines;
     public int InventoryItemInfoSelectedRow => InventoryTools.ItemInfoSelectedRow;
     public Action<int> SelectInventoryItemInfoLine => InventoryTools.SelectItemInfoLine;

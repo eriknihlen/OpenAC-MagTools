@@ -1,6 +1,8 @@
 using AcDream.Plugin.Abstractions;
 using OpenAC.MagTools.Chat;
 using OpenAC.MagTools.Commands;
+using OpenAC.MagTools.Inventory;
+using OpenAC.MagTools.ItemInfo;
 using OpenAC.MagTools.Settings;
 using OpenAC.MagTools.Ui;
 
@@ -24,6 +26,13 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
     private SessionContext? _session;
     private ChatFilter? _chatFilter;
     private Loggers.Chat.ChatLogger? _chatLogger;
+    private LootRuleProcessor? _lootRules;
+    private ItemInfoPrinter? _itemInfoPrinter;
+    private UserIdentDetector? _userIdentDetector;
+    private ContainerIdentDetector? _containerIdentDetector;
+    private InventoryExporter? _inventoryExporter;
+    private Action<ItemIdentArgs>? _onUserItemIdentified;
+    private Action<ItemIdentArgs>? _onContainerItemIdentified;
     private Action<double>? _tick;
     private Action? _onSessionLoginComplete;
     private Action? _onSessionLogoff;
@@ -41,21 +50,41 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _settings = new SettingsManager(_settingsFile);
         _chatFilter = new ChatFilter(host, _settings);
         _chatLogger = new Loggers.Chat.ChatLogger(host, _settings);
-        _main = new MainViewModel(_settings, _chatLogger);
+        _main = new MainViewModel(_settings, _chatLogger, host);
         _hud = new HudViewModel(host);
         _router = new MtCommandRouter(host, _chat, _settings);
         _session = new SessionContext(host, _chat);
+        _lootRules = new LootRuleProcessor(host.LootClassifiers);
+        _itemInfoPrinter = new ItemInfoPrinter(host, _chat, _settings.ItemInfoOnIdent, _lootRules);
 
         host.Log.Info("Mag-Tools initialized");
     }
 
     public void Enable()
     {
-        if (_host is null || _chat is null || _settingsFile is null
+        if (_host is null || _chat is null || _settingsFile is null || _settings is null
             || _main is null || _hud is null || _router is null || _session is null)
             return;
 
         _scheduler = new TickScheduler(_host.Events, _chat);
+
+        _inventoryExporter = new InventoryExporter(
+            _host, _chat, _settings.ItemInfoOnIdent, _host.Automation.Spells, _scheduler);
+        _main.InventoryTools.Exporter = _inventoryExporter;
+
+        if (_itemInfoPrinter is not null)
+        {
+            _userIdentDetector = new UserIdentDetector(_host, _settings.ItemInfoOnIdent);
+            _onUserItemIdentified = args => _itemInfoPrinter.Print(args);
+            _userIdentDetector.ItemIdentified += _onUserItemIdentified;
+            _userIdentDetector.Start();
+
+            _containerIdentDetector = new ContainerIdentDetector(
+                _host, _settings.ItemInfoOnIdent, _scheduler);
+            _onContainerItemIdentified = args => _itemInfoPrinter.Print(args);
+            _containerIdentDetector.ItemIdentified += _onContainerItemIdentified;
+            _containerIdentDetector.Start();
+        }
 
         // Reverses the unsubscribe a previous Disable() did, for a
         // Disable()/Enable() cycle that reuses this same MainViewModel
@@ -123,6 +152,28 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _mainPanelRegistration = null;
         _hudPanelRegistration?.Dispose();
         _hudPanelRegistration = null;
+
+        if (_userIdentDetector is not null)
+        {
+            if (_onUserItemIdentified is not null)
+                _userIdentDetector.ItemIdentified -= _onUserItemIdentified;
+            _userIdentDetector.Dispose();
+            _userIdentDetector = null;
+        }
+        _onUserItemIdentified = null;
+
+        if (_containerIdentDetector is not null)
+        {
+            if (_onContainerItemIdentified is not null)
+                _containerIdentDetector.ItemIdentified -= _onContainerItemIdentified;
+            _containerIdentDetector.Dispose();
+            _containerIdentDetector = null;
+        }
+        _onContainerItemIdentified = null;
+
+        if (_main is not null)
+            _main.InventoryTools.Exporter = null;
+        _inventoryExporter = null;
 
         _scheduler?.Dispose();
         _scheduler = null;

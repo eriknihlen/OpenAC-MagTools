@@ -1,0 +1,24 @@
+# Deliberate deviations from the original Mag-Tools
+
+A rolling table of every place this port knowingly behaves differently from
+the original Decal plugin, why, and where to look. Anything not listed here
+is intended to be behavior-identical. `docs/2026-09-16-port-design.md` §7
+covers the separate "not applicable" list (Decal/Win32-only features with no
+OpenAC equivalent) — this table is for features that DO exist here but work
+slightly differently.
+
+| Area | Original behavior | This port | Why | Where |
+|---|---|---|---|---|
+| Settings save | Rewrote the whole XML file on every single setting assignment. | Marks the document dirty and flushes at most once per 250 ms debounce; `Disable()` flushes synchronously. | Avoids a storage write per keystroke/toggle; semantics stay write-through (a reader always sees the new value immediately). | `src/OpenAC.MagTools/Settings/SettingsFile.cs` (`SaveDebounce`) |
+| Settings account scoping | Concatenated the raw account name into an XML element name unescaped — invalid XML for any account name containing spaces or most punctuation. | `XmlConvert.EncodeName` on both the account and server name before building the scope element name. | Fixes a real original bug rather than reproducing it; the encoding is the identity transform for an ordinary alphanumeric account, so this only changes behavior for names that would otherwise have broken the document. | `src/OpenAC.MagTools/Settings/SettingsScope.cs` |
+| Login banner population | Always printed a population number, defaulting to whatever Decal's proxy last cached (sometimes stale or zero). | Omits the population clause entirely when the host hasn't yet reported it (`ICharacterInfo.ServerPopulation` is `-1` until the login-time world-name message arrives), instead of printing a wrong or stale number. | The host's population figure is a one-time snapshot that may not exist yet at the exact moment the banner prints; printing nothing is preferable to printing 0 or a stale figure. | `src/OpenAC.MagTools/SessionContext.cs` (`OnLoginComplete`), `src/AcDream.Plugin.Abstractions/Automation.cs` (`ICharacterInfo.ServerPopulation`) |
+| `/mt fellow create` | Drove the retail fellowship-creation dialog by clicks; the share-experience checkbox's actual state depended on whatever the user last left it at. | Always calls `Fellowship.Create(name, shareExperience: true)`. | The automation surface's `Create` takes `shareExperience` as a real parameter, but no `/mt fellow create` argument surface exists yet to pass a user choice through — `true` is a fixed default, not a rediscovered original default. Revisit if a demand for `shareExperience: false` shows up. | `src/OpenAC.MagTools/Commands/MtCommandRouter.cs` (`Fellowship`) |
+| `usel <item> on <target>` (and the plain `use A on B` form) | Resolved without keyword matching: `A` is always looked up inventory-only, `B` is resolved in the command's own scope (inventory/landscape/anywhere) and is never allowed to resolve to the same object as `A`. | Ported as-is: `FindIdForName` for the source is always `searchInventory: true, searchOpenContainer: false, searchEnvironment: false`; the target search additionally passes `idToSkip` = the source's id. | Faithful port, called out here because it looks asymmetric (source is inventory-only, target is scope-wide) if you only read the target-side call. | `src/OpenAC.MagTools/Commands/MtCommandRouter.cs` (`Use`, `FindIdForName`, `idToSkip`) |
+| Name-lookup search breadth (`FindIdForName`) | Two-pass lookup: an exact-name pass over inventory, then the open container, then the closest landscape object; only if that finds nothing AND partial matching was requested does the same three passes repeat with a substring match. | Ported as-is, with `idToSkip` threaded through every pass so a command that already resolved a source object never lets a target search re-select it. | Documented here because the exact/partial split and the pass order are easy to "simplify" by accident during a future refactor — don't. | `src/OpenAC.MagTools/Commands/MtCommandRouter.cs` (`FindIdForName`, `FindPass`) |
+
+## Adding a row
+
+Add a row in the same commit that introduces the deviation (or discovers an
+existing one). Keep it to one line — point at the file, not a full
+explanation; the "why" belongs in a code comment at the site itself, this
+table is the index.

@@ -88,6 +88,34 @@ public sealed class InventoryToolsPageViewModelTests
     }
 
     [Fact]
+    public void ClickingAnEquippedResultDoesNotUseTheContainer()
+    {
+        // MEDIUM-6 (P10 review): on this host an equipped item's
+        // ContainerObjectId is whatever container it was equipped FROM (or
+        // 0), never the player -- the same host-shape fact behind defect
+        // 9's IsEquippedByMe fix -- so SelectRow's plain
+        // "ContainerObjectId != Character.ObjectId" check treated every
+        // equipped item as being in a foreign container and called
+        // Items.Use(0) for it. An equipped item (WielderObjectId == me)
+        // must never trigger a container-open.
+        (FakeHost host, _, InventoryToolsPageViewModel vm) = Build();
+        host.Automation.Items.Owned.Add(FakeItems.Item(101u, "Equipped Sword", equippedLocation: 1u) with
+        {
+            ContainerObjectId = 0u,
+            WielderObjectId = host.Automation.Character.ObjectId,
+        });
+        host.Automation.Objects.Replace(new PluginWorldObject(
+            101u, 0u, "Equipped Sword", PluginObjectClass.Misc, 0u, 0u, host.Automation.Character.ObjectId)
+        { HasAppraisalData = true });
+        vm.SetSearchText("Equipped Sword");
+
+        vm.SelectResultRow(0);
+
+        Assert.Empty(host.Automation.Items.Calls);
+        Assert.Equal(101u, host.Selection.SelectedObjectId);
+    }
+
+    [Fact]
     public void OutOfRangeSelectionIsIgnored()
     {
         (FakeHost host, _, InventoryToolsPageViewModel vm) = Build();

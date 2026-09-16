@@ -161,7 +161,16 @@ public sealed class InventoryToolsPageViewModel : ListPageViewModel
             return;
 
         PluginInventoryItem inventoryItem = _matches[index];
-        if (inventoryItem.ContainerObjectId != _host.Automation.Character.ObjectId)
+        // MEDIUM-6 (P10 review): on this host an equipped item's
+        // ContainerObjectId is whatever container it was equipped FROM (or
+        // 0), never the player -- the same host-shape fact behind defect
+        // 9's IsEquippedByMe fix -- so this plain container-id comparison
+        // treated every equipped item as foreign and called Items.Use(0)
+        // for it. An equipped item is directly on the character; never
+        // open a container for it.
+        bool isEquippedByMe = inventoryItem.IsEquipped
+            && inventoryItem.WielderObjectId == _host.Automation.Character.ObjectId;
+        if (!isEquippedByMe && inventoryItem.ContainerObjectId != _host.Automation.Character.ObjectId)
             _host.Automation.Items.Use(inventoryItem.ContainerObjectId);
 
         _host.Selection.Select(inventoryItem.ObjectId);

@@ -147,13 +147,49 @@ public sealed class EquipmentTrackerHost
 
         // H3: coalesce — a whole burst of events inside one 500 ms tick
         // costs exactly one CaptureOwnedItems() capture, not one per event.
-        _dirty = true;
+        // MEDIUM-1: ObjectChanged fires for every world entity, not just
+        // equipment — only a change to an object already in the tracked set,
+        // or one the local player owns (a newly-equipped item), should mark
+        // the tick dirty; a monster spawning or a stranger crossing a cell
+        // boundary must not.
+        if (IsEquipmentRelevant(change))
+            _dirty = true;
     }
 
+    /// <summary>
+    /// MEDIUM-1: see the remark on the <c>_dirty = true</c> assignment in
+    /// <see cref="OnObjectChanged"/>. A <see cref="PluginObjectChangeKind.Released"/>
+    /// object can no longer be resolved to check ownership, so it counts as
+    /// relevant unconditionally — the same reasoning as
+    /// <c>InventoryTrackerHost.IsInventoryRelevant</c>.
+    /// </summary>
+    private bool IsEquipmentRelevant(PluginObjectChange change)
+    {
+        if (change.Kind == PluginObjectChangeKind.Released)
+            return true;
+
+        if (TryFind(change.ObjectId, out _))
+            return true;
+
+        return _host.Automation.Objects.TryGet(change.ObjectId, out PluginWorldObject world) && world.IsOwned;
+    }
+
+    /// <summary>
+    /// MEDIUM-3: the original's per-item <c>burnTimer</c> (see this class's
+    /// deviations-doc row) is replaced by this host's shared resync cadence —
+    /// but that replacement only works if an IDLE tick still re-raises
+    /// <see cref="EquipmentTracker.Changed"/> so the Mana list's bound
+    /// countdown cells keep advancing between real equip/unequip events. An
+    /// idle tick used to do nothing at all, so the displayed mana countdown
+    /// visibly froze the moment nothing else happened to trigger a resync.
+    /// </summary>
     private void OnTick()
     {
         if (!_dirty)
+        {
+            Tracker.RaiseChanged();
             return;
+        }
 
         _dirty = false;
         Resync(identifyNewItems: true);

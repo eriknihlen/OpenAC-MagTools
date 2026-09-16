@@ -168,6 +168,31 @@ public sealed class EquipmentTrackerHostTests
     }
 
     [Fact]
+    public void An_unowned_untracked_ObjectChanged_does_not_mark_a_coalesced_tick_dirty()
+    {
+        var host = new FakeHost();
+        host.Automation.Items.Owned.Add(EquippedItem(10u));
+        var scheduler = new TickScheduler(host.Events, new ChatOutput(host));
+
+        var equipmentHost = new EquipmentTrackerHost(host);
+        equipmentHost.Start(scheduler);
+        int capturesAfterStart = host.Automation.Items.CaptureCount;
+
+        // MEDIUM-1: a monster spawning, or any other object the local player
+        // neither owns nor already tracks, must not mark the tick dirty —
+        // ObjectChanged fires for every world entity, not just equipment.
+        host.Automation.Objects.Objects.Add(
+            new PluginWorldObject(999u, 0u, "A Drudge", PluginObjectClass.Monster, 0u, 0u, 0u)
+            {
+                IsOwned = false,
+            });
+        host.Events.RaiseObjectChanged(999u, PluginObjectChangeKind.Created);
+        scheduler.Tick(0.5);
+
+        Assert.Equal(capturesAfterStart, host.Automation.Items.CaptureCount);
+    }
+
+    [Fact]
     public void With_no_scheduler_ObjectChanged_still_resyncs_synchronously()
     {
         var host = new FakeHost();
@@ -246,6 +271,27 @@ public sealed class EquipmentTrackerHostTests
         host.Automation.Chat.Deliver("Bob says, \"Your Ring is low on Mana.\"");
 
         Assert.DoesNotContain(10u, host.Automation.Objects.IdentifyRequests);
+    }
+
+    [Fact]
+    public void An_idle_coalescing_tick_still_raises_Changed()
+    {
+        // MEDIUM-3: the mana countdown froze because an idle tick used to do
+        // nothing at all — EquipmentTrackerHost.OnTick's idle branch must
+        // re-raise Tracker.Changed so bound UI keeps re-reading the
+        // (recompute-from-the-clock, never cached) mana/time cells.
+        var host = new FakeHost();
+        host.Automation.Items.Owned.Add(EquippedItem(10u));
+        var scheduler = new TickScheduler(host.Events, new ChatOutput(host));
+
+        var equipmentHost = new EquipmentTrackerHost(host);
+        equipmentHost.Start(scheduler);
+
+        bool raised = false;
+        equipmentHost.Tracker.Changed += () => raised = true;
+
+        scheduler.Tick(0.5); // idle — no ObjectChanged since Start
+        Assert.True(raised);
     }
 
     [Fact]

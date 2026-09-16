@@ -35,6 +35,13 @@ public sealed class ValueSnapShotGroup(int minutesToRetain, TimeProvider? timePr
 
     public int LastKnownValue => SnapShots.Count > 0 ? SnapShots[^1].Value : 0;
 
+    /// <summary>
+    /// How many snapshots are currently recorded. Lets a caller distinguish
+    /// "never stamped a single snapshot yet" from "already at this same
+    /// value" — <see cref="LastKnownValue"/> alone reads 0 for both.
+    /// </summary>
+    public int SnapShotCount => SnapShots.Count;
+
     /// <summary>Returns the value difference over the history of period.</summary>
     public double GetValueDifference(TimeSpan historyPeriod, TimeSpan usagePeriod)
     {

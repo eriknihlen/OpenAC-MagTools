@@ -20,24 +20,44 @@ namespace OpenAC.MagTools.Trackers.Inventory;
 /// "went from ~0 to full inventory in under a second" delta, extrapolated to
 /// an hourly rate by <see cref="Trackers.ValueSnapShotGroup.GetValueDifference"/>,
 /// fabricated numbers like an 893.0/h Net Profit rate and equally fake
-/// consumable depletion averages at every login. This host now waits for the
-/// inventory stream to go quiet for <see cref="PrimeQuietPeriod"/> before
-/// taking that first snapshot, and coalesces every <c>ObjectChanged</c> that
-/// arrives inside one 500 ms tick into at most one
+/// consumable depletion averages at every login. This host now waits for
+/// OWNED-object activity to go quiet for <see cref="PrimeQuietPeriod"/>
+/// before taking that first snapshot, and coalesces every relevant
+/// <c>ObjectChanged</c> that arrives inside one 500 ms tick into at most one
 /// <c>CaptureOwnedItems()</c> capture — an idle tick only re-raises
 /// <see cref="ConsumablesTracker.Changed"/>/<see cref="ProfitLossTracker.Changed"/>
-/// so bound UI still refreshes its own time-window math. See docs/deviations.md.
+/// so bound UI still refreshes its own time-window math.
+/// <para>
+/// P5 second fix round (MEDIUM-1): <c>ObjectChanged</c> fires for every world
+/// entity — a monster spawning, another player crossing a cell boundary, a
+/// corpse decaying — not just inventory. In a populated area that stream
+/// never truly goes quiet, which would starve priming forever. Only a change
+/// to an object the local player OWNS (<see cref="PluginWorldObject.IsOwned"/>)
+/// counts as activity for the quiet-period clock and the coalesced dirty
+/// flag; a <see cref="PluginObjectChangeKind.Released"/> object can no longer
+/// be resolved to check ownership, so it counts unconditionally (erring
+/// toward an extra capture rather than missing a real drop/give-away). A hard
+/// <see cref="PrimeDeadline"/> also guarantees priming happens even if owned
+/// activity genuinely never lets up.
+/// </para>
+/// See docs/deviations.md.
 /// </remarks>
 public sealed class InventoryTrackerHost
 {
     private static readonly TimeSpan ResyncInterval = TimeSpan.FromMilliseconds(500);
 
     /// <summary>
-    /// How long the inventory stream must go quiet (no
+    /// How long OWNED-object activity must go quiet (no relevant
     /// <see cref="IEvents.ObjectChanged"/> at all) after <see cref="Start"/>
     /// before the FIRST snapshot is taken — see this class's remarks (H1).
     /// </summary>
     private static readonly TimeSpan PrimeQuietPeriod = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// A hard ceiling on how long priming can be delayed, regardless of
+    /// ongoing owned-object activity — see this class's remarks (MEDIUM-1).
+    /// </summary>
+    private static readonly TimeSpan PrimeDeadline = TimeSpan.FromSeconds(5);
 
     private readonly IPluginHost _host;
     private Action<PluginObjectChange>? _onObjectChanged;
@@ -47,6 +67,7 @@ public sealed class InventoryTrackerHost
     private bool _primed;
     private bool _dirty;
     private double _lastActivityElapsedSeconds;
+    private double _startElapsedSeconds;
 
     public InventoryTrackerHost(IPluginHost host, TimeProvider? timeProvider = null)
     {
@@ -70,10 +91,14 @@ public sealed class InventoryTrackerHost
         _scheduler = scheduler;
         _primed = false;
         _dirty = false;
-        _lastActivityElapsedSeconds = scheduler.ElapsedSeconds;
+        _startElapsedSeconds = scheduler.ElapsedSeconds;
+        _lastActivityElapsedSeconds = _startElapsedSeconds;
 
-        _onObjectChanged = _ =>
+        _onObjectChanged = change =>
         {
+            if (!IsInventoryRelevant(change))
+                return;
+
             _lastActivityElapsedSeconds = _scheduler!.ElapsedSeconds;
             _dirty = true;
         };
@@ -103,11 +128,12 @@ public sealed class InventoryTrackerHost
     }
 
     /// <summary>
-    /// The 500 ms tick. Before priming, this only checks whether the
-    /// inventory stream has gone quiet yet — see the class remarks (H1).
-    /// After priming, a capture only happens when an <c>ObjectChanged</c>
-    /// arrived since the last tick (coalesced to one capture no matter how
-    /// many arrived); an idle tick only re-raises <c>Changed</c>.
+    /// The 500 ms tick. Before priming, this only checks whether OWNED-object
+    /// activity has gone quiet yet, or whether the hard <see cref="PrimeDeadline"/>
+    /// has elapsed — see the class remarks (H1/MEDIUM-1). After priming, a
+    /// capture only happens when a relevant <c>ObjectChanged</c> arrived
+    /// since the last tick (coalesced to one capture no matter how many
+    /// arrived); an idle tick only re-raises <c>Changed</c>.
     /// </summary>
     private void OnTick()
     {
@@ -116,7 +142,9 @@ public sealed class InventoryTrackerHost
 
         if (!_primed)
         {
-            if (_scheduler.ElapsedSeconds - _lastActivityElapsedSeconds < PrimeQuietPeriod.TotalSeconds)
+            double sinceStart = _scheduler.ElapsedSeconds - _startElapsedSeconds;
+            double sinceActivity = _scheduler.ElapsedSeconds - _lastActivityElapsedSeconds;
+            if (sinceActivity < PrimeQuietPeriod.TotalSeconds && sinceStart < PrimeDeadline.TotalSeconds)
                 return;
 
             _primed = true;
@@ -135,6 +163,22 @@ public sealed class InventoryTrackerHost
             Consumables.RaiseChanged();
             ProfitLoss.RaiseChanged();
         }
+    }
+
+    /// <summary>
+    /// MEDIUM-1: <c>ObjectChanged</c> fires for every world entity, not just
+    /// inventory — gate on the changed object actually being one the local
+    /// player owns. A <see cref="PluginObjectChangeKind.Released"/> object
+    /// can no longer be resolved (it just left the object table), so it
+    /// counts as relevant unconditionally rather than risk silently missing
+    /// a real drop or give-away.
+    /// </summary>
+    private bool IsInventoryRelevant(PluginObjectChange change)
+    {
+        if (change.Kind == PluginObjectChangeKind.Released)
+            return true;
+
+        return _host.Automation.Objects.TryGet(change.ObjectId, out PluginWorldObject world) && world.IsOwned;
     }
 
     private void ResyncNow()

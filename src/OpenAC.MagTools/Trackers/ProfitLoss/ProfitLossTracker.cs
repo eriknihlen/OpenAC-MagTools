@@ -74,20 +74,33 @@ public sealed class ProfitLossTracker
 
         DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
         // Unlike ConsumablesTracker's per-NAME groups, these four series
-        // always exist and are always recomputed from the full owned set, so
-        // every Resync stamps all four — a legitimate "0 -> real value"
-        // transition (say, a fresh baseline immediately followed by an hour
-        // of real profit) must still leave a genuine zero snapshot behind for
-        // the rate math to measure against. H1's login-fabrication fix lives
-        // in InventoryTrackerHost's priming-on-quiescence gate, which governs
-        // WHEN this method is called at all, not whether an individual call
-        // records data.
-        Peas.AddSnapShot(now, peas, RetentionMinutes);
-        Comps.AddSnapShot(now, comps, RetentionMinutes);
-        Salvage.AddSnapShot(now, salvage, RetentionMinutes);
-        NetProfit.AddSnapShot(now, netProfit, RetentionMinutes);
+        // always exist. P5 MEDIUM-2 (second fix round): stamp a series only
+        // when it has never recorded a single snapshot yet (SnapShotCount ==
+        // 0 — so a genuine "0" baseline is still recorded once, which the
+        // rate math needs to measure a legitimate "0 -> real value"
+        // transition against; see ProfitLossTrackerTests.
+        // MmdPerHour_divides_the_rate_by_250000) OR its recomputed total
+        // actually differs from what it last recorded. This is the SAME
+        // "only stamp on an actual change" rule ConsumablesTracker.Resync
+        // already applies per group, now safe for these four fixed series
+        // too because the SnapShotCount == 0 carve-out keeps the very first
+        // call's zero baseline intact regardless of whether the value is
+        // also zero. H1's login-fabrication fix lives in
+        // InventoryTrackerHost's priming-on-quiescence gate, which governs
+        // WHEN this method is called at all; this governs whether an
+        // individual call, once it IS called, actually records anything.
+        StampIfChanged(Peas, peas, now);
+        StampIfChanged(Comps, comps, now);
+        StampIfChanged(Salvage, salvage, now);
+        StampIfChanged(NetProfit, netProfit, now);
 
         Changed?.Invoke();
+    }
+
+    private static void StampIfChanged(ValueSnapShotGroup series, int value, DateTime now)
+    {
+        if (series.SnapShotCount == 0 || series.LastKnownValue != value)
+            series.AddSnapShot(now, value, RetentionMinutes);
     }
 
     /// <summary>

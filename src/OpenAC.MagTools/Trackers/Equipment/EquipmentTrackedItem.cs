@@ -167,7 +167,12 @@ public sealed class EquipmentTrackedItem
                 // the instant they land) rather than a timed buff — the
                 // original's "TimeRemaining <= 0" filter, applied inline
                 // instead of pre-building a filtered list per call (M6: keeps
-                // GetState allocation-free — see docs/deviations.md).
+                // this method allocation-bounded — no per-call collection is
+                // built here any more; the remaining, small, constant
+                // per-call cost is the runtime's own interface-typed foreach
+                // enumerator dispatch over SpellIds/ActiveSpellIds/
+                // playerEnchantments, not something this method allocates
+                // itself — see docs/deviations.md).
                 foreach (PluginActiveEnchantment enchantment in playerEnchantments)
                 {
                     if (enchantment.SecondsRemaining > 0d)

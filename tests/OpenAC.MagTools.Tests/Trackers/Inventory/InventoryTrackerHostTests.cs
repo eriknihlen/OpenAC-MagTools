@@ -28,6 +28,17 @@ public sealed class InventoryTrackerHostTests
             ObjectClass = PluginObjectClass.ManaStone,
         };
 
+    /// <summary>An object the local player owns — a real inventory item streaming in.</summary>
+    private static PluginWorldObject OwnedWorldObject(uint objectId)
+        => new(objectId, 0u, "Something Owned", PluginObjectClass.Unknown, 0u, 0u, 0u) { IsOwned = true };
+
+    /// <summary>
+    /// An object the local player does NOT own — a monster spawning, another
+    /// player crossing a cell boundary, a corpse decaying, etc. (MEDIUM-1).
+    /// </summary>
+    private static PluginWorldObject UnownedWorldObject(uint objectId)
+        => new(objectId, 0u, "Something Else", PluginObjectClass.Monster, 0u, 0u, 0u) { IsOwned = false };
+
     [Fact]
     public void Start_does_not_prime_immediately()
     {
@@ -81,12 +92,15 @@ public sealed class InventoryTrackerHostTests
         var inventoryHost = new InventoryTrackerHost(host);
         inventoryHost.Start(scheduler);
 
-        // A burst of unrelated inventory activity keeps resetting the quiet
-        // clock — priming must not happen while it is still going.
+        // A burst of OWNED-object activity (real inventory items streaming
+        // in) keeps resetting the quiet clock — priming must not happen
+        // while it is still going.
         for (int i = 0; i < 3; i++)
         {
+            uint id = (uint)(100 + i);
+            host.Automation.Objects.Objects.Add(OwnedWorldObject(id));
             scheduler.Tick(0.5);
-            host.Events.RaiseObjectChanged((uint)(100 + i), PluginObjectChangeKind.Created);
+            host.Events.RaiseObjectChanged(id, PluginObjectChangeKind.Created);
         }
 
         Assert.Equal(0, host.Automation.Items.CaptureCount);
@@ -109,6 +123,71 @@ public sealed class InventoryTrackerHostTests
     }
 
     [Fact]
+    public void World_only_ObjectChanged_events_do_not_dirty_or_delay_priming()
+    {
+        var host = new FakeHost();
+        var scheduler = new TickScheduler(host.Events, new ChatOutput(host));
+        var inventoryHost = new InventoryTrackerHost(host);
+        inventoryHost.Start(scheduler);
+
+        // MEDIUM-1: a monster spawning, a stranger crossing a cell boundary
+        // (an object that resolves but is NOT owned by the local player) —
+        // this must not reset the quiet clock. In a populated area,
+        // ObjectChanged fires constantly for objects like these.
+        for (int i = 0; i < 20; i++)
+        {
+            uint id = (uint)(200 + i);
+            host.Automation.Objects.Objects.Add(UnownedWorldObject(id));
+            host.Events.RaiseObjectChanged(id, PluginObjectChangeKind.Created);
+        }
+
+        host.Automation.Items.Owned.Add(ManaStone(1u, stackSize: 12));
+
+        // Only the ordinary 1 s quiet period is needed — the 20 unowned
+        // events above never touched the quiet clock at all.
+        scheduler.Tick(0.5);
+        scheduler.Tick(0.5);
+
+        Assert.Equal(1, host.Automation.Items.CaptureCount);
+        Assert.Equal(12, inventoryHost.Consumables.Tracked.First().CurrentCount);
+
+        // And after priming, a burst of the same unowned-object churn must
+        // not mark the tick dirty (no extra capture).
+        for (int i = 0; i < 20; i++)
+            host.Events.RaiseObjectChanged((uint)(200 + i), PluginObjectChangeKind.Updated);
+        scheduler.Tick(0.5);
+
+        Assert.Equal(1, host.Automation.Items.CaptureCount);
+    }
+
+    [Fact]
+    public void The_hard_prime_deadline_primes_anyway_under_continuous_owned_activity()
+    {
+        var host = new FakeHost();
+        var scheduler = new TickScheduler(host.Events, new ChatOutput(host));
+        var inventoryHost = new InventoryTrackerHost(host);
+        inventoryHost.Start(scheduler);
+        host.Automation.Items.Owned.Add(ManaStone(1u, stackSize: 3));
+
+        // Owned-object activity every single tick — quiescence never
+        // arrives, but MEDIUM-1's hard 5 s deadline must prime anyway.
+        for (int i = 0; i < 9; i++)
+        {
+            uint id = (uint)(300 + i);
+            host.Automation.Objects.Objects.Add(OwnedWorldObject(id));
+            scheduler.Tick(0.5); // 0.5 .. 4.5 s
+            host.Events.RaiseObjectChanged(id, PluginObjectChangeKind.Created);
+        }
+
+        Assert.Equal(0, host.Automation.Items.CaptureCount); // still not primed at 4.5 s
+
+        scheduler.Tick(0.5); // 5.0 s — the hard deadline
+
+        Assert.Equal(1, host.Automation.Items.CaptureCount);
+        Assert.Equal(3, inventoryHost.Consumables.Tracked.First().CurrentCount);
+    }
+
+    [Fact]
     public void After_priming_a_relevant_change_adds_exactly_one_snapshot()
     {
         var host = new FakeHost();
@@ -119,6 +198,7 @@ public sealed class InventoryTrackerHostTests
         Assert.Equal(1, host.Automation.Items.CaptureCount);
 
         host.Automation.Items.Owned.Add(ManaStone(1u, stackSize: 5));
+        host.Automation.Objects.Objects.Add(OwnedWorldObject(1u));
         host.Events.RaiseObjectChanged(1u, PluginObjectChangeKind.Created);
         scheduler.Tick(0.5); // the coalesced resync tick
 
@@ -138,9 +218,11 @@ public sealed class InventoryTrackerHostTests
         int countAfterPriming = inventoryHost.Consumables.Tracked.First().History.GetValueTotal(
             TimeSpan.FromHours(1), out _);
 
-        // A change to an object that never affects any tracked total (e.g. a
-        // weapon being equipped) still triggers ObjectChanged, but recomputes
-        // to the SAME totals — no new snapshot should be recorded for it.
+        // A change to an OWNED object that never affects any tracked total
+        // (e.g. a weapon being equipped) still triggers ObjectChanged and IS
+        // relevant activity (it recomputes), but recomputes to the SAME
+        // totals — no new snapshot should be recorded for it.
+        host.Automation.Objects.Objects.Add(OwnedWorldObject(999u));
         host.Events.RaiseObjectChanged(999u, PluginObjectChangeKind.Updated);
         scheduler.Tick(0.5);
 
@@ -149,6 +231,26 @@ public sealed class InventoryTrackerHostTests
         Assert.Equal(
             countAfterPriming,
             inventoryHost.Consumables.Tracked.First().History.GetValueTotal(TimeSpan.FromHours(1), out _));
+    }
+
+    [Fact]
+    public void A_change_to_an_object_that_is_not_owned_at_all_is_never_captured()
+    {
+        var host = new FakeHost();
+        var scheduler = new TickScheduler(host.Events, new ChatOutput(host));
+        var inventoryHost = new InventoryTrackerHost(host);
+        host.Automation.Items.Owned.Add(ManaStone(1u, stackSize: 5));
+        inventoryHost.Start(scheduler);
+        scheduler.Tick(1.0); // primed at count 5
+        int capturesAfterPriming = host.Automation.Items.CaptureCount;
+
+        // MEDIUM-1: a monster spawning nearby is neither owned nor already
+        // tracked — must not mark the tick dirty at all (no extra capture).
+        host.Automation.Objects.Objects.Add(UnownedWorldObject(999u));
+        host.Events.RaiseObjectChanged(999u, PluginObjectChangeKind.Created);
+        scheduler.Tick(0.5);
+
+        Assert.Equal(capturesAfterPriming, host.Automation.Items.CaptureCount);
     }
 
     [Fact]
@@ -162,6 +264,7 @@ public sealed class InventoryTrackerHostTests
         int capturesAfterPriming = host.Automation.Items.CaptureCount;
 
         host.Automation.Items.Owned.Add(ManaStone(1u, stackSize: 9));
+        host.Automation.Objects.Objects.Add(OwnedWorldObject(1u));
         for (int i = 0; i < 10; i++)
             host.Events.RaiseObjectChanged(1u, PluginObjectChangeKind.Updated);
 
@@ -198,6 +301,7 @@ public sealed class InventoryTrackerHostTests
         scheduler.Tick(1.0); // primed empty
 
         host.Automation.Items.Owned.Add(ManaStone(1u));
+        host.Automation.Objects.Objects.Add(OwnedWorldObject(1u));
         host.Events.RaiseObjectChanged(1u, PluginObjectChangeKind.Created);
         scheduler.Tick(0.5);
         Assert.NotEmpty(inventoryHost.Consumables.Tracked);
@@ -206,6 +310,7 @@ public sealed class InventoryTrackerHostTests
         Assert.Empty(inventoryHost.Consumables.Tracked);
 
         host.Automation.Items.Owned.Add(ManaStone(2u));
+        host.Automation.Objects.Objects.Add(OwnedWorldObject(2u));
         host.Events.RaiseObjectChanged(2u, PluginObjectChangeKind.Created);
         scheduler.Tick(1.5);
         Assert.Empty(inventoryHost.Consumables.Tracked);

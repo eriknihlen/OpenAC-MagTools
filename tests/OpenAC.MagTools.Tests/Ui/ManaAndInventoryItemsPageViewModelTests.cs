@@ -46,6 +46,58 @@ public sealed class ManaAndInventoryItemsPageViewModelTests
     }
 
     [Fact]
+    public void The_mana_time_cell_changes_after_the_clock_advances_with_no_events()
+    {
+        // MEDIUM-3: with the fix, EquipmentTrackerHost's idle coalescing tick
+        // re-raises Tracker.Changed at 2 Hz even when nothing else happened,
+        // so the bound Mana list's countdown cell keeps advancing purely
+        // from the clock instead of freezing until the next real event.
+        var host = new FakeHost();
+        var clock = new OpenAC.MagTools.Tests.Trackers.Inventory.FakeTimeProvider();
+        var world = new PluginWorldObject(1u, 0u, "Ring", PluginObjectClass.Jewelry, 0u, 0u, 0u)
+        {
+            SpellIds = [99u],
+            ActiveSpellIds = [99u],
+        };
+        host.Automation.Objects.Objects.Add(world);
+        host.Automation.Items.Owned.Add(
+            new PluginInventoryItem(
+                1u, 0u, "Ring", 0u, 0u, 0u, 0u, 1u, 0u, 0u, 0u,
+                1, 0, 0, 0u, 0, 0, 0u, false, 0d, 0, 0, 0, 0d, 0, 0, 0)
+            {
+                ItemCurrentMana = 50,
+                ItemMaximumMana = 100,
+            });
+        host.Automation.Items.Properties[1u] = new PluginItemProperties(
+            new Dictionary<uint, int>(), new Dictionary<uint, long>(),
+            new Dictionary<uint, bool>(), new Dictionary<uint, double> { [5u] = -1d / 18d },
+            new Dictionary<uint, string>(), new Dictionary<uint, uint>(),
+            new Dictionary<uint, uint>());
+
+        var scheduler = new TickScheduler(host.Events, new ChatOutput(host));
+        var equipmentHost = new EquipmentTrackerHost(host, clock);
+        equipmentHost.Start(scheduler); // resyncs immediately, tracks item 1u
+        host.Events.RaiseObjectChanged(1u, PluginObjectChangeKind.IdentReceived); // Active, burn rate set
+        scheduler.Tick(0.5); // settles the dirty flag IdentReceived set, so the next tick is genuinely idle
+
+        var settings = new SettingsManager(new SettingsFile(host.Storage));
+        var vm = new ManaPageViewModel(settings, equipmentHost, host, clock);
+
+        string before = Assert.Single(vm.ItemTime);
+
+        // No ObjectChanged at all from here on — only the clock moves and
+        // the coalescing tick's IDLE branch fires (MEDIUM-3). 15 minutes at
+        // a 20 s-per-point burn rate is enough to cross a whole displayed
+        // minute boundary (50 -> 5 mana remaining), not just round to the
+        // same "0h16m" text.
+        clock.Advance(TimeSpan.FromMinutes(15));
+        scheduler.Tick(0.5);
+
+        string after = Assert.Single(vm.ItemTime);
+        Assert.NotEqual(before, after);
+    }
+
+    [Fact]
     public void ManaPageViewModel_TotalText_does_not_reallocate_between_polls_when_nothing_changed()
     {
         var host = new FakeHost();
@@ -90,12 +142,12 @@ public sealed class ManaAndInventoryItemsPageViewModelTests
     }
 
     [Fact]
-    public void GetState_does_not_allocate_per_call()
+    public void GetState_is_allocation_bounded_with_no_per_call_collection()
     {
         var tracker = new EquipmentTracker();
         var item = tracker.GetOrAdd(1u);
         // ActiveSpellIds deliberately does NOT satisfy spell 99 — GetState
-        // must fall through to the (now allocation-free, M6) player-
+        // must fall through to the (now per-call-collection-free, M6) player-
         // enchantment check below to resolve Active vs NotActive.
         var world = new PluginWorldObject(1u, 0u, "Ring", PluginObjectClass.Jewelry, 0u, 0u, 0u)
         {

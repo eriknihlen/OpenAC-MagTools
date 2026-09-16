@@ -89,8 +89,9 @@ public sealed class InventoryExporter
     /// <see cref="Cancel"/> (no report at all); otherwise it is
     /// <see cref="IPluginClipboard.TrySetText"/>'s return value, so a clipboard
     /// that refused the write (unavailable, another process holding it, …)
-    /// prints the SAME failure message the original prints, never the success
-    /// one.
+    /// prints a failure message this port ADDS rather than the original's
+    /// unconditional success line -- the original had no failure path here
+    /// at all (see the deviations-doc row for this class).
     /// </summary>
     private void Stop(bool clipboardSet) => StopThinking(clipboardSet);
 

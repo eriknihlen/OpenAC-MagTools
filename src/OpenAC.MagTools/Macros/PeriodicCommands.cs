@@ -81,15 +81,6 @@ public sealed class PeriodicCommands
     /// <summary>How many matched commands are still queued -- exposed for tests.</summary>
     internal int PendingCount => _runner.Count;
 
-    /// <summary>Starts the 20-second timer for one session, with both scopes known already. Safe to call again on a reconnect -- replaces the previous timer and guard state.</summary>
-    public void Start(TickScheduler scheduler, string characterScopePath, string serverScopePath)
-    {
-        ArgumentNullException.ThrowIfNull(characterScopePath);
-
-        StartServerScope(scheduler, serverScopePath);
-        _characterScopePath = characterScopePath;
-    }
-
     /// <summary>
     /// Starts the 20-second timer with only the server scope known --
     /// MEDIUM-4: server scope needs only <see cref="ICharacterInfo.WorldName"/>,
@@ -115,10 +106,29 @@ public sealed class PeriodicCommands
         _timerRegistration = scheduler.Every(TimerInterval, OnTimer);
     }
 
-    /// <summary>Backfills the character scope path once it resolves (from <see cref="SessionContext.SessionReady"/>), without disturbing the already-running timer.</summary>
+    /// <summary>
+    /// Backfills the character scope path once it resolves (from
+    /// <see cref="SessionContext.SessionReady"/>), without disturbing the
+    /// already-running timer.
+    /// </summary>
+    /// <remarks>
+    /// MEDIUM-B (P9 re-review): if <see cref="OnTimer"/> already evaluated
+    /// this UTC minute BEFORE this backfill (the character scope was still
+    /// empty at that first poll), <see cref="_lastEvaluatedUtcMinute"/> is
+    /// already stamped, so the character scope's commands for the CURRENT
+    /// minute would be skipped entirely -- not just delayed, since the guard
+    /// only re-evaluates on a NEW minute. This resets that guard whenever a
+    /// previously-empty character scope is backfilled, so the very next
+    /// 20-second poll re-evaluates both scopes for the current minute
+    /// instead of waiting for the minute to roll over. A no-op once the
+    /// character scope is already set (a redundant SetCharacterScope call
+    /// must not force a re-evaluation).
+    /// </remarks>
     public void SetCharacterScope(string characterScopePath)
     {
         ArgumentNullException.ThrowIfNull(characterScopePath);
+        if (_characterScopePath.Length == 0 && characterScopePath.Length > 0)
+            _lastEvaluatedUtcMinute = null;
         _characterScopePath = characterScopePath;
     }
 

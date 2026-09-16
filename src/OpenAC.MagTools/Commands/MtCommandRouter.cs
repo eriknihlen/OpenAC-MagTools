@@ -391,7 +391,8 @@ public sealed class MtCommandRouter
         if (result.Status == PluginItemCommandStatus.Started)
             return true;
 
-        _chat.Write("Use refused: " + (result.Notice ?? result.Status.ToString()));
+        _chat.Write("Use refused: "
+            + (string.IsNullOrWhiteSpace(result.Notice) ? result.Status.ToString() : result.Notice));
         return false;
     }
 

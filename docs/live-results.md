@@ -161,10 +161,19 @@ the end of this section).
 - `@givemana <negative>` drains the last-appraised item's mana; `@ci
   manastone` works; `@ci` for any healing kit or the Intricate Carving Tool
   does not.
-- ACE intermittently stopped resolving the headless partner by name
-  (`@teleto +Horan` / `@teleto Horan` -> `Player ... was not found.`) while
-  the bot reported `InWorld` with 28 entities. A bot relaunch fixed it for
-  one session and it regressed again afterwards.
+- The headless partner silently drops back to CHARACTER SELECT about five
+  minutes after login, and its own telemetry does not notice. Status file
+  (`horan-status.jsonl`): `enteredWorld` at 19:24:48 UTC, then a bare
+  `characterList` at 19:29:57 UTC with no `enteredWorld` after it -- while
+  the host's periodic `resources` samples kept reporting
+  `sessions.inWorldCount: 1` and lifecycle `running`/`InWorld` right up to
+  the end, and the process later exited with code 1. That, not a name-lookup
+  quirk, is why `@teleto +Horan` / `@teleto Horan` answered
+  `Player ... was not found.` in r6 and again in r15: the bot was out of
+  world both times. It also means r15's `+Horan` player-tracker row is the
+  persisted one captured live in r13, inside the five-minute window. Plan a
+  partner gate to run within ~4 minutes of the bot's `enteredWorld` event,
+  and check that event -- not `inWorldCount` -- before trusting it.
 
 ## Pending (owed before the port can be called fully live-gated)
 

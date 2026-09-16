@@ -184,4 +184,66 @@ public sealed class InventoryExporterTests
 
         Assert.Equal(1, host.ChatLines.Count(line => line.Contains("Copying")));
     }
+
+    [Fact]
+    public void AnItemThatNeverResolvesGivesUpAfterBoundedRetriesAndExportsWithoutIt()
+    {
+        // Defect 10 (live-gate round 3): Think() used to request ids once
+        // and then, forever after, only ever set waitingForIdData=true for
+        // anything still unappraised -- never re-requesting, never timing
+        // out. Live: "Clipboard Inventory Info" printed "Copying..." and
+        // never completed in 130+ seconds against one never-appraised item.
+        (FakeHost host, _, _, InventoryExporter exporter) = Build();
+        AddOwnedSword(host, 101u, identified: false);
+
+        exporter.ExportToClipboard(ExportGroups.Inventory);
+
+        // First think requests ids and marks the request pass done.
+        host.Events.RaiseTick(0.1);
+        Assert.Contains(101u, host.Automation.Objects.IdentifyRequests);
+
+        // Drive well past the bounded retry budget (IdRetryInterval seconds
+        // * (MaxIdRetries + 1)); ThinkInterval matches the 0.1s tick size,
+        // so each RaiseTick drives exactly one Think call.
+        for (int i = 0; i < 300 && host.Clipboard.Written.Count == 0; i++)
+            host.Events.RaiseTick(0.1);
+
+        Assert.False(exporter.IsRunning);
+        Assert.Single(host.Clipboard.Written);
+        Assert.Contains(
+            host.ChatLines,
+            line => line.Contains("never received identification data", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AnItemThatResolvesLateIsIncludedInsteadOfBeingDropped()
+    {
+        // The bounded-retry fix for defect 10 must not drop an item that
+        // simply takes a while to resolve -- only one that NEVER resolves
+        // within the retry budget gives up.
+        (FakeHost host, _, _, InventoryExporter exporter) = Build();
+        AddOwnedSword(host, 101u, identified: false);
+
+        exporter.ExportToClipboard(ExportGroups.Inventory);
+        host.Events.RaiseTick(0.1); // request pass
+
+        // Advance partway into the retry budget without ever identifying --
+        // still short of the give-up threshold.
+        for (int i = 0; i < 60; i++)
+            host.Events.RaiseTick(0.1);
+
+        Assert.Empty(host.Clipboard.Written);
+        Assert.True(exporter.IsRunning);
+
+        // The item resolves late.
+        host.Automation.Objects.Replace(new PluginWorldObject(
+            101u, 0u, "Sword", PluginObjectClass.MeleeWeapon, 0u, 1u, 0u) { HasAppraisalData = true });
+        host.Events.RaiseTick(0.1);
+
+        Assert.Single(host.Clipboard.Written);
+        Assert.Contains("Sword", host.Clipboard.Written[0]);
+        Assert.DoesNotContain(
+            host.ChatLines,
+            line => line.Contains("never received identification data", StringComparison.Ordinal));
+    }
 }

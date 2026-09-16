@@ -21,6 +21,21 @@ public sealed class InventoryExporter
 {
     private static readonly TimeSpan ThinkInterval = TimeSpan.FromMilliseconds(100);
 
+    /// <summary>
+    /// How often an item still lacking id data after the initial request
+    /// gets re-requested, and how many times that happens before giving up
+    /// and exporting without it. Defect 10 (live-gate round 3): the original
+    /// request-once-then-wait-forever loop hung "Clipboard Inventory Info"
+    /// permanently on a single never-appraised item ("Copying..." for 130+
+    /// seconds with no completion). No original source for this class'
+    /// exact retry behaviour is available in this port's references, so
+    /// this bounded retry-then-give-up cadence is this port's own addition
+    /// -- see the deviations doc row for this class.
+    /// </summary>
+    private static readonly TimeSpan IdRetryInterval = TimeSpan.FromSeconds(5);
+
+    private const int MaxIdRetries = 3;
+
     private static readonly PluginObjectClass[] IdentWorthyClasses =
     [
         PluginObjectClass.Armor,
@@ -40,6 +55,8 @@ public sealed class InventoryExporter
     private IDisposable? _thinkLoop;
     private ExportGroups _exportGroups;
     private bool _idsRequested;
+    private double _idsRequestedAtSeconds;
+    private int _idRetryCount;
 
     public InventoryExporter(
         IPluginHost host,
@@ -69,6 +86,8 @@ public sealed class InventoryExporter
 
         _exportGroups = groups;
         _idsRequested = false;
+        _idsRequestedAtSeconds = 0d;
+        _idRetryCount = 0;
 
         _chat.Write("Copying all inventory item info to clipboard...");
 
@@ -143,33 +162,53 @@ public sealed class InventoryExporter
             }
         }
 
-        bool waitingForIdData = false;
         IWorldObjectAutomation objects = _host.Automation.Objects;
-
+        var pending = new List<PluginInventoryItem>();
         foreach (PluginInventoryItem item in selected)
         {
             if (!NeedsIdent(item.ObjectClass))
                 continue;
             if (objects.TryGet(item.ObjectId, out PluginWorldObject worldObject) && worldObject.HasAppraisalData)
                 continue;
-
-            if (!_idsRequested)
-                objects.Identify(item.ObjectId);
-            else
-                waitingForIdData = true;
+            pending.Add(item);
         }
 
         if (!_idsRequested)
         {
+            foreach (PluginInventoryItem item in pending)
+                objects.Identify(item.ObjectId);
+
             _idsRequested = true;
+            _idsRequestedAtSeconds = _scheduler.ElapsedSeconds;
+            _idRetryCount = 0;
             return;
         }
 
-        if (!waitingForIdData)
+        if (pending.Count == 0)
         {
             bool clipboardSet = ExportObjects(selected);
             Stop(clipboardSet);
+            return;
         }
+
+        // Defect 10: still waiting on id data for at least one item. Retry
+        // on a bounded cadence rather than waiting forever.
+        if (_scheduler.ElapsedSeconds - _idsRequestedAtSeconds < IdRetryInterval.TotalSeconds)
+            return;
+
+        _idRetryCount++;
+        if (_idRetryCount > MaxIdRetries)
+        {
+            bool clipboardSet = ExportObjects(selected);
+            _chat.Write(
+                pending.Count + " item(s) never received identification data and were exported without it.");
+            Stop(clipboardSet);
+            return;
+        }
+
+        foreach (PluginInventoryItem item in pending)
+            objects.Identify(item.ObjectId);
+        _idsRequestedAtSeconds = _scheduler.ElapsedSeconds;
     }
 
     private static bool NeedsIdent(PluginObjectClass objectClass)

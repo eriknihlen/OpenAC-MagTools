@@ -226,6 +226,14 @@ public sealed class MemoryStorage : IPluginStorage
     /// <summary>Makes the next (and every subsequent) write throw.</summary>
     public bool ThrowOnWrite { get; set; }
 
+    /// <summary>
+    /// The message <see cref="WriteText"/> throws with while
+    /// <see cref="ThrowOnWrite"/> is set. Change it between calls to make
+    /// consecutive throws distinct EXCEPTION SHAPES for a test — the default
+    /// keeps every throw identical, for a test pinning same-shape dedup.
+    /// </summary>
+    public string ThrowMessage { get; set; } = "Storage write failed (test fault).";
+
     public string? ReadText(string key)
         => _files.TryGetValue(key, out string? value) ? value : null;
 
@@ -236,7 +244,7 @@ public sealed class MemoryStorage : IPluginStorage
     public void WriteText(string key, string content)
     {
         if (ThrowOnWrite)
-            throw new InvalidOperationException("Storage write failed (test fault).");
+            throw new InvalidOperationException(ThrowMessage);
 
         _files[key] = content;
         WriteCount++;

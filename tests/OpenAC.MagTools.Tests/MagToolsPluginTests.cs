@@ -153,4 +153,36 @@ public sealed class MagToolsPluginTests
             host.ChatLines,
             line => line.Contains("Exception caught", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void PastTheDistinctShapeCapATickExceptionIsLoggedButNotPostedToChat()
+    {
+        // A tick loop throwing many DIFFERENT exception shapes is itself the
+        // flood the dedup exists to stop — the 33rd distinct shape must
+        // still reach the log (every occurrence, always) but not chat.
+        var host = new FakeHost { HasUi = false };
+        host.Storage.ThrowOnWrite = true;
+        var plugin = new MagToolsPlugin();
+
+        plugin.Initialize(host);
+        plugin.Enable();
+
+        host.Commands.Handlers["mt"](
+            new AcDream.Plugin.Abstractions.PluginCommand(
+                "mt", "opt set Filters.AttackEvades true", "/mt opt set Filters.AttackEvades true"));
+
+        for (int index = 0; index < 33; index++)
+        {
+            host.Storage.ThrowMessage = "Storage write failed (test fault) #" + index;
+            host.Events.RaiseTick(1.0d);
+        }
+
+        Assert.Equal(
+            33,
+            ((RecordingLogger)host.Log).Messages.Count(message =>
+                message.StartsWith("error: Mag-Tools tick failed", StringComparison.Ordinal)));
+        Assert.Equal(
+            32,
+            host.ChatLines.Count(line => line.Contains("Exception caught", StringComparison.Ordinal)));
+    }
 }

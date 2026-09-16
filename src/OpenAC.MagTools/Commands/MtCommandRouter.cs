@@ -365,7 +365,9 @@ public sealed class MtCommandRouter
             }
 
             _host.Selection.Select(targetId);
-            return Started(_host.Automation.Items.Apply(sourceId, targetId));
+            return ReportUse(
+                _host.Automation.Items.Apply(sourceId, targetId),
+                itemName + " on " + targetName);
         }
 
         uint id = ResolveUseTarget(itemName, scope, partial);
@@ -375,7 +377,27 @@ public sealed class MtCommandRouter
             return false;
         }
 
-        return Started(_host.Automation.Items.Use(id));
+        return ReportUse(_host.Automation.Items.Use(id), itemName);
+    }
+
+    /// <summary>
+    /// Every <c>/mt use*</c> outcome must print SOMETHING -- previously a
+    /// refused command (InvalidItem, InvalidTarget, Busy, Refused,
+    /// Unavailable) resolved a real object and issued the command with no
+    /// chat output at all, indistinguishable from a host that silently did
+    /// nothing (see defect #4/#6 in docs/live-results.md, e.g.
+    /// <c>/mt usel closestvendor</c> against a real vendor).
+    /// </summary>
+    private bool ReportUse(PluginItemCommandResult result, string what)
+    {
+        if (result.Status == PluginItemCommandStatus.Started)
+        {
+            _chat.Write("Using " + what + ".");
+            return true;
+        }
+
+        _chat.Write("Use refused: " + result.Status);
+        return false;
     }
 
     private uint ResolveUseTarget(string name, UseScope scope, bool partial)

@@ -294,6 +294,30 @@ public sealed class MtCommandRouterTests
     }
 
     [Fact]
+    public void UsePrintsAConfirmationWhenStarted()
+    {
+        _host.Automation.Items.Owned.Add(FakeItems.Item(3u, "Lockpick"));
+
+        Assert.True(_router.Execute("use lockpick"));
+        Assert.Equal(Line("Using lockpick."), Assert.Single(Chat));
+    }
+
+    [Fact]
+    public void UsePrintsTheRefusalWhenNotStarted()
+    {
+        // Defect #4/#6: a resolved use that the host refuses (InvalidItem,
+        // Busy, Refused, ...) used to print nothing at all -- indistinguishable
+        // from the command never running, e.g. /mt usel closestvendor against
+        // a real vendor the live host never opened a panel for.
+        _host.Automation.Items.Owned.Add(FakeItems.Item(3u, "Lockpick"));
+        _host.Automation.Items.UseResult =
+            new PluginItemCommandResult(PluginItemCommandStatus.InvalidItem);
+
+        Assert.False(_router.Execute("use lockpick"));
+        Assert.Equal(Line("Use refused: InvalidItem"), Assert.Single(Chat));
+    }
+
+    [Fact]
     public void UseAOnBAppliesTheFirstToTheSecond()
     {
         _host.Automation.Items.Owned.AddRange(
@@ -305,6 +329,22 @@ public sealed class MtCommandRouterTests
         Assert.True(_router.Execute("use lockpick on chest key"));
         Assert.Equal(("apply", 3u, 4u), Assert.Single(_host.Automation.Items.Calls));
         Assert.Equal(4u, _host.Selection.SelectedObjectId);
+        Assert.Equal(Line("Using lockpick on chest key."), Assert.Single(Chat));
+    }
+
+    [Fact]
+    public void UseAOnBPrintsTheRefusalWhenNotStarted()
+    {
+        _host.Automation.Items.Owned.AddRange(
+        [
+            FakeItems.Item(3u, "Lockpick"),
+            FakeItems.Item(4u, "Chest Key"),
+        ]);
+        _host.Automation.Items.ApplyResult =
+            new PluginItemCommandResult(PluginItemCommandStatus.Refused);
+
+        Assert.False(_router.Execute("use lockpick on chest key"));
+        Assert.Equal(Line("Use refused: Refused"), Assert.Single(Chat));
     }
 
     [Fact]

@@ -573,10 +573,14 @@ public sealed class FakeItems : IItemAutomation
         return UseResult;
     }
 
+    /// <summary>What <see cref="Apply"/> returns -- a test sets this to simulate the host rejecting the command.</summary>
+    public PluginItemCommandResult ApplyResult { get; set; } =
+        new(PluginItemCommandStatus.Started);
+
     public PluginItemCommandResult Apply(uint objectId, uint targetObjectId)
     {
         Calls.Add(("apply", objectId, targetObjectId));
-        return new PluginItemCommandResult(PluginItemCommandStatus.Started);
+        return ApplyResult;
     }
 
     public PluginItemCommandResult Drop(uint objectId, uint amount = 0u)

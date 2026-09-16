@@ -64,10 +64,10 @@ public sealed class TinkeringAutoConfirmTests
     }
 
     [Fact]
-    public void TabThresholdCanArmALowerYesThanTheFixedSetting()
+    public void TabThresholdCanArmALowerYesThanTheFixedSettingWhenAutoClickYesIsOn()
     {
         (FakeHost host, TinkeringSettings settings) = Make();
-        settings.AutoClickYes.Value = false; // fixed watch disarmed
+        settings.AutoClickYes.Value = true;
         var tab = new TinkeringPageViewModel();
         tab.SetMinimumPercent("80");
         var confirm = new TinkeringAutoConfirm(host, settings, tab);
@@ -76,6 +76,25 @@ public sealed class TinkeringAutoConfirmTests
         host.Events.RaiseConfirmationRequested(new PluginConfirmation(9u, 5, "You determine that you have a 85 percent chance to succeed."));
 
         Assert.Single(host.Automation.Dialogs.Answers);
+    }
+
+    [Fact]
+    public void TabThresholdDoesNothingWhenAutoClickYesIsOff()
+    {
+        // H5: the tab's watch is gated on the SAME Tinkering/AutoClickYes
+        // setting as the fixed 100% watch (TinkeringToolsView's
+        // EchoFilter_ServerDispatch checks it first) -- it is not a
+        // separate always-on watch.
+        (FakeHost host, TinkeringSettings settings) = Make();
+        settings.AutoClickYes.Value = false;
+        var tab = new TinkeringPageViewModel();
+        tab.SetMinimumPercent("80");
+        var confirm = new TinkeringAutoConfirm(host, settings, tab);
+        confirm.Start();
+
+        host.Events.RaiseConfirmationRequested(new PluginConfirmation(9u, 5, "You determine that you have a 85 percent chance to succeed."));
+
+        Assert.Empty(host.Automation.Dialogs.Answers);
     }
 
     [Fact]

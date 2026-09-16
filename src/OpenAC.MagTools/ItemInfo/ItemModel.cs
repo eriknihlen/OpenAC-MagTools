@@ -404,13 +404,11 @@ public sealed class ItemModel
     }
 
     /// <summary>
-    /// Segment 19/21/22's skill-name lookup. The original indexed
-    /// <c>Dictionaries.SkillInfo[key]</c> directly with no presence check —
-    /// an id the table doesn't have would throw, taking the whole item-info
-    /// line down with it (the same class of bug as the unresolved
-    /// carried-spell id <see cref="ItemInfoFormatter.AppendSpells"/> already
-    /// guards against). This returns a placeholder instead. See
-    /// docs/deviations.md.
+    /// Segment 19/21/22's skill-name lookup. Ported verbatim from
+    /// <c>Shared/ItemInfo.cs</c>, which guards every one of these lookups
+    /// with <c>Dictionaries.SkillInfo.ContainsKey(...)</c> and falls back to
+    /// the literal <c>"Unknown skill: " + id</c> string when the id isn't in
+    /// the table — not a throw, and not a deviation from this port.
     /// </summary>
     public static string SkillName(int skillId)
         => Dictionaries.SkillInfo.TryGetValue(skillId, out string? name)

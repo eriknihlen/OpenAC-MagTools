@@ -11,16 +11,19 @@ namespace OpenAC.MagTools.Macros;
 /// dialog and answers yes when the reported percent clears the threshold.
 /// </summary>
 /// <remarks>
-/// The original wired TWO independent consumers of the exact same message:
-/// the fixed 100%-only <c>Tinkering/AutoClickYes</c> setting, and the
-/// Tinkering tab's own <c>TinkeringMinimumPercent</c> textbox (default
-/// "100"), each clicking Yes on its own threshold. This class answers once
-/// per confirmation using the LOWER of the two thresholds that are actually
-/// armed (either can independently arm a yes at 100%; the tab can additionally
-/// arm a lower threshold) — answering twice for the same dialog is
-/// meaningless since the second <c>Dialogs.Answer</c> finds nothing
-/// outstanding, so collapsing the two watches to one still matches the
-/// observable behavior. See docs/deviations.md.
+/// The original wired TWO independent consumers of the exact same message,
+/// but BOTH start with the identical guard
+/// <c>if (!Settings.SettingsManager.Tinkering.AutoClickYes.Value) return;</c>
+/// (confirmed in both <c>Macros/AutoPercentConfirmation.cs</c> and
+/// <c>Views/TinkeringToolsView.cs</c>'s <c>EchoFilter_ServerDispatch</c>) —
+/// the tab's own <c>TinkeringMinimumPercent</c> textbox (default "100") is
+/// NOT a separate always-on watch, it only replaces the fixed 100% threshold
+/// while the setting is already on. With the setting off, NEITHER watcher
+/// does anything. This class answers once per confirmation using the LOWER
+/// of the two thresholds once the setting is on (answering twice for the
+/// same dialog is meaningless anyway, since a second <c>Dialogs.Answer</c>
+/// finds nothing outstanding) — collapsing the two watches to one still
+/// matches the observable behavior. See docs/deviations.md.
 /// </remarks>
 public sealed class TinkeringAutoConfirm
 {
@@ -48,18 +51,21 @@ public sealed class TinkeringAutoConfirm
 
     /// <summary>
     /// The lowest chance-to-succeed that answers yes, or null when nothing is
-    /// armed (neither the fixed setting nor the tab wants an auto-yes). The
-    /// tab has no separate enable toggle in the original — its own watch is
-    /// always live at whatever <c>MinimumPercentText</c> currently parses to
-    /// (default "100").
+    /// armed. Both the fixed 100% watch and the tab's own
+    /// <c>TinkeringMinimumPercent</c> watch are gated on the SAME
+    /// <c>Tinkering/AutoClickYes</c> setting (H5) — with it off, this is
+    /// always null, regardless of the tab's textbox.
     /// </summary>
     public int? MinimumYesPercent
     {
         get
         {
-            int? threshold = _settings.AutoClickYes.Value ? 100 : null;
+            if (!_settings.AutoClickYes.Value)
+                return null;
+
+            int threshold = 100;
             if (_tab is not null && int.TryParse(_tab.MinimumPercentText, out int tabThreshold))
-                threshold = threshold is { } current ? Math.Min(current, tabThreshold) : tabThreshold;
+                threshold = Math.Min(threshold, tabThreshold);
 
             return threshold;
         }

@@ -15,8 +15,11 @@ public readonly record struct LoggedChatEntry(
     ChatClassifier.ChatChannels ChatType,
     string Message)
 {
+    // Local time, to match the persisted file line's stamp (ChatLogFileStore
+    // also writes ToLocalTime()) — a UTC-kind TimeStamp must not show its raw
+    // UTC digits in the GUI row while the same entry's file line is local.
     public string FormattedTime { get; init; } =
-        TimeStamp.ToString("yy/MM/dd HH:mm", CultureInfo.InvariantCulture);
+        TimeStamp.ToLocalTime().ToString("yy/MM/dd HH:mm", CultureInfo.InvariantCulture);
 
     public string CleanedMessage { get; init; } = ChatClassifier.CleanMessage(Message);
 }

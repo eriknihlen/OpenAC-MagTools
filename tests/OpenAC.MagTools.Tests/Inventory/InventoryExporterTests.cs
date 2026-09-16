@@ -113,6 +113,29 @@ public sealed class InventoryExporterTests
     }
 
     [Fact]
+    public void WhenTheClipboardRefusesTheWriteThePlacementMessageIsPrintedNotTheSuccessOne()
+    {
+        (FakeHost host, _, _, InventoryExporter exporter) = Build();
+        AddOwnedSword(host, 101u, identified: true);
+        host.Clipboard.Available = false;
+
+        exporter.ExportToClipboard(ExportGroups.Inventory);
+        host.Events.RaiseTick(0.1);
+        host.Events.RaiseTick(0.1);
+
+        Assert.Empty(host.Clipboard.Written);
+        Assert.Contains(
+            host.ChatLines,
+            line => line.Contains("Clipboard is unavailable; nothing was copied.", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            host.ChatLines,
+            line => line.Contains("has been copied to the clipboard", StringComparison.Ordinal));
+        Assert.Contains(
+            ((RecordingLogger)host.Log).Messages,
+            message => message.Contains("Clipboard is unavailable", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void CancelStopsWithoutPrintingCompletion()
     {
         (FakeHost host, _, _, InventoryExporter exporter) = Build();

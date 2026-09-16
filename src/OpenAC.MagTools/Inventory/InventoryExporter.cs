@@ -81,11 +81,20 @@ public sealed class InventoryExporter
     /// disabling) rather than the export finishing on its own. A no-op when
     /// nothing is running.
     /// </summary>
-    public void Cancel() => StopThinking(completed: false);
+    public void Cancel() => StopThinking(report: null);
 
-    private void Stop() => StopThinking(completed: true);
+    /// <summary>
+    /// Ends a completed export and reports the clipboard write's actual
+    /// result. <paramref name="clipboardSet"/> is <see langword="null"/> for
+    /// <see cref="Cancel"/> (no report at all); otherwise it is
+    /// <see cref="IPluginClipboard.TrySetText"/>'s return value, so a clipboard
+    /// that refused the write (unavailable, another process holding it, …)
+    /// prints the SAME failure message the original prints, never the success
+    /// one.
+    /// </summary>
+    private void Stop(bool clipboardSet) => StopThinking(clipboardSet);
 
-    private void StopThinking(bool completed)
+    private void StopThinking(bool? report)
     {
         if (_thinkLoop is null)
             return;
@@ -93,8 +102,19 @@ public sealed class InventoryExporter
         _thinkLoop.Dispose();
         _thinkLoop = null;
 
-        if (completed)
-            _chat.Write("All inventory item info has been copied to the clipboard.");
+        switch (report)
+        {
+            case true:
+                _chat.Write("All inventory item info has been copied to the clipboard.");
+                break;
+            case false:
+                const string message = "Clipboard is unavailable; nothing was copied.";
+                _chat.Write(message);
+                _host.Log.Warn(message);
+                break;
+            case null:
+                break;
+        }
     }
 
     private void Think()
@@ -146,8 +166,8 @@ public sealed class InventoryExporter
 
         if (!waitingForIdData)
         {
-            ExportObjects(selected);
-            Stop();
+            bool clipboardSet = ExportObjects(selected);
+            Stop(clipboardSet);
         }
     }
 
@@ -170,7 +190,7 @@ public sealed class InventoryExporter
         return true;
     }
 
-    private void ExportObjects(List<PluginInventoryItem> items)
+    private bool ExportObjects(List<PluginInventoryItem> items)
     {
         items.Sort(new WorldObjectSorter(_host.Automation.Character.ObjectId, items));
 
@@ -189,6 +209,6 @@ public sealed class InventoryExporter
             output.AppendLine(ItemInfoFormatter.Format(model, _settings, _spells));
         }
 
-        _host.Clipboard.TrySetText(output.ToString());
+        return _host.Clipboard.TrySetText(output.ToString());
     }
 }

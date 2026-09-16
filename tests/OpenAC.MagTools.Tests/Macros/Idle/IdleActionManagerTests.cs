@@ -72,8 +72,11 @@ public sealed class IdleActionManagerTests
     }
 
     [Fact]
-    public void AnsweringAConfirmationOutsideTheFiveSecondWindowIsIgnored()
+    public void AetheriaRevealNeverArmsTheConfirmationWindow()
     {
+        // H4: only HeartCarver/ShatteredKeyFixer can raise the "chance to
+        // succeed" confirmation in the original -- Aetheria reveal never
+        // does, so a confirmation shortly after one must NOT be answered.
         (FakeHost host, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
         settings.AetheriaRevealer.Value = true;
         host.Automation.Items.Owned.Add(Item(1u, "Aetheria Mana Stone", PluginObjectClass.Gem));
@@ -81,11 +84,29 @@ public sealed class IdleActionManagerTests
 
         var manager = new IdleActionManager(host, settings);
         manager.Start(scheduler);
+        scheduler.Tick(2.0); // executes the reveal at t=2s
+
+        host.Events.RaiseConfirmationRequested(new PluginConfirmation(1u, 5, "Are you sure?"));
+
+        Assert.Empty(host.Automation.Dialogs.Answers);
+    }
+
+    [Fact]
+    public void AnsweringAConfirmationOutsideTheFiveSecondWindowIsIgnored()
+    {
+        (FakeHost host, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        settings.HeartCarver.Value = true;
+        host.Automation.Character.Skills.Add(new PluginSkillInfo(IdleActionManager.LockpickSkillId, "Lockpick", PluginSkillTraining.Trained, 100u));
+        host.Automation.Items.Owned.Add(Item(1u, "Intricate Carving Tool", PluginObjectClass.Misc));
+        host.Automation.Items.Owned.Add(Item(2u, "Drudge Heart", PluginObjectClass.Misc));
+
+        var manager = new IdleActionManager(host, settings);
+        manager.Start(scheduler);
         scheduler.Tick(2.0); // executes the action at t=2s
 
         // Disarm so the next 2s tick doesn't re-execute (and re-arm the
-        // 5s window) on the still-present Aetheria pair.
-        settings.AetheriaRevealer.Value = false;
+        // 5s window) on the still-present items.
+        settings.HeartCarver.Value = false;
 
         scheduler.Tick(6.0); // now t=8s, more than 5s after the t=2s action
         host.Events.RaiseConfirmationRequested(new PluginConfirmation(1u, 5, "Are you sure?"));
@@ -97,9 +118,10 @@ public sealed class IdleActionManagerTests
     public void AnsweringAConfirmationWithinTheFiveSecondWindowSucceeds()
     {
         (FakeHost host, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
-        settings.AetheriaRevealer.Value = true;
-        host.Automation.Items.Owned.Add(Item(1u, "Aetheria Mana Stone", PluginObjectClass.Gem));
-        host.Automation.Items.Owned.Add(Item(2u, "Coalesced Aetheria", PluginObjectClass.Gem));
+        settings.HeartCarver.Value = true;
+        host.Automation.Character.Skills.Add(new PluginSkillInfo(IdleActionManager.LockpickSkillId, "Lockpick", PluginSkillTraining.Trained, 100u));
+        host.Automation.Items.Owned.Add(Item(1u, "Intricate Carving Tool", PluginObjectClass.Misc));
+        host.Automation.Items.Owned.Add(Item(2u, "Drudge Heart", PluginObjectClass.Misc));
 
         var manager = new IdleActionManager(host, settings);
         manager.Start(scheduler);
@@ -110,6 +132,27 @@ public sealed class IdleActionManagerTests
 
         Assert.Single(host.Automation.Dialogs.Answers);
         Assert.Equal((1u, true), host.Automation.Dialogs.Answers[0]);
+    }
+
+    [Fact]
+    public void AnsweringAConfirmationIsOneShot()
+    {
+        (FakeHost host, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        settings.HeartCarver.Value = true;
+        host.Automation.Character.Skills.Add(new PluginSkillInfo(IdleActionManager.LockpickSkillId, "Lockpick", PluginSkillTraining.Trained, 100u));
+        host.Automation.Items.Owned.Add(Item(1u, "Intricate Carving Tool", PluginObjectClass.Misc));
+        host.Automation.Items.Owned.Add(Item(2u, "Drudge Heart", PluginObjectClass.Misc));
+
+        var manager = new IdleActionManager(host, settings);
+        manager.Start(scheduler);
+        scheduler.Tick(2.0); // executes at t=2s, arms the window
+        settings.HeartCarver.Value = false; // no re-arm on the next tick
+
+        host.Events.RaiseConfirmationRequested(new PluginConfirmation(1u, 5, "First?"));
+        host.Events.RaiseConfirmationRequested(new PluginConfirmation(2u, 5, "Second?"));
+
+        Assert.Single(host.Automation.Dialogs.Answers);
+        Assert.Equal(1u, host.Automation.Dialogs.Answers[0].ContextId);
     }
 
     [Fact]
@@ -130,6 +173,139 @@ public sealed class IdleActionManagerTests
         scheduler.Tick(2.0);
 
         Assert.Contains(("apply", 1u, 2u), host.Automation.Items.Calls);
+    }
+
+    [Fact]
+    public void UnappraisedKeyringRequestsAnIdWhenRingingOrDeringingIsOn()
+    {
+        (FakeHost host, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        settings.KeyRinger.Value = true;
+        host.Automation.Items.Owned.Add(Item(1u, "Burning Sands Keyring", PluginObjectClass.Misc));
+        host.Automation.Objects.Objects.Add(new PluginWorldObject(1u, 0u, "Burning Sands Keyring", PluginObjectClass.Misc, 0u, 500u, 0u)
+        {
+            HasAppraisalData = false,
+        });
+
+        var manager = new IdleActionManager(host, settings);
+        manager.Start(scheduler);
+        scheduler.Tick(2.0);
+
+        Assert.Contains(1u, host.Automation.Objects.IdentifyRequests);
+    }
+
+    [Fact]
+    public void UnappraisedKeyringDoesNotRequestAnIdWhenNeitherRingingNorDeringingIsOn()
+    {
+        (FakeHost host, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        host.Automation.Items.Owned.Add(Item(1u, "Burning Sands Keyring", PluginObjectClass.Misc));
+        host.Automation.Objects.Objects.Add(new PluginWorldObject(1u, 0u, "Burning Sands Keyring", PluginObjectClass.Misc, 0u, 500u, 0u)
+        {
+            HasAppraisalData = false,
+        });
+
+        var manager = new IdleActionManager(host, settings);
+        manager.Start(scheduler);
+        scheduler.Tick(2.0);
+
+        Assert.Empty(host.Automation.Objects.IdentifyRequests);
+    }
+
+    [Fact]
+    public void OnlyKeyDeringerRunsWhileAContainerIsOpen()
+    {
+        (FakeHost host, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        settings.AetheriaRevealer.Value = true;
+        host.Automation.Items.Owned.Add(Item(1u, "Aetheria Mana Stone", PluginObjectClass.Gem));
+        host.Automation.Items.Owned.Add(Item(2u, "Coalesced Aetheria", PluginObjectClass.Gem));
+        host.Automation.Objects.OpenContainerObjectId = 999u;
+
+        var manager = new IdleActionManager(host, settings);
+        manager.Start(scheduler);
+        scheduler.Tick(2.0);
+
+        Assert.Empty(host.Automation.Items.Calls);
+    }
+
+    [Fact]
+    public void BestKeyringPrefersMostKeysThenFewerUsesOnlyAtAZeroKeyTie()
+    {
+        (FakeHost host, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        settings.KeyRinger.Value = true;
+        host.Automation.Items.Owned.Add(Item(1u, "Aged Legendary Key", PluginObjectClass.Key));
+        host.Automation.Items.Owned.Add(Item(2u, "Burning Sands Keyring", PluginObjectClass.Misc));
+        host.Automation.Items.Owned.Add(Item(3u, "Burning Sands Keyring", PluginObjectClass.Misc));
+        // Both rings tied at 0 keys held; ring 3 has FEWER uses remaining, so
+        // it must win over ring 2 despite arriving second (M4).
+        AddKeyring(host, 2u, usesRemaining: 5, keysHeld: 0);
+        AddKeyring(host, 3u, usesRemaining: 2, keysHeld: 0);
+
+        var manager = new IdleActionManager(host, settings);
+        manager.Start(scheduler);
+        scheduler.Tick(2.0);
+
+        Assert.Contains(("apply", 3u, 1u), host.Automation.Items.Calls);
+        Assert.DoesNotContain(("apply", 2u, 1u), host.Automation.Items.Calls);
+    }
+
+    [Fact]
+    public void BestKeyringPrefersStrictlyMoreKeysOverFewerUsesAtANonzeroTie()
+    {
+        (FakeHost host, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        settings.KeyRinger.Value = true;
+        host.Automation.Items.Owned.Add(Item(1u, "Aged Legendary Key", PluginObjectClass.Key));
+        host.Automation.Items.Owned.Add(Item(2u, "Burning Sands Keyring", PluginObjectClass.Misc));
+        host.Automation.Items.Owned.Add(Item(3u, "Burning Sands Keyring", PluginObjectClass.Misc));
+        AddKeyring(host, 2u, usesRemaining: 5, keysHeld: 3);
+        AddKeyring(host, 3u, usesRemaining: 5, keysHeld: 7); // strictly more keys wins
+
+        var manager = new IdleActionManager(host, settings);
+        manager.Start(scheduler);
+        scheduler.Tick(2.0);
+
+        Assert.Contains(("apply", 3u, 1u), host.Automation.Items.Calls);
+    }
+
+    [Fact]
+    public void DeringingTargetIsTheFirstMatchingKeyringNotTheOneWithTheMostKeys()
+    {
+        (FakeHost host, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        settings.KeyDeringer.Value = true;
+        host.Automation.Items.Owned.Add(Item(1u, "Intricate Carving Tool", PluginObjectClass.Misc));
+        host.Automation.Items.Owned.Add(Item(2u, "Burning Sands Keyring", PluginObjectClass.Misc));
+        host.Automation.Items.Owned.Add(Item(3u, "Burning Sands Keyring", PluginObjectClass.Misc));
+        // Ring 3 has MORE keys, but ring 2 was found FIRST -- deringing must
+        // target ring 2 (the original `break`s on the first match).
+        AddKeyring(host, 2u, usesRemaining: 1, keysHeld: 2);
+        AddKeyring(host, 3u, usesRemaining: 1, keysHeld: 9);
+        host.Automation.Navigation.Snapshot = new PluginNavigationSnapshot(true, false, 1u, default, false, false);
+        host.Automation.Navigation.Objects.Add(new PluginNavigationObject(50u, "Iron Chest", default));
+
+        var manager = new IdleActionManager(host, settings);
+        manager.Start(scheduler);
+        scheduler.Tick(2.0);
+
+        Assert.Contains(("apply", 1u, 2u), host.Automation.Items.Calls);
+        Assert.DoesNotContain(("apply", 1u, 3u), host.Automation.Items.Calls);
+    }
+
+    private static void AddKeyring(FakeHost host, uint objectId, int usesRemaining, int keysHeld)
+    {
+        host.Automation.Objects.Objects.Add(new PluginWorldObject(objectId, 0u, "Burning Sands Keyring", PluginObjectClass.Misc, 0u, 500u, 0u)
+        {
+            HasAppraisalData = true,
+        });
+        host.Automation.Objects.Properties[objectId] = new PluginItemProperties(
+            new Dictionary<uint, int>
+            {
+                { (uint)OpenAC.MagTools.ItemInfo.ItemModel.UsesRemainingKey, usesRemaining },
+                { (uint)OpenAC.MagTools.ItemInfo.ItemModel.KeysHeldKey, keysHeld },
+            },
+            new Dictionary<uint, long>(),
+            new Dictionary<uint, bool>(),
+            new Dictionary<uint, double>(),
+            new Dictionary<uint, string>(),
+            new Dictionary<uint, uint>(),
+            new Dictionary<uint, uint>());
     }
 
     private static PluginInventoryItem Item(uint id, string name, PluginObjectClass objectClass)

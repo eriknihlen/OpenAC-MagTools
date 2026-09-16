@@ -452,6 +452,11 @@ public sealed class FakeNavigation : INavigationAutomation
 
     public List<float> Headings { get; } = [];
 
+    /// <summary>Backs <see cref="CaptureObjects"/> for tests that need a nearby landscape object (e.g. a chest).</summary>
+    public List<PluginNavigationObject> Objects { get; } = [];
+
+    public IReadOnlyList<PluginNavigationObject> CaptureObjects() => Objects;
+
     public PluginNavigationCommandStatus FaceHeading(float headingDegrees)
     {
         Headings.Add(headingDegrees);

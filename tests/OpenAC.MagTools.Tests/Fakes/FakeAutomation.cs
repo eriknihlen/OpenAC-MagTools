@@ -502,6 +502,9 @@ public sealed class FakeMagic : IMagicCommands
 
     public List<(uint SpellId, uint TargetObjectId)> Casts { get; } = [];
 
+    /// <summary>What <see cref="RequestCast(uint)"/>/<see cref="RequestCast(uint,uint)"/> answer -- a test sets this to simulate a refusal that isn't a plain Cast()==false.</summary>
+    public PluginCastRequestResult RequestResult { get; set; } = PluginCastRequestResult.Sent;
+
     public PluginCastGate EvaluateGate(uint spellId) => PluginCastGate.Ready;
 
     public PluginCastGate EvaluateGate(uint spellId, uint targetObjectId)
@@ -510,13 +513,25 @@ public sealed class FakeMagic : IMagicCommands
     public bool Cast(uint spellId)
     {
         Casts.Add((spellId, 0u));
-        return true;
+        return RequestResult == PluginCastRequestResult.Sent;
     }
 
     public bool Cast(uint spellId, uint targetObjectId)
     {
         Casts.Add((spellId, targetObjectId));
-        return true;
+        return RequestResult == PluginCastRequestResult.Sent;
+    }
+
+    public PluginCastRequestResult RequestCast(uint spellId)
+    {
+        Casts.Add((spellId, 0u));
+        return RequestResult;
+    }
+
+    public PluginCastRequestResult RequestCast(uint spellId, uint targetObjectId)
+    {
+        Casts.Add((spellId, targetObjectId));
+        return RequestResult;
     }
 }
 
@@ -772,32 +787,32 @@ public sealed class FakeFellowship : IFellowshipAutomation
 
     public bool IsInFellowship { get; set; }
 
+    /// <summary>What every command below answers -- a test sets this to simulate a server refusal.</summary>
+    public PluginFellowshipCommandResult Result { get; set; } =
+        new(PluginFellowshipCommandStatus.Accepted);
+
     public PluginFellowshipCommandResult Create(string name, bool shareExperience)
     {
         Calls.Add("create:" + name + ":" + shareExperience);
-        return new PluginFellowshipCommandResult(
-            PluginFellowshipCommandStatus.Accepted);
+        return Result;
     }
 
     public PluginFellowshipCommandResult SetOpen(bool isOpen)
     {
         Calls.Add("setopen:" + isOpen);
-        return new PluginFellowshipCommandResult(
-            PluginFellowshipCommandStatus.Accepted);
+        return Result;
     }
 
     public PluginFellowshipCommandResult Quit(bool disband)
     {
         Calls.Add("quit:" + disband);
-        return new PluginFellowshipCommandResult(
-            PluginFellowshipCommandStatus.Accepted);
+        return Result;
     }
 
     public PluginFellowshipCommandResult Recruit(uint targetObjectId)
     {
         Calls.Add("recruit:" + targetObjectId);
-        return new PluginFellowshipCommandResult(
-            PluginFellowshipCommandStatus.Accepted);
+        return Result;
     }
 }
 

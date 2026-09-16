@@ -214,17 +214,19 @@ public sealed class MtCommandRouter
                 return false;
             }
 
-            return Accepted(fellowship.Create(createName, shareExperience: true));
+            return Report(
+                fellowship.Create(createName, shareExperience: true),
+                "Fellowship created.");
         }
 
         if (argument == "open")
-            return Accepted(fellowship.SetOpen(true));
+            return Report(fellowship.SetOpen(true), "Fellowship opened.");
         if (argument == "close")
-            return Accepted(fellowship.SetOpen(false));
+            return Report(fellowship.SetOpen(false), "Fellowship closed.");
         if (argument == "disband")
-            return Accepted(fellowship.Quit(disband: true));
+            return Report(fellowship.Quit(disband: true), "Fellowship disbanded.");
         if (argument == "quit")
-            return Accepted(fellowship.Quit(disband: false));
+            return Report(fellowship.Quit(disband: false), "Left the fellowship.");
 
         if (Matches(argument, "recruit"))
         {
@@ -236,15 +238,29 @@ public sealed class MtCommandRouter
                 return false;
             }
 
-            return Accepted(fellowship.Recruit(id));
+            return Report(fellowship.Recruit(id), "Invited " + name + " to the fellowship.");
         }
 
         _chat.Write(
             "Usage: /mt fellow create <name>|open|close|disband|quit|recruit <player>");
         return false;
 
-        static bool Accepted(PluginFellowshipCommandResult result)
-            => result.Status == PluginFellowshipCommandStatus.Accepted;
+        // Every fellowship action must print SOMETHING -- previously a
+        // Rejected/Unavailable result (the server refusing the request, or
+        // no fellowship API available at all) was swallowed silently and
+        // looked identical to the command never running. See defect #4 in
+        // docs/live-results.md.
+        bool Report(PluginFellowshipCommandResult result, string confirmation)
+        {
+            if (result.Accepted)
+            {
+                _chat.Write(confirmation);
+                return true;
+            }
+
+            _chat.Write("Fellowship request refused: " + result.Status);
+            return false;
+        }
     }
 
     private bool Cast(string argument, bool partial)
@@ -263,7 +279,7 @@ public sealed class MtCommandRouter
         }
 
         if (targetName.Length == 0)
-            return _host.Automation.Magic.Cast(spellId);
+            return ReportCastRequest(_host.Automation.Magic.RequestCast(spellId));
 
         uint targetId = FindClosestObjectNamed(targetName, partial);
         if (targetId == 0)
@@ -272,7 +288,23 @@ public sealed class MtCommandRouter
             return false;
         }
 
-        return _host.Automation.Magic.Cast(spellId, targetId);
+        return ReportCastRequest(_host.Automation.Magic.RequestCast(spellId, targetId));
+    }
+
+    /// <summary>
+    /// Every cast outcome must print something -- a silent <c>/mt cast</c> is
+    /// indistinguishable from one that never ran at all. Only
+    /// <see cref="PluginCastRequestResult.Sent"/> stays quiet in chat (the
+    /// server's own reaction is the confirmation); every refusal prints its
+    /// status.
+    /// </summary>
+    private bool ReportCastRequest(PluginCastRequestResult result)
+    {
+        if (result == PluginCastRequestResult.Sent)
+            return true;
+
+        _chat.Write("Cast refused: " + result);
+        return false;
     }
 
     private bool Select(string name, bool partial)

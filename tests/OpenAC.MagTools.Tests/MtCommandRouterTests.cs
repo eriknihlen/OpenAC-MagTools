@@ -189,6 +189,25 @@ public sealed class MtCommandRouterTests
             "Usage: /mt fellow create", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void FellowCreatePrintsAConfirmationWhenAccepted()
+    {
+        Assert.True(_router.Execute("fellow create Bob's Fellowship"));
+        Assert.Equal(Line("Fellowship created."), Assert.Single(Chat));
+    }
+
+    [Fact]
+    public void FellowCreatePrintsTheRefusalWhenNotAccepted()
+    {
+        // Before this fix, a Rejected/Unavailable result was swallowed --
+        // no chat line, no server response visible to the user. Defect #4.
+        _host.Automation.Fellowship.Result =
+            new PluginFellowshipCommandResult(PluginFellowshipCommandStatus.Rejected);
+
+        Assert.False(_router.Execute("fellow create Bob's Fellowship"));
+        Assert.Equal(Line("Fellowship request refused: Rejected"), Assert.Single(Chat));
+    }
+
     // ---- native commands -----------------------------------------------------
 
     [Fact]
@@ -516,6 +535,63 @@ public sealed class MtCommandRouterTests
         Assert.Equal(
             Line("No spell named: fireball"),
             Assert.Single(Chat));
+    }
+
+    [Fact]
+    public void CastpOnATargetReportsAnHonestFailureForAnUnknownTarget()
+    {
+        _host.Automation.Spells.All =
+            [FakeSpellCatalog.Spell(99u, "Flame Bolt VI")];
+
+        Assert.False(_router.Execute("castp flame bolt on nosuchcreature"));
+        Assert.Equal(
+            Line("No target found named: nosuchcreature"),
+            Assert.Single(Chat));
+        Assert.Empty(_host.Automation.Magic.Casts);
+    }
+
+    [Fact]
+    public void CastPrintsNothingOnASuccessfulSelfCast()
+    {
+        // Sent is the quiet case -- the server's own reaction is the
+        // confirmation, same as before this fix.
+        _host.Automation.Spells.All =
+            [FakeSpellCatalog.Spell(1234u, "Strength Self VI")];
+
+        Assert.True(_router.Execute("cast 1234"));
+        Assert.Empty(Chat);
+    }
+
+    [Fact]
+    public void CastPrintsTheRefusalWhenTheRequestIsNotSent()
+    {
+        // Before this fix, /mt cast returned the plain Cast() bool with
+        // nothing printed on a false -- a refused cast looked exactly like
+        // the command never running at all.
+        _host.Automation.Spells.All =
+            [FakeSpellCatalog.Spell(1234u, "Strength Self VI")];
+        _host.Automation.Magic.RequestResult = PluginCastRequestResult.MissingComponents;
+
+        Assert.False(_router.Execute("cast 1234"));
+        Assert.Equal(
+            Line("Cast refused: MissingComponents"),
+            Assert.Single(Chat));
+    }
+
+    [Fact]
+    public void CastpOnATargetPrintsTheRefusalWhenTheRequestIsNotSent()
+    {
+        _host.Automation.Spells.All =
+            [FakeSpellCatalog.Spell(99u, "Flame Bolt VI")];
+        _host.Automation.Objects.Objects.Add(
+            FakeObjects.Landscape(40u, "Drudge", PluginObjectClass.Monster, 8d));
+        _host.Automation.Magic.RequestResult = PluginCastRequestResult.IncompatibleTarget;
+
+        Assert.False(_router.Execute("castp flame bolt on drudge"));
+        Assert.Equal(
+            Line("Cast refused: IncompatibleTarget"),
+            Assert.Single(Chat));
+        Assert.Equal((99u, 40u), Assert.Single(_host.Automation.Magic.Casts));
     }
 
     [Fact]

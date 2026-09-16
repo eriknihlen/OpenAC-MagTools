@@ -17,7 +17,7 @@ extended plugin contract added on OpenAC branch `claude/magtools-plugin-api`
 and by P7 also E-TRADE/E-VENDOR/E-SESSION/E-HOTKEYS), which has not merged to
 OpenAC `main` yet. Until it does,
 `Directory.Build.props` points `OpenAcRoot` at a frozen detached worktree
-snapshot of that branch's head -- currently `magtools-api-a5` (review-closed
+snapshot of that branch's head -- currently `magtools-api-a6` (review-closed
 head `d5c37bb`; the earlier `magtools-api-a4` snapshot this pointed at is
 retired and no longer checked out). Override it with `-p:OpenAcRoot=<path>`
 if yours lives elsewhere (and once the API branch merges, point the default

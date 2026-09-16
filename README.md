@@ -60,35 +60,101 @@ Settings live under the client's *config* directory, scoped to the plugin id, as
 
 ## Status
 
-Slice P1 (skeleton, settings, `/mt` console, window shells) is in. See
+Slices P1–P8 are in — the full user-facing feature set described in the port
+design doc is ported. See
 [docs/2026-09-16-port-design.md](docs/2026-09-16-port-design.md) for the slice
-plan and [docs/live-results.md](docs/live-results.md) for live verification.
+plan, [docs/deviations.md](docs/deviations.md) for every place this port
+knowingly behaves differently from the original, and
+[docs/live-results.md](docs/live-results.md) for live verification against a
+real ACE server (the connected user-gate rounds are still in progress; see
+that file for which rows are proven live vs. code-complete).
 
 ## Parity checklist
 
-<!-- One row per Mag-Tools feature, filled in as each slice lands. -->
-_Shipped-feature rows are filled in starting with slice P8; see
-[docs/2026-09-16-port-design.md §6](docs/2026-09-16-port-design.md) for the
-slice plan._
+One row per user-facing Mag-Tools feature from the port design's feature
+inventory. **Shipped** means the code is in this repo (build/test evidence in
+[docs/live-results.md](docs/live-results.md) tells you whether it is also
+live-gated yet); **Not applicable** means the original feature was a Decal/
+Win32 hack, or read a piece of client internals OpenAC's plugin contract does
+not expose, with no OpenAC equivalent to port to — see the Notes column and
+the two tables below for the reason and the native alternative, if any.
 
-### Not applicable (Decal / Win32 only)
+| Feature | Status | Notes |
+|---|---|---|
+| `/mt` console (native subset + `opt` family) | Shipped | A handful of sub-commands are individually not applicable — see [Not-applicable `/mt` sub-commands](#not-applicable-mt-sub-commands) below |
+| Chat filters (32) | Shipped | `src/OpenAC.MagTools/Chat/ChatFilter.cs` |
+| Item info on ident (user + container path) | Shipped | Buffed-value model, weapon/armor appraisal profile segments (OpenAC slice A4) |
+| VTank loot-rule bridge | Shipped | Maps to the registered `IPluginLootClassifierRegistry` (MossTank), not VTank/VTClassic — see `docs/deviations.md` |
+| Auto buy/sell at vendors | Shipped | Buy and sell are two separate commits, not one combined Item Tool op — `docs/deviations.md` |
+| Auto add to trade / mule loading | Shipped | |
+| Auto trade accept | Shipped | |
+| Auto looting (chests, corpses, salvage) | Shipped | |
+| Inventory packer / auto-stack | Shipped | hotkey default Ctrl+P |
+| Idle inventory automation | Shipped | |
+| Tinkering auto-confirm | Shipped | answers on the wire (E-CONFIRM), not a pixel click |
+| Mana management / auto recharge | Shipped | |
+| One-touch heal | Shipped | hotkey, unbound by default |
+| Open main pack on login | Shipped | `Misc/OpenMainPackOnLogin`, default true |
+| Maximize chat on login | Not applicable | chat window is a native retained window; see Maximize/Minimize Chat below |
+| Log out on death | Shipped | `Misc/LogOutOnDeath`, default false |
+| Remove window frame | Not applicable | see the not-applicable table |
+| Window position (set/del) | Not applicable | see the not-applicable table |
+| On-Login / On-Login-Complete / Periodic commands | Shipped | collapsed onto the host's one login edge — `docs/deviations.md`; Character and Server tool tabs |
+| Client FPS throttling (No-Focus FPS / Max FPS) | Not applicable | see the not-applicable table |
+| Chat window size control (maximize/minimize) | Not applicable | see the not-applicable table |
+| Inventory export to clipboard | Shipped | Clipboard Worn Equipment / Clipboard Inventory Info |
+| Inventory logger | Shipped | |
+| Chat logger (2 groups + file) | Shipped | |
+| HUD (14-row status bar) | Shipped | 13 of 14 rows; `ID Queue` is not applicable — see below |
+| Combat tracker | Shipped | current-session + persistent, DPS snapshots, export/import |
+| Corpse tracker | Shipped | |
+| Player tracker | Shipped | |
+| Equipment ("mana") tracker | Shipped | |
+| Inventory (consumables) tracker | Shipped | |
+| Profit/loss tracker | Shipped | |
+| Main window: Trackers tab (Mana/Combat/Corpse/Player/Inv. Items) | Shipped | |
+| Main window: Loggers tab (Chat Group 1/2/Options) | Shipped | |
+| Main window: Tools tab (Inventory/Tinkering/Character/Server) | Shipped | Character/Server command lists live as of P8 |
+| Main window: Misc tab — Options | Shipped | |
+| Main window: Misc tab — Filters | Shipped | |
+| Main window: Misc tab — Client | Not applicable | hosted exactly the window-frame/position/FPS controls above — see Dropped settings/tab below |
+| Main window: Misc tab — About | Shipped | |
+| Settings model (single XML file, account/server/character scoping) | Shipped | 5 settings and the Client tab dropped — see below |
+| Hotkey: Pack Inventory | Shipped | default Ctrl+P |
+| Hotkey: One Touch Heal | Shipped | unbound by default |
+| Hotkey: Maximize Chat | Not applicable | see Maximize/Minimize Chat below |
+| Hotkey: Minimize Chat | Not applicable | see Maximize/Minimize Chat below |
+
+**Counts:** 35 shipped, 8 not applicable (43 checklist rows total; the
+not-applicable rows point at the detail tables below, which break each one
+down further by individual command/hotkey).
+
+### Not applicable (Decal / Win32 only, or no host equivalent)
 
 The original drove the retail client through Decal hooks and synthetic Win32
-input against its own window. Nothing in OpenAC plays that role, so these
-have no equivalent to port — not a gap, a different architecture. Full detail
-and reasoning: [docs/2026-09-16-port-design.md §7](docs/2026-09-16-port-design.md).
+input against its own window, or read Decal/VirindiHUDs engine internals
+OpenAC's plugin contract has no reason to expose. Nothing in OpenAC plays
+either role, so these have no equivalent to port — not a gap, a different
+architecture. Full detail and reasoning:
+[docs/2026-09-16-port-design.md §7](docs/2026-09-16-port-design.md).
 
 | Mag-Tools feature | Why not applicable | OpenAC-native equivalent |
 |---|---|---|
 | Remove window frame | Win32 style hack against the retail window | client Options → display/fullscreen |
 | Window position (set/del) | `MoveWindow` on the retail HWND | client window placement persistence |
 | No-focus FPS / Max FPS | `Thread.Sleep` inside Decal's render hook | client frame limiter option (file an OpenAC issue if absent) |
-| Maximize/Minimize chat, maximize on login | blind pixel clicks on the retail chat glyph | chat window is a native retained window |
-| `/mt send *`, `/mt click *`, `/mt jump*`, `/mt movement`, `/mt quit`, `/mt client minimize`, `/mt get xy` | synthetic `PostMessage` input | `/mt face`, movement via the navigation automation; jump has no automation surface (recorded) |
+| Maximize/Minimize chat, maximize chat on login, the Maximize Chat/Minimize Chat hotkeys | blind pixel clicks on the retail chat glyph at a hard-coded UI-element offset; the hotkeys just fired the same click | chat window is a native retained window with its own resize/maximize controls — nothing to automate |
+| `ID Queue` HUD row | `CoreManager.Current.IDQueue.ActionCount` — a Decal engine-internal identify-request queue depth | no host equivalent; the row is still present (empty) so the HUD's row order matches the original — `src/OpenAC.MagTools/HudUpdater.cs` |
 | VCS/VHS/VHUD connectors, Decal proxy | Virindi/Decal presence probes | plugin command bus, markup panels |
 | Tinkering "click yes" by pixel | dialog-button pixel offsets | E-CONFIRM answers the dialog on the wire |
 
-### Dropped settings
+### Not-applicable `/mt` sub-commands
+
+| Sub-command | Why not applicable | OpenAC-native equivalent |
+|---|---|---|
+| `/mt send *`, `/mt click *`, `/mt jump*`, `/mt movement`, `/mt quit`, `/mt exit`, `/mt client minimize`, `/mt get xy` | synthetic `PostMessage`/Win32 input against the retail window | `/mt face`, movement via the navigation automation; jump has no automation surface (recorded, not a gap in the port itself) |
+
+### Dropped settings / Client tab
 
 Five settings from the original's Options page controlled exactly the Win32
 behaviours above and have no OpenAC-side toggle to bind to, so they are not

@@ -30,9 +30,16 @@ steps to close it. In short:
 - **P8's own new surface has never been exercised live**: the
   Character/Server On-Login/On-Login-Complete/Periodic command lists (add,
   move, delete, persistence, and the actual dispatch on a real
-  reconnect/minute boundary), Open Main Pack On Login, and Log Out on Death
-  (which needs an actual in-world death). All are unit-tested against the
-  fake host but have not run against ACE.
+  reconnect/minute boundary), and Log Out on Death (which needs an actual
+  in-world death). Both are unit-tested against the fake host but have not
+  run against ACE.
+- **Open Main Pack On Login is blocked on a real host gap, not just untested
+  (H1)**: `IItemAutomation.Use` on the local player's own object id is
+  rejected by the current host (`IsPlayerOwned` excludes the player object),
+  and there is no other plugin-reachable route to the inventory window
+  today. The macro now warns instead of swallowing the rejection and is
+  marked Pending (not Shipped) in the parity checklist until OpenAC slice A6
+  (`IUiRegistry.ShowClientWindow`) lands and this is rewired to use it.
 - **Everything that needs a scripted world event** (a real fight for the
   combat tracker, a real vendor for auto buy/sell, a real corpse/chest for
   the looter, a real low-mana item for auto recharge, real damage for

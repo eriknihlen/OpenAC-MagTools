@@ -11,16 +11,17 @@ Mag-Plugins contributors. See [LICENSE.md](LICENSE.md).
 ## Build
 
 The plugin compiles against an OpenAC checkout. As of slice P2 it needs the
-extended plugin contract added on OpenAC branch `magtools-api` (chat
-`Received`/`RegisterFilter`/`PostMessage`, `IEvents.LoginComplete`/`Logoff`,
-`ISpellCatalog.All`/`TryFindByName`, `ICharacterInfo.ServerPopulation`, and by
-P7 also E-TRADE/E-VENDOR/E-SESSION/E-HOTKEYS), which has not merged to OpenAC
-`main` yet. Until it does, `Directory.Build.props` points `OpenAcRoot` at a
-frozen detached worktree snapshot of that branch's head -- currently
-`magtools-api-a5` (review-closed head `d5c37bb`; the earlier `magtools-api-a4`
-snapshot this pointed at is retired and no longer checked out). Override it
-with `-p:OpenAcRoot=<path>` if yours lives elsewhere (and once the API branch
-merges, point the default back at `main`).
+extended plugin contract added on OpenAC branch `claude/magtools-plugin-api`
+(chat `Received`/`RegisterFilter`/`PostMessage`, `IEvents.LoginComplete`/
+`Logoff`, `ISpellCatalog.All`/`TryFindByName`, `ICharacterInfo.ServerPopulation`,
+and by P7 also E-TRADE/E-VENDOR/E-SESSION/E-HOTKEYS), which has not merged to
+OpenAC `main` yet. Until it does,
+`Directory.Build.props` points `OpenAcRoot` at a frozen detached worktree
+snapshot of that branch's head -- currently `magtools-api-a5` (review-closed
+head `d5c37bb`; the earlier `magtools-api-a4` snapshot this pointed at is
+retired and no longer checked out). Override it with `-p:OpenAcRoot=<path>`
+if yours lives elsewhere (and once the API branch merges, point the default
+back at `main`).
 
 ```powershell
 dotnet build -c Release
@@ -77,7 +78,11 @@ inventory. **Shipped** means the code is in this repo (build/test evidence in
 live-gated yet); **Not applicable** means the original feature was a Decal/
 Win32 hack, or read a piece of client internals OpenAC's plugin contract does
 not expose, with no OpenAC equivalent to port to — see the Notes column and
-the two tables below for the reason and the native alternative, if any.
+the two tables below for the reason and the native alternative, if any;
+**Pending (host gap)** means the feature IS applicable but the current host
+contract rejects or has no route for the call it needs — see the Notes
+column and `docs/deviations.md` for the specific gap and what unblocks it.
+A Pending row is never claimed Shipped.
 
 | Feature | Status | Notes |
 |---|---|---|
@@ -92,9 +97,10 @@ the two tables below for the reason and the native alternative, if any.
 | Inventory packer / auto-stack | Shipped | hotkey default Ctrl+P |
 | Idle inventory automation | Shipped | |
 | Tinkering auto-confirm | Shipped | answers on the wire (E-CONFIRM), not a pixel click |
+| Tinkering tab: salvage-ID scan | Shipped | `TinkeringToolsHost` Start/Stop; requests ids for unidentified salvage bags matching the chosen material, one per second, until combat mode leaves Peace or nothing is left -- a salvage-ID helper, not tinkering itself, matching the original |
 | Mana management / auto recharge | Shipped | |
 | One-touch heal | Shipped | hotkey, unbound by default |
-| Open main pack on login | Shipped | `Misc/OpenMainPackOnLogin`, default true |
+| Open main pack on login | Pending (host gap) | `Misc/OpenMainPackOnLogin`, default true; `Items.Use(self)` is rejected by the host today (`IsPlayerOwned` excludes the player object) -- opens via `Ui.ShowClientWindow(Inventory)` once OpenAC slice A6 lands; OpenAC-native equivalent today: the client's F12 keybind |
 | Maximize chat on login | Not applicable | chat window is a native retained window; see Maximize/Minimize Chat below |
 | Log out on death | Shipped | `Misc/LogOutOnDeath`, default false |
 | Remove window frame | Not applicable | see the not-applicable table |
@@ -103,6 +109,7 @@ the two tables below for the reason and the native alternative, if any.
 | Client FPS throttling (No-Focus FPS / Max FPS) | Not applicable | see the not-applicable table |
 | Chat window size control (maximize/minimize) | Not applicable | see the not-applicable table |
 | Inventory export to clipboard | Shipped | Clipboard Worn Equipment / Clipboard Inventory Info |
+| Tools -> Inventory regex search | Shipped | `InventoryToolsPageViewModel`; re-filters every owned item's formatted info line against the typed pattern on each keystroke (invalid pattern -> empty results, never throws); clicking a result opens its container (if not the main pack) and shows its full info line |
 | Inventory logger | Shipped | |
 | Chat logger (2 groups + file) | Shipped | |
 | HUD (14-row status bar) | Shipped | 13 of 14 rows; `ID Queue` is not applicable — see below |
@@ -125,9 +132,9 @@ the two tables below for the reason and the native alternative, if any.
 | Hotkey: Maximize Chat | Not applicable | see Maximize/Minimize Chat below |
 | Hotkey: Minimize Chat | Not applicable | see Maximize/Minimize Chat below |
 
-**Counts:** 35 shipped, 8 not applicable (43 checklist rows total; the
-not-applicable rows point at the detail tables below, which break each one
-down further by individual command/hotkey).
+**Counts:** 36 shipped, 8 not applicable, 1 pending a host gap (45 checklist
+rows total; the not-applicable rows point at the detail tables below, which
+break each one down further by individual command/hotkey).
 
 ### Not applicable (Decal / Win32 only, or no host equivalent)
 

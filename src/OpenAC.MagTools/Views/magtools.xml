@@ -465,7 +465,11 @@
               onchange="{ToggleOption}" />
       <column type="text" width="*" items="{OptionCaptions}" />
     </list>
-    <label x="220" y="2" text="Target Output Window:" />
+    <!-- L7: split across two lines. "Target Output Window:" does not fit
+         the 92 px available between the list (ends x=214) and the group's
+         right edge (x=312) on one line; two shorter lines each do. -->
+    <label x="220" y="2" text="Target Output" />
+    <label x="220" y="18" text="Window:" />
     <field x="220" y="36" w="32" h="16" maxlength="2"
            text="{OutputWindowText}" onchange="{SetOutputWindow}" />
   </group>

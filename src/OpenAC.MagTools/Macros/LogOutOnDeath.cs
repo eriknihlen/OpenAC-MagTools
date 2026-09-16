@@ -55,6 +55,12 @@ public sealed class LogOutOnDeath
             return;
 
         LogoutAttempts++;
-        _host.Automation.Login.Logout();
+        bool started = _host.Automation.Login.Logout();
+        if (!started)
+        {
+            _host.Log.Warn(
+                "LogOutOnDeath: Login.Logout() returned false after a death "
+                + "-- no in-world session to log out of.");
+        }
     }
 }

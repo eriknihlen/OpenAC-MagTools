@@ -53,6 +53,33 @@ public sealed class LogOutOnDeathTests
     }
 
     [Fact]
+    public void LogsAWarningWhenLogoutReturnsFalse()
+    {
+        // L4: a false return (no in-world session to log out of, per
+        // ILoginAutomation.Logout's contract) must not be swallowed.
+        (FakeHost host, Setting<bool> setting, LogOutOnDeath macro) = Build();
+        setting.Value = true;
+        host.Automation.Login.LogoutResult = false;
+        macro.Start();
+
+        host.Events.RaiseLocalPlayerDied("You have died.");
+
+        Assert.Contains(((RecordingLogger)host.Log).Messages, m => m.StartsWith("warn:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void DoesNotWarnWhenLogoutSucceeds()
+    {
+        (FakeHost host, Setting<bool> setting, LogOutOnDeath macro) = Build();
+        setting.Value = true;
+        macro.Start();
+
+        host.Events.RaiseLocalPlayerDied("You have died.");
+
+        Assert.Empty(((RecordingLogger)host.Log).Messages);
+    }
+
+    [Fact]
     public void StartIsIdempotent()
     {
         (FakeHost host, Setting<bool> setting, LogOutOnDeath macro) = Build();

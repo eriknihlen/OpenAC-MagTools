@@ -21,6 +21,23 @@ internal sealed class QueuedCommandRunner
     private readonly Queue<string?> _queue = new();
     private TickScheduler? _scheduler;
 
+    /// <summary>
+    /// True while a drain callback is armed (already scheduled, or about to
+    /// reschedule itself). Guards <see cref="Enqueue"/> against arming a
+    /// SECOND concurrent chain -- without it, a <see cref="Clear"/>
+    /// immediately followed by fresh <see cref="Enqueue"/> calls (a
+    /// Stop-then-Run in one synthetic frame, e.g. a reconnect's
+    /// Logoff-then-LoginComplete) would see the queue as empty again and
+    /// arm a second chain alongside the still-pending first one; both would
+    /// then fire on the same tick, permanently doubling the dispatch rate
+    /// for the rest of that queue's life (L1, 2026-09-16 review). This flag
+    /// is deliberately NOT reset by <see cref="Clear"/> -- the callback that
+    /// was already scheduled is still going to run, and it is the one that
+    /// clears the flag, whether it finds the queue newly repopulated (and
+    /// keeps draining) or still empty (and stops).
+    /// </summary>
+    private bool _draining;
+
     public QueuedCommandRunner(IPluginHost host, MtCommandRouter router)
     {
         ArgumentNullException.ThrowIfNull(host);
@@ -39,37 +56,51 @@ internal sealed class QueuedCommandRunner
     }
 
     /// <summary>
-    /// Queues one entry. If the queue was empty, starts the drain (a
-    /// mid-drain enqueue rides the already-scheduled chain instead of
-    /// double-scheduling).
+    /// Queues one entry. If no drain chain is currently armed, arms one (a
+    /// mid-drain enqueue rides the already-armed chain instead of
+    /// double-arming).
     /// </summary>
     public void Enqueue(string? command)
     {
-        bool wasEmpty = _queue.Count == 0;
         _queue.Enqueue(command);
-        if (wasEmpty)
+        if (!_draining)
+        {
+            _draining = true;
             ScheduleNext();
+        }
     }
 
-    /// <summary>Drops every pending entry without dispatching it.</summary>
+    /// <summary>
+    /// Drops every pending entry without dispatching it. Deliberately leaves
+    /// <see cref="_draining"/> untouched -- see its remarks.
+    /// </summary>
     public void Clear() => _queue.Clear();
 
     private void ScheduleNext()
     {
-        if (_scheduler is null || _queue.Count == 0)
+        if (_scheduler is null)
+        {
+            _draining = false;
             return;
+        }
         _scheduler.RunOnNextTick(DrainOne);
     }
 
     private void DrainOne()
     {
         if (_queue.Count == 0)
+        {
+            _draining = false;
             return;
+        }
 
         string? command = _queue.Dequeue();
         if (!string.IsNullOrEmpty(command))
             CommandDispatcher.Dispatch(_host, _router, command);
 
-        ScheduleNext();
+        if (_queue.Count == 0)
+            _draining = false;
+        else
+            ScheduleNext();
     }
 }

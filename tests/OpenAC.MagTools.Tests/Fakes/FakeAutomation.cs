@@ -525,6 +525,10 @@ public sealed class FakeItems : IItemAutomation
     public bool IsAvailable { get; set; } = true;
     public bool IsBusy { get; set; }
 
+    /// <summary>What <see cref="Use"/> returns -- a test sets this to simulate the host rejecting the command.</summary>
+    public PluginItemCommandResult UseResult { get; set; } =
+        new(PluginItemCommandStatus.Started);
+
     public List<PluginInventoryItem> Owned { get; } = [];
 
     public List<(string Command, uint ObjectId, uint TargetObjectId)> Calls { get; } = [];
@@ -551,7 +555,7 @@ public sealed class FakeItems : IItemAutomation
     public PluginItemCommandResult Use(uint objectId)
     {
         Calls.Add(("use", objectId, 0u));
-        return new PluginItemCommandResult(PluginItemCommandStatus.Started);
+        return UseResult;
     }
 
     public PluginItemCommandResult Apply(uint objectId, uint targetObjectId)

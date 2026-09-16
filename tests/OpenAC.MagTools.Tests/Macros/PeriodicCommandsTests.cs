@@ -161,6 +161,57 @@ public sealed class PeriodicCommandsTests
     }
 
     [Fact]
+    public void MinutesAfterMidnightUsesTheLocalWallClockNotUtc()
+    {
+        // M1: minutesAfterMidnight reads GetLocalNow() (the port's
+        // DateTime.Now equivalent), not GetUtcNow(). A fixed +01:30 local
+        // zone proves it: UTC 00:05 -> local 01:35 -> 95 minutes after local
+        // midnight. interval=95/offset=0 only divides the LOCAL value
+        // (95 % 95 == 0); the UTC value (5) would not (5 % 95 == 5).
+        (FakeHost host, PeriodicCommands macro, OpenAC.MagTools.TickScheduler scheduler,
+            ScopedCommandStore store, FakeTimeProvider clock) = Build();
+
+        clock.Now = new DateTimeOffset(2026, 1, 1, 0, 5, 0, TimeSpan.Zero);
+        clock.LocalZone = TimeZoneInfo.CreateCustomTimeZone(
+            "Test+0130", TimeSpan.FromMinutes(90), "Test+0130", "Test+0130");
+        string scope = SettingsScope.Character("acct", "Server", "Acdream");
+        store.SetPeriodicCommands(
+            scope, [new PeriodicCommand("local wins", TimeSpan.FromMinutes(95), TimeSpan.Zero)]);
+
+        macro.Start(scheduler, scope, SettingsScope.Server("Server"));
+        macro.OnTimer();
+        scheduler.Tick(0.1);
+
+        Assert.Equal(["local wins"], host.Automation.Chat.Submitted);
+    }
+
+    [Fact]
+    public void TheSameMinuteGuardStaysOnUtcRegardlessOfLocalZone()
+    {
+        // The guard is the original's own DateTime.UtcNow.Minute check, so a
+        // non-UTC local zone must not affect whether a second poll within
+        // the same UTC minute re-evaluates.
+        (FakeHost host, PeriodicCommands macro, OpenAC.MagTools.TickScheduler scheduler,
+            ScopedCommandStore store, FakeTimeProvider clock) = Build();
+
+        clock.Now = new DateTimeOffset(2026, 1, 1, 0, 5, 0, TimeSpan.Zero);
+        clock.LocalZone = TimeZoneInfo.CreateCustomTimeZone(
+            "Test+0130", TimeSpan.FromMinutes(90), "Test+0130", "Test+0130");
+        string scope = SettingsScope.Character("acct", "Server", "Acdream");
+        store.SetPeriodicCommands(
+            scope, [new PeriodicCommand("say hi", TimeSpan.FromMinutes(95), TimeSpan.Zero)]);
+        macro.Start(scheduler, scope, SettingsScope.Server("Server"));
+
+        macro.OnTimer();
+        clock.Now += TimeSpan.FromSeconds(20); // still 00:05 UTC minute
+        macro.OnTimer();
+
+        scheduler.Tick(0.1);
+        scheduler.Tick(0.1);
+        Assert.Single(host.Automation.Chat.Submitted);
+    }
+
+    [Fact]
     public void ZeroOrNegativeIntervalNeverMatches()
     {
         (FakeHost host, PeriodicCommands macro, OpenAC.MagTools.TickScheduler scheduler,

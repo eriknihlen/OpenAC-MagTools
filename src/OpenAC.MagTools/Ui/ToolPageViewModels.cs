@@ -303,6 +303,21 @@ public sealed class TinkeringPageViewModel : ListPageViewModel
 /// "rewrite the whole list on every change" `LoginList`/`PeriodicCommandList`
 /// click handlers. The row icons are the original's up/down/delete art.
 /// </remarks>
+/// <remarks>
+/// L3, small cosmetics worth spelling out: a successful Add trims the typed
+/// command text (leading/trailing whitespace only -- the command's own
+/// internal spacing is untouched) and resets its text field(s) back to the
+/// empty-command/default-interval("1")/default-offset("0") state, matching
+/// the original's field-clear-after-add. A refused Add (blank text, or --
+/// for the periodic list -- an invalid interval/offset, M2) leaves every
+/// typed field exactly as entered, so the user can fix just the one bad
+/// field. Move swaps two adjacent rows AND moves the selection with the
+/// swapped row (so "move up" keeps the same logical row selected, not the
+/// row now sitting in its old slot). Delete clears the selection when the
+/// deleted row WAS selected, or shifts the selection index down by one when
+/// a row ABOVE the selection was deleted, so the same logical row (if any)
+/// stays selected across the delete.
+/// </remarks>
 public sealed class ScopedCommandsPageViewModel
 {
     public const uint UpIconId = 0x060028FCu;
@@ -521,6 +536,13 @@ public sealed class ScopedCommandsPageViewModel
     public int PeriodicSelectedRow { get => _periodicSelectedRowField; private set => _periodicSelectedRowField = value; }
     public Action<int> SelectPeriodicRow { get; }
 
+    /// <summary>
+    /// M2 (<c>AccountServerCharacterGUI.cs:257</c>): the original refuses the
+    /// add outright -- no row, no store write, the typed text stays exactly
+    /// as entered -- for an empty/unparseable interval or offset, an
+    /// interval &lt;= 0, or a negative offset. It never falls back to a
+    /// default the way a lenient parser would.
+    /// </summary>
     private void AddPeriodic()
     {
         if (!CanEdit)
@@ -528,9 +550,10 @@ public sealed class ScopedCommandsPageViewModel
         string text = PeriodicText.Trim();
         if (text.Length == 0)
             return;
-
-        int interval = ParsePositiveMinutes(PeriodicIntervalText, fallback: 1);
-        int offset = ParseMinutes(PeriodicOffsetText, fallback: 0);
+        if (!TryParseMinutes(PeriodicIntervalText, out int interval) || interval <= 0)
+            return;
+        if (!TryParseMinutes(PeriodicOffsetText, out int offset) || offset < 0)
+            return;
 
         _periodicCommands.Add(new Settings.PeriodicCommand(
             text, TimeSpan.FromMinutes(interval), TimeSpan.FromMinutes(offset)));
@@ -551,20 +574,12 @@ public sealed class ScopedCommandsPageViewModel
         AdjustSelectionAfterDelete(ref RefPeriodicSelectedRow(), index);
     }
 
-    private static int ParsePositiveMinutes(string text, int fallback)
-    {
-        int value = ParseMinutes(text, fallback);
-        return value > 0 ? value : fallback;
-    }
-
-    private static int ParseMinutes(string text, int fallback)
+    private static bool TryParseMinutes(string text, out int value)
         => int.TryParse(
             text,
             System.Globalization.NumberStyles.Integer,
             System.Globalization.CultureInfo.InvariantCulture,
-            out int value)
-            ? value
-            : fallback;
+            out value);
 
     private static void AdjustSelectionAfterDelete(ref int selectedRow, int deletedIndex)
     {

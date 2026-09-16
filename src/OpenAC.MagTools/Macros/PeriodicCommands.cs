@@ -15,18 +15,25 @@ namespace OpenAC.MagTools.Macros;
 /// server-scope commands.
 /// </summary>
 /// <remarks>
-/// DELIBERATE DEVIATION: the original read <c>DateTime.Now</c> -- the
-/// retail client process's OS-local wall clock. This port reads
-/// <see cref="TimeProvider.GetUtcNow"/> instead, matching every other timer
-/// in this codebase (<c>AutoTradeAccept</c>, <c>Looter</c>,
-/// <c>ManaRecharger</c>, …), rather than <c>GetLocalNow()</c>. A headless
-/// session has no meaningful "the player's desktop time zone" to read, and
-/// a UTC-based minute-of-day keeps the same-minute guard and the
-/// interval/offset match deterministic and testable at a fixed clock. The
-/// practical effect for a graphical session is that "minutes after
-/// midnight" is midnight UTC, not the player's local midnight -- a periodic
-/// command still fires exactly once every <c>interval</c> minutes, just on
-/// a UTC-aligned grid instead of a local one. See <c>docs/deviations.md</c>.
+/// <para>
+/// Matches the original exactly (fixed at the 2026-09-16 review, M1):
+/// <c>minutesAfterMidnight</c> reads the LOCAL wall clock
+/// (<see cref="TimeProvider.GetLocalNow"/>, the port's equivalent of the
+/// original's <c>DateTime.Now</c>), while the same-minute guard reads only
+/// the UTC minute-of-hour (<c>GetUtcNow().UtcDateTime.Minute</c>, the port's
+/// equivalent of the original's own <c>DateTime.UtcNow.Minute</c> guard) --
+/// two DIFFERENT clocks, exactly as upstream mixed them.
+/// </para>
+/// <para>
+/// KNOWN UPSTREAM QUIRK, faithfully reproduced (not a port bug -- see L5 in
+/// <c>docs/deviations.md</c>): because the guard only compares a 0-59
+/// minute-of-hour value, not a full timestamp, two evaluations that land on
+/// the same minute-of-hour more than an hour apart (only possible if a gap
+/// in polling skips a whole hour, which the 20-second timer cadence never
+/// does during a live session) would be treated as "already evaluated" and
+/// skipped. This is the original's own behavior; the port does not correct
+/// it.
+/// </para>
 /// </remarks>
 public sealed class PeriodicCommands
 {
@@ -40,8 +47,8 @@ public sealed class PeriodicCommands
     private string _serverScopePath = string.Empty;
     private IDisposable? _timerRegistration;
 
-    /// <summary>The wall-clock minute last evaluated -- the original's "same minute never runs twice" guard.</summary>
-    private DateTime? _lastEvaluatedMinute;
+    /// <summary>The UTC minute-of-hour (0-59) last evaluated -- the original's "same minute never runs twice" guard.</summary>
+    private int? _lastEvaluatedUtcMinute;
 
     public PeriodicCommands(
         IPluginHost host,
@@ -69,7 +76,7 @@ public sealed class PeriodicCommands
 
         _characterScopePath = characterScopePath;
         _serverScopePath = serverScopePath;
-        _lastEvaluatedMinute = null;
+        _lastEvaluatedUtcMinute = null;
         _runner.Clear();
         _runner.Bind(scheduler);
 
@@ -85,19 +92,19 @@ public sealed class PeriodicCommands
         _runner.Clear();
         _characterScopePath = string.Empty;
         _serverScopePath = string.Empty;
-        _lastEvaluatedMinute = null;
+        _lastEvaluatedUtcMinute = null;
     }
 
     /// <summary>Runs one 20-second tick of the timer. Internal so a test can drive it directly at a fixed clock instead of stepping the scheduler 3 times.</summary>
     internal void OnTimer()
     {
-        DateTime now = _timeProvider.GetUtcNow().UtcDateTime;
-        var minuteBucket = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, DateTimeKind.Utc);
-        if (_lastEvaluatedMinute == minuteBucket)
+        int utcMinute = _timeProvider.GetUtcNow().UtcDateTime.Minute;
+        if (_lastEvaluatedUtcMinute == utcMinute)
             return;
-        _lastEvaluatedMinute = minuteBucket;
+        _lastEvaluatedUtcMinute = utcMinute;
 
-        int minutesAfterMidnight = (int)(now - now.Date).TotalMinutes;
+        DateTime localNow = _timeProvider.GetLocalNow().DateTime;
+        int minutesAfterMidnight = (int)(localNow - localNow.Date).TotalMinutes;
 
         EnqueueMatching(_store.GetPeriodicCommands(_characterScopePath), minutesAfterMidnight);
         EnqueueMatching(_store.GetPeriodicCommands(_serverScopePath), minutesAfterMidnight);

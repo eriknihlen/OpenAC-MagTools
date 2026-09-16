@@ -37,6 +37,15 @@ internal static class CommandDispatcher
     /// <see cref="MtCommandRouter.Execute(string?)"/> expects) -- matched
     /// case-insensitively, same as the router's own commands.
     /// </summary>
+    /// <remarks>
+    /// L2: the prefix match is deliberately narrowed to "<c>/mt</c> followed
+    /// by whitespace or end of string" rather than a plain
+    /// <c>StartsWith("/mt")</c>. A bare <c>StartsWith</c> would also match a
+    /// command that merely happens to begin with the same four characters --
+    /// <c>/mtx</c>, <c>/mtblah</c> -- routing it into the console as if it
+    /// were a (malformed) <c>/mt</c> verb instead of submitting it to chat as
+    /// the player typed it. The boundary check keeps those going to chat.
+    /// </remarks>
     internal static bool TryGetMtArguments(string command, out string arguments)
     {
         string trimmed = command.TrimStart();

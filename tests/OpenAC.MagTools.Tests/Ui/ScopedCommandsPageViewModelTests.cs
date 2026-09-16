@@ -162,19 +162,32 @@ public sealed class ScopedCommandsPageViewModelTests
         Assert.Equal(TimeSpan.FromMinutes(2), only.OffsetFromMidnight);
     }
 
-    [Fact]
-    public void AddPeriodicCommandFallsBackToDefaultsOnUnparsableIntervalOrOffset()
+    [Theory]
+    [InlineData("not a number", "0")]
+    [InlineData("", "0")]
+    [InlineData("5", "not a number")]
+    [InlineData("5", "")]
+    [InlineData("0", "0")]
+    [InlineData("-1", "0")]
+    [InlineData("5", "-1")]
+    public void AddPeriodicCommandRefusesInvalidIntervalOrOffset(string interval, string offset)
     {
+        // M2 (AccountServerCharacterGUI.cs:257): the original refuses the
+        // add outright -- no row, no rewrite, the typed text is kept -- for
+        // an empty/unparseable interval or offset, interval <= 0, or
+        // offset < 0. It must never silently fall back to a default.
         (ScopedCommandsPageViewModel vm, ScopedCommandStore store, string scope) = Build();
 
         vm.SetPeriodicText("/mt autopack");
-        vm.SetPeriodicInterval("not a number");
-        vm.SetPeriodicOffset("also not a number");
+        vm.SetPeriodicInterval(interval);
+        vm.SetPeriodicOffset(offset);
         vm.AddPeriodicCommand();
 
-        PeriodicCommand only = Assert.Single(store.GetPeriodicCommands(scope));
-        Assert.Equal(TimeSpan.FromMinutes(1), only.Interval);
-        Assert.Equal(TimeSpan.Zero, only.OffsetFromMidnight);
+        Assert.Empty(vm.PeriodicCommands);
+        Assert.Empty(store.GetPeriodicCommands(scope));
+        Assert.Equal("/mt autopack", vm.PeriodicText);
+        Assert.Equal(interval, vm.PeriodicIntervalText);
+        Assert.Equal(offset, vm.PeriodicOffsetText);
     }
 
     [Fact]

@@ -1,5 +1,7 @@
+using AcDream.Plugin.Abstractions;
 using OpenAC.MagTools.Loggers.Chat;
 using OpenAC.MagTools.Settings;
+using OpenAC.MagTools.Tests.Chat;
 using OpenAC.MagTools.Tests.Fakes;
 using ChatClassifier = OpenAC.MagTools.Chat.ChatClassifier;
 using ChatLoggerFeature = OpenAC.MagTools.Loggers.Chat.ChatLogger;
@@ -8,38 +10,63 @@ namespace OpenAC.MagTools.Tests.Loggers.Chat;
 
 public sealed class ChatLoggerTests
 {
-    [Theory]
-    [InlineData(
-        "Master Arbitrator says, \"Arena Three is now available for new warriors!\"", false)]
-    [InlineData("Master Arbitrator tells you, \"You fought too recently.\"", false)]
-    [InlineData("You say, \"Zojak arwreth\"", false)]
-    [InlineData("<Tell:IIDString:1:Bob>Bob<\\Tell> says, \"Malar tuash\"", false)]
-    [InlineData("You say, \"hello there\"", true)]
-    [InlineData("You tell Bob, \"hi\"", true)]
-    [InlineData("Your spell fizzled.", false)]
-    public void TryClassifyMatchesTheOriginalsDropAndTagRules(string text, bool expected)
-        => Assert.Equal(expected, ChatLoggerFeature.TryClassify(text, out _));
+    private static bool TryClassify(
+        FakeHost host, PluginChatMessage message, out ChatClassifier.ChatChannels type)
+        => ChatLoggerFeature.TryClassify(message, host.Automation, out type);
+
+    [Fact]
+    public void TryClassifyDropsNpcSpeechNpcTellsAndSpellCasts()
+    {
+        var host = new FakeHost();
+        host.Automation.Objects.Objects.Add(
+            new PluginWorldObject(1u, 0u, "Master Arbitrator", PluginObjectClass.Npc, 0u, 0u, 0u));
+
+        Assert.False(TryClassify(
+            host,
+            host.Say(
+                "Master Arbitrator", "Arena Three is now available for new warriors!",
+                fromObjectId: 1u),
+            out _));
+        Assert.False(TryClassify(
+            host, host.Tell("Master Arbitrator", "You fought too recently.", fromObjectId: 1u),
+            out _));
+        Assert.False(TryClassify(host, host.Say("Bob", "Zojak arwreth", mine: true), out _));
+        Assert.False(TryClassify(host, host.Say("Bob", "Malar tuash", mine: false), out _));
+    }
+
+    [Fact]
+    public void TryClassifyDropsNonChatLines()
+    {
+        var host = new FakeHost();
+        Assert.False(TryClassify(host, host.System("Your spell fizzled."), out _));
+        Assert.False(TryClassify(host, host.Combat("You hit for 10 damage."), out _));
+    }
 
     [Fact]
     public void TryClassifyTagsLocalSpeechAsArea()
     {
-        Assert.True(ChatLoggerFeature.TryClassify("You say, \"hello\"", out ChatClassifier.ChatChannels type));
+        var host = new FakeHost();
+        Assert.True(TryClassify(
+            host, host.Say("Bob", "hello there", mine: true),
+            out ChatClassifier.ChatChannels type));
         Assert.Equal(ChatClassifier.ChatChannels.Area, type);
     }
 
     [Fact]
     public void TryClassifyTagsATellAsTells()
     {
-        Assert.True(
-            ChatLoggerFeature.TryClassify("You tell Bob, \"hi\"", out ChatClassifier.ChatChannels type));
+        var host = new FakeHost();
+        Assert.True(TryClassify(
+            host, host.YouTell("Bob", "hi"), out ChatClassifier.ChatChannels type));
         Assert.Equal(ChatClassifier.ChatChannels.Tells, type);
     }
 
     [Fact]
     public void TryClassifyTagsANamedChannel()
     {
-        Assert.True(ChatLoggerFeature.TryClassify(
-            "[General] <Tell:IIDString:0:Bob>Bob<\\Tell> says, \"hi\"",
+        var host = new FakeHost();
+        Assert.True(TryClassify(
+            host, host.ChannelSay("General", "Bob", "hi"),
             out ChatClassifier.ChatChannels type));
         Assert.Equal(ChatClassifier.ChatChannels.General, type);
     }
@@ -61,7 +88,7 @@ public sealed class ChatLoggerTests
         var scheduler = new TickScheduler(host.Events, new ChatOutput(host));
 
         logger.Start(scheduler, "Frostfell", "+Acdream");
-        host.Automation.Chat.Deliver("You say, \"hello\"");
+        host.Say("Bob", "hello", mine: true);
 
         Assert.Single(logger.Group1.Rows);
         Assert.Single(logger.Group2.Rows);
@@ -76,7 +103,7 @@ public sealed class ChatLoggerTests
 
         logger.Start(scheduler, "Frostfell", "+Acdream");
         logger.Stop();
-        host.Automation.Chat.Deliver("You say, \"hello\"");
+        host.Say("Bob", "hello", mine: true);
 
         Assert.Empty(logger.Group1.Rows);
     }
@@ -90,12 +117,12 @@ public sealed class ChatLoggerTests
         var scheduler = new TickScheduler(host.Events, new ChatOutput(host));
 
         logger.Start(scheduler, "Frostfell", "+Acdream");
-        host.Automation.Chat.Deliver("You say, \"hello\"");
+        host.Say("Bob", "hello", mine: true);
         logger.Stop();
 
         string? text = host.Storage.ReadText("Frostfell/+Acdream.ChatLogger.txt");
         Assert.NotNull(text);
-        Assert.Contains("You say, \"hello\"", text, StringComparison.Ordinal);
+        Assert.Contains("hello", text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -107,7 +134,7 @@ public sealed class ChatLoggerTests
         var scheduler = new TickScheduler(host.Events, new ChatOutput(host));
 
         logger.Start(scheduler, "Frostfell", "+Acdream");
-        host.Automation.Chat.Deliver("You say, \"hello\"");
+        host.Say("Bob", "hello", mine: true);
         logger.Stop();
 
         Assert.Null(host.Storage.ReadText("Frostfell/+Acdream.ChatLogger.txt"));
@@ -125,17 +152,17 @@ public sealed class ChatLoggerTests
         var scheduler = new TickScheduler(host.Events, new ChatOutput(host));
 
         logger.Start(scheduler, "Frostfell", "+Acdream");
-        host.Automation.Chat.Deliver(
-            "[Fellowship] <Tell:IIDString:0:Bob>Bob<\\Tell> says, \"hi\"");
+        host.ChannelSay("Fellowship", "Bob", "hi");
         logger.Stop();
 
         Assert.Null(host.Storage.ReadText("Frostfell/+Acdream.ChatLogger.txt"));
     }
 
     [Fact]
-    public void StartImportsRecentHistoryIntoBothGroups()
+    public void StartImportsRecentHistoryIntoBothGroupsWhenPersistentIsOn()
     {
         (FakeHost host, SettingsManager settings, ChatLoggerFeature logger) = Build();
+        settings.ChatLogger.Persistent.Value = true;
         settings.ChatLogger.Group1.Area.Value = true;
         host.Storage.Seed(
             "Frostfell/+Acdream.ChatLogger.txt",
@@ -149,6 +176,25 @@ public sealed class ChatLoggerTests
     }
 
     [Fact]
+    public void StartDoesNotImportWhenPersistentIsOff()
+    {
+        // Nothing is ever written while persistence is off, so a leftover
+        // file from an earlier on-session is stale, not "recent" history —
+        // Import() skips reading storage at all in that case.
+        (FakeHost host, SettingsManager settings, ChatLoggerFeature logger) = Build();
+        settings.ChatLogger.Persistent.Value = false;
+        settings.ChatLogger.Group1.Area.Value = true;
+        host.Storage.Seed(
+            "Frostfell/+Acdream.ChatLogger.txt",
+            "260916120000,1,You say, \"already here\"\n");
+        var scheduler = new TickScheduler(host.Events, new ChatOutput(host));
+
+        logger.Start(scheduler, "Frostfell", "+Acdream");
+
+        Assert.Empty(logger.Group1.Rows);
+    }
+
+    [Fact]
     public void ClearHistoryClearsBothGroupsButNeverTouchesStorage()
     {
         // The original's equivalent button had a copy-paste bug that called
@@ -159,7 +205,7 @@ public sealed class ChatLoggerTests
         settings.ChatLogger.Group1.Area.Value = true;
         var scheduler = new TickScheduler(host.Events, new ChatOutput(host));
         logger.Start(scheduler, "Frostfell", "+Acdream");
-        host.Automation.Chat.Deliver("You say, \"hello\"");
+        host.Say("Bob", "hello", mine: true);
         int writesBeforeClear = host.Storage.WriteCount;
 
         logger.ClearHistory();
@@ -178,7 +224,7 @@ public sealed class ChatLoggerTests
 
         logger.Start(scheduler, "Frostfell", "+Acdream");
         logger.Start(scheduler, "Frostfell", "+Acdream");
-        host.Automation.Chat.Deliver("You say, \"hello\"");
+        host.Say("Bob", "hello", mine: true);
 
         // A double subscription would have logged the line twice.
         Assert.Single(logger.Group1.Rows);

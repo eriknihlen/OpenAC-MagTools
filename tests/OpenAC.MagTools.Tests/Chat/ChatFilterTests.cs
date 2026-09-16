@@ -8,9 +8,10 @@ namespace OpenAC.MagTools.Tests.Chat;
 /// <summary>
 /// One test per <c>Filters/*</c> rule (29 rules total): a positive case that
 /// must be suppressed once its setting is on, and a negative case (the
-/// setting left off) that must pass through untouched. A handful of rules
-/// also assert their documented exceptions (the Spectral/Brilliance/Prodigal
-/// expiry carve-out, the isChat gates).
+/// setting left off) that must pass through untouched. Lines are built in the
+/// host's structured shape via <see cref="ChatFixtures"/> — explicit
+/// Kind/Sender/SenderObjectId/ChannelName — never retail's composed display
+/// text, which only the legacy-import tests use.
 /// </summary>
 public sealed class ChatFilterTests
 {
@@ -25,25 +26,25 @@ public sealed class ChatFilterTests
         _filter.Enable();
     }
 
-    private bool Suppressed(string text, int kind = 0)
-    {
-        PluginChatMessage message = _host.Automation.Chat.Deliver(text, kind: kind);
-        return !_host.Automation.Chat.Delivered.Any(
+    private bool Suppressed(PluginChatMessage message)
+        => !_host.Automation.Chat.Delivered.Any(
             delivered => delivered.Sequence == message.Sequence);
-    }
 
-    private void AddWorldObject(string name, PluginObjectClass objectClass)
+    /// <summary>A bare system/combat-shaped line — never chat, no speaker.</summary>
+    private bool SuppressedSystemText(string text) => Suppressed(_host.System(text));
+
+    private void AddWorldObject(uint objectId, string name, PluginObjectClass objectClass)
         => _host.Automation.Objects.Objects.Add(
-            new PluginWorldObject(1u, 0u, name, objectClass, 0u, 0u, 0u));
+            new PluginWorldObject(objectId, 0u, name, objectClass, 0u, 0u, 0u));
 
     // ---- 1. AttackEvades -------------------------------------------------
 
     [Fact]
     public void AttackEvadesSuppressesWhenOn()
     {
-        Assert.False(Suppressed("Ruschk Sadist evaded your attack."));
+        Assert.False(SuppressedSystemText("Ruschk Sadist evaded your attack."));
         _settings.Filters.AttackEvades.Value = true;
-        Assert.True(Suppressed("Ruschk Sadist evaded your attack."));
+        Assert.True(SuppressedSystemText("Ruschk Sadist evaded your attack."));
     }
 
     [Fact]
@@ -52,7 +53,7 @@ public sealed class ChatFilterTests
         // The !isChat gate: retail speech containing the phrase is still
         // speech, not the system evade line.
         _settings.Filters.AttackEvades.Value = true;
-        Assert.False(Suppressed("You say, \"he evaded your attack.\""));
+        Assert.False(Suppressed(_host.Say("Bob", "he evaded your attack.", mine: true)));
     }
 
     // ---- 2. DefenseEvades --------------------------------------------------
@@ -60,9 +61,16 @@ public sealed class ChatFilterTests
     [Fact]
     public void DefenseEvadesSuppressesWhenOn()
     {
-        Assert.False(Suppressed("You evaded Ruschk Sadist!"));
+        Assert.False(SuppressedSystemText("You evaded Ruschk Sadist!"));
         _settings.Filters.DefenseEvades.Value = true;
-        Assert.True(Suppressed("You evaded Ruschk Sadist!"));
+        Assert.True(SuppressedSystemText("You evaded Ruschk Sadist!"));
+    }
+
+    [Fact]
+    public void DefenseEvadesDoesNotEatARealChatLineWithTheSamePhrase()
+    {
+        _settings.Filters.DefenseEvades.Value = true;
+        Assert.False(Suppressed(_host.Say("Bob", "You evaded that one!", mine: true)));
     }
 
     // ---- 3. AttackResists --------------------------------------------------
@@ -70,9 +78,9 @@ public sealed class ChatFilterTests
     [Fact]
     public void AttackResistsSuppressesWhenOn()
     {
-        Assert.False(Suppressed("Sentient Crystal Shard resists your spell"));
+        Assert.False(SuppressedSystemText("Sentient Crystal Shard resists your spell"));
         _settings.Filters.AttackResists.Value = true;
-        Assert.True(Suppressed("Sentient Crystal Shard resists your spell"));
+        Assert.True(SuppressedSystemText("Sentient Crystal Shard resists your spell"));
     }
 
     // ---- 4. DefenseResists -------------------------------------------------
@@ -81,10 +89,10 @@ public sealed class ChatFilterTests
     public void DefenseResistsSuppressesWhenOn()
     {
         string text = "You resist the spell cast by Sentient Crystal Shard";
-        Assert.False(Suppressed(text));
+        Assert.False(SuppressedSystemText(text));
         _settings.Filters.DefenseResists.Value = true;
-        Assert.True(Suppressed(text));
-        Assert.True(Suppressed(
+        Assert.True(SuppressedSystemText(text));
+        Assert.True(SuppressedSystemText(
             "Ruschk Warlord tried to cast a spell on you, but was too far away!"));
     }
 
@@ -94,9 +102,9 @@ public sealed class ChatFilterTests
     public void NpkFailsSuppressesWhenOn()
     {
         string text = "You fail to affect Bob, you are not a player killer!";
-        Assert.False(Suppressed(text));
+        Assert.False(SuppressedSystemText(text));
         _settings.Filters.NPKFails.Value = true;
-        Assert.True(Suppressed(text));
+        Assert.True(SuppressedSystemText(text));
     }
 
     // ---- 6. DirtyFighting ---------------------------------------------------
@@ -105,9 +113,9 @@ public sealed class ChatFilterTests
     public void DirtyFightingSuppressesWhenOn()
     {
         string text = "Dirty Fighting! Bob delivers a Traumatic Assault to Mob!";
-        Assert.False(Suppressed(text));
+        Assert.False(SuppressedSystemText(text));
         _settings.Filters.DirtyFighting.Value = true;
-        Assert.True(Suppressed(text));
+        Assert.True(SuppressedSystemText(text));
     }
 
     // ---- 7. MonsterDeaths ---------------------------------------------------
@@ -115,9 +123,9 @@ public sealed class ChatFilterTests
     [Fact]
     public void MonsterDeathsSuppressesWhenOn()
     {
-        Assert.False(Suppressed("You obliterate Drudge Skulker!"));
+        Assert.False(SuppressedSystemText("You obliterate Drudge Skulker!"));
         _settings.Filters.MonsterDeaths.Value = true;
-        Assert.True(Suppressed("You obliterate Drudge Skulker!"));
+        Assert.True(SuppressedSystemText("You obliterate Drudge Skulker!"));
     }
 
     // ---- 8. SpellCastingMine --------------------------------------------------
@@ -125,10 +133,17 @@ public sealed class ChatFilterTests
     [Fact]
     public void SpellCastingMineSuppressesWhenOn()
     {
-        string text = "You say, \"Zojak arwreth\"";
-        Assert.False(Suppressed(text));
+        PluginChatMessage message() => _host.Say("Bob", "Zojak arwreth", mine: true);
+        Assert.False(Suppressed(message()));
         _settings.Filters.SpellCastingMine.Value = true;
-        Assert.True(Suppressed(text));
+        Assert.True(Suppressed(message()));
+    }
+
+    [Fact]
+    public void SpellCastingMineLeavesAnotherPlayersCastAlone()
+    {
+        _settings.Filters.SpellCastingMine.Value = true;
+        Assert.False(Suppressed(_host.Say("Bob", "Zojak arwreth", mine: false)));
     }
 
     // ---- 9. SpellCastingOthers -----------------------------------------------
@@ -136,10 +151,17 @@ public sealed class ChatFilterTests
     [Fact]
     public void SpellCastingOthersSuppressesWhenOn()
     {
-        string text = "<Tell:IIDString:1:Bob>Bob<\\Tell> says, \"Malar tuash\"";
-        Assert.False(Suppressed(text));
+        PluginChatMessage message() => _host.Say("Bob", "Malar tuash", mine: false);
+        Assert.False(Suppressed(message()));
         _settings.Filters.SpellCastingOthers.Value = true;
-        Assert.True(Suppressed(text));
+        Assert.True(Suppressed(message()));
+    }
+
+    [Fact]
+    public void SpellCastingOthersLeavesMyOwnCastAlone()
+    {
+        _settings.Filters.SpellCastingOthers.Value = true;
+        Assert.False(Suppressed(_host.Say("Bob", "Malar tuash", mine: true)));
     }
 
     // ---- 10. SpellCastFizzles -------------------------------------------------
@@ -147,9 +169,9 @@ public sealed class ChatFilterTests
     [Fact]
     public void SpellCastFizzlesSuppressesWhenOn()
     {
-        Assert.False(Suppressed("Your spell fizzled."));
+        Assert.False(SuppressedSystemText("Your spell fizzled."));
         _settings.Filters.SpellCastFizzles.Value = true;
-        Assert.True(Suppressed("Your spell fizzled."));
+        Assert.True(SuppressedSystemText("Your spell fizzled."));
     }
 
     // ---- 11. CompUsage ----------------------------------------------------
@@ -158,9 +180,9 @@ public sealed class ChatFilterTests
     public void CompUsageSuppressesWhenOn()
     {
         string text = "The spell consumed the following components: Herb, Powder";
-        Assert.False(Suppressed(text));
+        Assert.False(SuppressedSystemText(text));
         _settings.Filters.CompUsage.Value = true;
-        Assert.True(Suppressed(text));
+        Assert.True(SuppressedSystemText(text));
     }
 
     // ---- 12. SpellExpires ---------------------------------------------------
@@ -169,13 +191,13 @@ public sealed class ChatFilterTests
     public void SpellExpiresSuppressesWhenOnExceptTheRareItemException()
     {
         _settings.Filters.SpellExpires.Value = true;
-        Assert.True(Suppressed("Focus Self VI has expired."));
+        Assert.True(SuppressedSystemText("Focus Self VI has expired."));
 
         // The original never filters expiry lines mentioning these three
         // rare-item enchantment names.
-        Assert.False(Suppressed("The spell Spectral Bane on your Coat has expired."));
-        Assert.False(Suppressed("Brilliance VI has expired."));
-        Assert.False(Suppressed("The Prodigal Aegis buff have expired."));
+        Assert.False(SuppressedSystemText("The spell Spectral Bane on your Coat has expired."));
+        Assert.False(SuppressedSystemText("Brilliance VI has expired."));
+        Assert.False(SuppressedSystemText("The Prodigal Aegis buff have expired."));
     }
 
     // ---- 13. HealingKitSuccess ----------------------------------------------
@@ -185,9 +207,9 @@ public sealed class ChatFilterTests
     {
         string text = "You heal yourself for 88 Health points. "
             + "Your treated Healing Kit has 16 uses left.";
-        Assert.False(Suppressed(text));
+        Assert.False(SuppressedSystemText(text));
         _settings.Filters.HealingKitSuccess.Value = true;
-        Assert.True(Suppressed(text));
+        Assert.True(SuppressedSystemText(text));
     }
 
     // ---- 14. HealingKitFail ---------------------------------------------------
@@ -196,9 +218,9 @@ public sealed class ChatFilterTests
     public void HealingKitFailSuppressesWhenOn()
     {
         string text = "You fail to heal yourself. Your Treated Healing Kit has 18 uses left.";
-        Assert.False(Suppressed(text));
+        Assert.False(SuppressedSystemText(text));
         _settings.Filters.HealingKitFail.Value = true;
-        Assert.True(Suppressed(text));
+        Assert.True(SuppressedSystemText(text));
     }
 
     // ---- 15. Salvaging ------------------------------------------------------
@@ -207,9 +229,9 @@ public sealed class ChatFilterTests
     public void SalvagingSuppressesWhenOn()
     {
         string text = "You obtain 9 granite (ws 8.00) using your knowledge of Salvaging";
-        Assert.False(Suppressed(text));
+        Assert.False(SuppressedSystemText(text));
         _settings.Filters.Salvaging.Value = true;
-        Assert.True(Suppressed(text));
+        Assert.True(SuppressedSystemText(text));
     }
 
     // ---- 16. SalvagingFails -----------------------------------------------
@@ -217,10 +239,10 @@ public sealed class ChatFilterTests
     [Fact]
     public void SalvagingFailsSuppressesWhenOn()
     {
-        Assert.False(Suppressed("Salvaging Failed!"));
+        Assert.False(SuppressedSystemText("Salvaging Failed!"));
         _settings.Filters.SalvagingFails.Value = true;
-        Assert.True(Suppressed("Salvaging Failed!"));
-        Assert.True(Suppressed(
+        Assert.True(SuppressedSystemText("Salvaging Failed!"));
+        Assert.True(SuppressedSystemText(
             "The following were not suitable for salvaging: Salvaged Sunstone (79)."));
     }
 
@@ -231,9 +253,9 @@ public sealed class ChatFilterTests
     {
         string text =
             "Your Aura of the Craftman augmentation increased your skill by 5!";
-        Assert.False(Suppressed(text));
+        Assert.False(SuppressedSystemText(text));
         _settings.Filters.AuraOfCraftman.Value = true;
-        Assert.True(Suppressed(text));
+        Assert.True(SuppressedSystemText(text));
     }
 
     // ---- 18. ManaStoneUsage -------------------------------------------------
@@ -242,20 +264,37 @@ public sealed class ChatFilterTests
     public void ManaStoneUsageSuppressesWhenOn()
     {
         string text = "The Mana Stone gives 6,127 points of mana to the following items: ";
-        Assert.False(Suppressed(text));
+        Assert.False(SuppressedSystemText(text));
         _settings.Filters.ManaStoneUsage.Value = true;
-        Assert.True(Suppressed(text));
-        Assert.True(Suppressed("The Fez is destroyed."));
+        Assert.True(SuppressedSystemText(text));
+        Assert.True(SuppressedSystemText("The Fez is destroyed."));
     }
 
     // ---- 19. TradeBuffBotSpam -----------------------------------------------
 
     [Fact]
-    public void TradeBuffBotSpamSuppressesWhenOn()
+    public void TradeBuffBotSpamSuppressesMyOwnLocalSpeechEndingInTheTag()
     {
-        Assert.False(Suppressed("Bob -t-"));
+        PluginChatMessage message() => _host.Say("Bob", "Bob -t-", mine: true);
+        Assert.False(Suppressed(message()));
         _settings.Filters.TradeBuffBotSpam.Value = true;
-        Assert.True(Suppressed("Bob -t-"));
+        Assert.True(Suppressed(message()));
+    }
+
+    [Fact]
+    public void TradeBuffBotSpamSuppressesAnEmoteEndingInTheTag()
+    {
+        PluginChatMessage message() => _host.Emote("Bob", "waves -b-");
+        Assert.False(Suppressed(message()));
+        _settings.Filters.TradeBuffBotSpam.Value = true;
+        Assert.True(Suppressed(message()));
+    }
+
+    [Fact]
+    public void TradeBuffBotSpamLeavesAnotherPlayersOrdinarySpeechAlone()
+    {
+        _settings.Filters.TradeBuffBotSpam.Value = true;
+        Assert.False(Suppressed(_host.Say("Bob", "Bob -t-", mine: false)));
     }
 
     // ---- 20. FailedAssess -----------------------------------------------------
@@ -263,9 +302,9 @@ public sealed class ChatFilterTests
     [Fact]
     public void FailedAssessSuppressesWhenOn()
     {
-        Assert.False(Suppressed("Someone tried and failed to assess you!"));
+        Assert.False(SuppressedSystemText("Someone tried and failed to assess you!"));
         _settings.Filters.FailedAssess.Value = true;
-        Assert.True(Suppressed("Someone tried and failed to assess you!"));
+        Assert.True(SuppressedSystemText("Someone tried and failed to assess you!"));
     }
 
     // ---- 21. KillTaskComplete ------------------------------------------------
@@ -274,9 +313,9 @@ public sealed class ChatFilterTests
     public void KillTaskCompleteSuppressesWhenOn()
     {
         string text = "You have killed 50 Drudge Raveners! Your task is complete!";
-        Assert.False(Suppressed(text));
+        Assert.False(SuppressedSystemText(text));
         _settings.Filters.KillTaskComplete.Value = true;
-        Assert.True(Suppressed(text));
+        Assert.True(SuppressedSystemText(text));
     }
 
     // ---- 22. VendorTells ------------------------------------------------------
@@ -284,19 +323,27 @@ public sealed class ChatFilterTests
     [Fact]
     public void VendorTellsSuppressesWhenOn()
     {
-        AddWorldObject("Larry", PluginObjectClass.Vendor);
-        string text = "Larry tells you, \"Buy something!\"";
-        Assert.False(Suppressed(text));
+        AddWorldObject(1u, "Larry", PluginObjectClass.Vendor);
+        PluginChatMessage message() => _host.Tell("Larry", "Buy something!", fromObjectId: 1u);
+        Assert.False(Suppressed(message()));
         _settings.Filters.VendorTells.Value = true;
-        Assert.True(Suppressed(text));
+        Assert.True(Suppressed(message()));
     }
 
     [Fact]
     public void VendorTellsLeavesATellFromAMonsterAlone()
     {
-        AddWorldObject("Larry", PluginObjectClass.Monster);
+        AddWorldObject(1u, "Larry", PluginObjectClass.Monster);
         _settings.Filters.VendorTells.Value = true;
-        Assert.False(Suppressed("Larry tells you, \"Grr.\""));
+        Assert.False(Suppressed(_host.Tell("Larry", "Grr.", fromObjectId: 1u)));
+    }
+
+    [Fact]
+    public void VendorTellsLeavesMyOwnSentTellAlone()
+    {
+        AddWorldObject(1u, "Larry", PluginObjectClass.Vendor);
+        _settings.Filters.VendorTells.Value = true;
+        Assert.False(Suppressed(_host.YouTell("Larry", "Buy something!")));
     }
 
     // ---- 23. MonsterTell -----------------------------------------------------
@@ -304,11 +351,12 @@ public sealed class ChatFilterTests
     [Fact]
     public void MonsterTellSuppressesWhenOn()
     {
-        AddWorldObject("Ruschk Warlord", PluginObjectClass.Monster);
-        string text = "Ruschk Warlord tells you, \"You will die!\"";
-        Assert.False(Suppressed(text));
+        AddWorldObject(1u, "Ruschk Warlord", PluginObjectClass.Monster);
+        PluginChatMessage message() =>
+            _host.Tell("Ruschk Warlord", "You will die!", fromObjectId: 1u);
+        Assert.False(Suppressed(message()));
         _settings.Filters.MonsterTell.Value = true;
-        Assert.True(Suppressed(text));
+        Assert.True(Suppressed(message()));
     }
 
     // ---- 24. NpcChatter -----------------------------------------------------
@@ -316,11 +364,19 @@ public sealed class ChatFilterTests
     [Fact]
     public void NpcChatterSuppressesWhenOn()
     {
-        AddWorldObject("Town Crier", PluginObjectClass.Npc);
-        string text = "Town Crier says, \"Hear ye!\"";
-        Assert.False(Suppressed(text));
+        AddWorldObject(1u, "Town Crier", PluginObjectClass.Npc);
+        PluginChatMessage message() => _host.Say("Town Crier", "Hear ye!", fromObjectId: 1u);
+        Assert.False(Suppressed(message()));
         _settings.Filters.NpcChatter.Value = true;
-        Assert.True(Suppressed(text));
+        Assert.True(Suppressed(message()));
+    }
+
+    [Fact]
+    public void NpcChatterLeavesMyOwnSpeechAlone()
+    {
+        AddWorldObject(1u, "+Acdream", PluginObjectClass.Npc);
+        _settings.Filters.NpcChatter.Value = true;
+        Assert.False(Suppressed(_host.Say("+Acdream", "Hear ye!", mine: true)));
     }
 
     // ---- 25. MasterArbitratorSpam ---------------------------------------------
@@ -328,11 +384,13 @@ public sealed class ChatFilterTests
     [Fact]
     public void MasterArbitratorSpamSuppressesTheDocumentedLines()
     {
-        string text = "Master Arbitrator tells you, "
-            + "\"You shall be known to all as a Colosseum Champion!\"";
-        Assert.False(Suppressed(text));
+        PluginChatMessage message() => _host.Tell(
+            "Master Arbitrator",
+            "You shall be known to all as a Colosseum Champion!",
+            fromObjectId: 1u);
+        Assert.False(Suppressed(message()));
         _settings.Filters.MasterArbitratorSpam.Value = true;
-        Assert.True(Suppressed(text));
+        Assert.True(Suppressed(message()));
     }
 
     [Fact]
@@ -340,8 +398,8 @@ public sealed class ChatFilterTests
     {
         // The register's own comment: these are deliberately NOT filtered.
         _settings.Filters.MasterArbitratorSpam.Value = true;
-        Assert.False(Suppressed(
-            "Master Arbitrator tells you, \"Prepare your fellowship ahead of time.\""));
+        Assert.False(Suppressed(_host.Tell(
+            "Master Arbitrator", "Prepare your fellowship ahead of time.", fromObjectId: 1u)));
     }
 
     // ---- 26. AllMasterArbitratorChat -------------------------------------------
@@ -349,10 +407,11 @@ public sealed class ChatFilterTests
     [Fact]
     public void AllMasterArbitratorChatSuppressesEveryArbitratorLine()
     {
-        string text = "Master Arbitrator tells you, \"Anything at all.\"";
-        Assert.False(Suppressed(text));
+        PluginChatMessage message() =>
+            _host.Tell("Master Arbitrator", "Anything at all.", fromObjectId: 1u);
+        Assert.False(Suppressed(message()));
         _settings.Filters.AllMasterArbitratorChat.Value = true;
-        Assert.True(Suppressed(text));
+        Assert.True(Suppressed(message()));
     }
 
     // ---- 27. StatusTextYoureTooBusy -------------------------------------------
@@ -360,9 +419,9 @@ public sealed class ChatFilterTests
     [Fact]
     public void StatusTextYoureTooBusySuppressesWhenOn()
     {
-        Assert.False(Suppressed("You're too busy!", PluginChatMessage.StatusTextKind));
+        Assert.False(Suppressed(_host.Status("You're too busy!")));
         _settings.Filters.StatusTextYoureTooBusy.Value = true;
-        Assert.True(Suppressed("You're too busy!", PluginChatMessage.StatusTextKind));
+        Assert.True(Suppressed(_host.Status("You're too busy!")));
     }
 
     // ---- 28. StatusTextCasting -----------------------------------------------
@@ -370,9 +429,9 @@ public sealed class ChatFilterTests
     [Fact]
     public void StatusTextCastingSuppressesWhenOn()
     {
-        Assert.False(Suppressed("Casting .....", PluginChatMessage.StatusTextKind));
+        Assert.False(Suppressed(_host.Status("Casting .....")));
         _settings.Filters.StatusTextCasting.Value = true;
-        Assert.True(Suppressed("Casting .....", PluginChatMessage.StatusTextKind));
+        Assert.True(Suppressed(_host.Status("Casting .....")));
     }
 
     // ---- 29. StatusTextAll -----------------------------------------------------
@@ -380,12 +439,12 @@ public sealed class ChatFilterTests
     [Fact]
     public void StatusTextAllSuppressesEveryStatusLineWhenOn()
     {
-        Assert.False(Suppressed("Anything", PluginChatMessage.StatusTextKind));
+        Assert.False(Suppressed(_host.Status("Anything")));
         _settings.Filters.StatusTextAll.Value = true;
-        Assert.True(Suppressed("Anything", PluginChatMessage.StatusTextKind));
+        Assert.True(Suppressed(_host.Status("Anything")));
 
         // A status line is never matched against the transcript rules —
         // Kind routes it to SuppressStatusText only.
-        Assert.False(Suppressed("Anything"));
+        Assert.False(SuppressedSystemText("Anything"));
     }
 }

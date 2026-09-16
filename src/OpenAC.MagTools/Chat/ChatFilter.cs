@@ -1,5 +1,6 @@
 using AcDream.Plugin.Abstractions;
 using OpenAC.MagTools.Settings;
+using ChatLine = OpenAC.MagTools.Chat.ChatClassifier.ChatLine;
 
 namespace OpenAC.MagTools.Chat;
 
@@ -10,16 +11,28 @@ namespace OpenAC.MagTools.Chat;
 /// </summary>
 /// <remarks>
 /// Filters are client-wide: this only ever suppresses what a rule specifically
-/// says, never more. Every condition below is the original's condition,
-/// verbatim, including the handful that deliberately do NOT gate on
-/// <see cref="ChatClassifier.IsChat"/> (Monster Deaths and both spell-casting
-/// rules match on their own dedicated pattern instead).
+/// says, never more. Every condition below is the original's condition
+/// translated onto <see cref="ChatClassifier.ChatLine"/>'s structured fields
+/// instead of the original's composed-text regexes, including the handful
+/// that deliberately do NOT gate on <see cref="ChatLine.IsChat"/> (Monster
+/// Deaths and both spell-casting rules match on their own dedicated shape
+/// instead).
 /// </remarks>
 public sealed class ChatFilter
 {
     private readonly IPluginHost _host;
     private readonly FilterSettings _settings;
     private IDisposable? _registration;
+
+    /// <summary>
+    /// Speaker name to resolved world-object class, built lazily and only
+    /// while at least one of the three class-based rules is on
+    /// (<see cref="NeedsSpeakerClassByName"/>). Covers only the rare
+    /// zero-<c>SenderObjectId</c> case — the common path resolves a speaker
+    /// in O(1) via <see cref="IWorldObjectAutomation.TryGet"/> straight off
+    /// <c>SenderObjectId</c> and never touches this cache at all.
+    /// </summary>
+    private Dictionary<string, PluginObjectClass>? _speakerClassByName;
 
     public ChatFilter(IPluginHost host, SettingsManager settings)
     {
@@ -35,26 +48,26 @@ public sealed class ChatFilter
     {
         _registration?.Dispose();
         _registration = null;
+        _speakerClassByName = null;
     }
+
+    private bool NeedsSpeakerClassByName =>
+        _settings.VendorTells.Value || _settings.MonsterTell.Value || _settings.NpcChatter.Value;
 
     private bool ShouldSuppress(PluginChatMessage message)
     {
-        string text = message.Text;
-        if (string.IsNullOrEmpty(text))
+        if (string.IsNullOrEmpty(message.Text))
             return false;
 
         if (message.Kind == PluginChatMessage.StatusTextKind)
-            return SuppressStatusText(text);
+            return SuppressStatusText(message.Text);
 
-        // A per-message lookup cache: several rules below (VendorTells,
-        // MonsterTell, NpcChatter) resolve the same speaker name to a world
-        // object class, so this avoids repeating CaptureObjects() for each one
-        // while evaluating a single line.
-        var speakerClassCache = new Dictionary<string, PluginObjectClass>(
-            StringComparer.OrdinalIgnoreCase);
-        IReadOnlyList<PluginWorldObject>? objectsCache = null;
-
-        bool isChat = ChatClassifier.IsChat(text);
+        ChatLine line = ChatClassifier.Classify(
+            message,
+            _host.Automation,
+            NeedsSpeakerClassByName ? ResolveSpeakerClassByName : null);
+        string text = line.Message;
+        bool isChat = line.IsChat;
 
         if (_settings.AttackEvades.Value
             && !isChat && text.Contains(" evaded your attack.", StringComparison.Ordinal))
@@ -104,14 +117,10 @@ public sealed class ChatFilter
         if (_settings.MonsterDeaths.Value && CombatMessages.IsKilledByMeMessage(text))
             return true;
 
-        // Deliberately not gated on isChat: You say/X says IS chat, but the
-        // original matched the spell-casting shape directly.
-        if (_settings.SpellCastingMine.Value
-            && ChatClassifier.IsSpellCastingMessage(text, isMine: true, isPlayer: false))
+        if (_settings.SpellCastingMine.Value && line.IsSpellCast(mine: true, others: false))
             return true;
 
-        if (_settings.SpellCastingOthers.Value
-            && ChatClassifier.IsSpellCastingMessage(text, isMine: false))
+        if (_settings.SpellCastingOthers.Value && line.IsSpellCast(mine: false, others: true))
             return true;
 
         if (_settings.SpellCastFizzles.Value
@@ -182,12 +191,13 @@ public sealed class ChatFilter
 
         if (_settings.TradeBuffBotSpam.Value)
         {
-            if (ChatClassifier.IsChat(text, ChatClassifier.ChatFlags.PlayerSaysLocal)
-                && (text.TrimEnd().EndsWith("-t-\"", StringComparison.Ordinal)
-                    || text.TrimEnd().EndsWith("-b-\"", StringComparison.Ordinal)))
+            if (line.IsMine && isChat
+                && (text.TrimEnd().EndsWith("-t-", StringComparison.Ordinal)
+                    || text.TrimEnd().EndsWith("-b-", StringComparison.Ordinal)))
                 return true;
 
             if (!isChat
+                && line.Kind is ChatMessageKind.Emote or ChatMessageKind.SoulEmote
                 && (text.TrimEnd().EndsWith("-t-", StringComparison.Ordinal)
                     || text.TrimEnd().EndsWith("-b-", StringComparison.Ordinal)))
                 return true;
@@ -205,39 +215,39 @@ public sealed class ChatFilter
             return true;
 
         if (_settings.VendorTells.Value
-            && ChatClassifier.IsChat(text, ChatClassifier.ChatFlags.NpcTellsYou)
-            && ResolveSpeakerClass(ChatClassifier.GetSourceOfChat(text)) == PluginObjectClass.Vendor)
+            && line.Kind == ChatMessageKind.Tell && !line.IsMine
+            && line.SpeakerClass == PluginObjectClass.Vendor)
             return true;
 
         if (_settings.MonsterTell.Value
-            && ChatClassifier.IsChat(text, ChatClassifier.ChatFlags.NpcTellsYou)
-            && ResolveSpeakerClass(ChatClassifier.GetSourceOfChat(text)) == PluginObjectClass.Monster)
+            && line.Kind == ChatMessageKind.Tell && !line.IsMine
+            && line.SpeakerClass == PluginObjectClass.Monster)
             return true;
 
         if (_settings.NpcChatter.Value
-            && ChatClassifier.IsChat(text, ChatClassifier.ChatFlags.NpcSays)
-            && ResolveSpeakerClass(ChatClassifier.GetSourceOfChat(text)) == PluginObjectClass.Npc)
+            && line.Kind is ChatMessageKind.LocalSpeech or ChatMessageKind.RangedSpeech
+            && !line.IsMine
+            && line.SpeakerClass == PluginObjectClass.Npc)
             return true;
 
         if (_settings.MasterArbitratorSpam.Value || _settings.AllMasterArbitratorChat.Value)
         {
-            if (isChat && ChatClassifier.GetSourceOfChat(text) == "Master Arbitrator")
+            if (isChat && line.Source == "Master Arbitrator")
             {
                 if (_settings.MasterArbitratorSpam.Value)
                 {
-                    if (ChatClassifier.IsChat(text, ChatClassifier.ChatFlags.NpcTellsYou))
+                    if (line.Kind == ChatMessageKind.Tell && !line.IsMine)
                     {
-                        if (text.Contains("\"You shall be known", StringComparison.Ordinal)
-                            || text.Contains("\"Take this knowledge", StringComparison.Ordinal)
-                            || text.Contains("\"Use the the key", StringComparison.Ordinal))
+                        if (text.Contains("You shall be known", StringComparison.Ordinal)
+                            || text.Contains("Take this knowledge", StringComparison.Ordinal)
+                            || text.Contains("Use the the key", StringComparison.Ordinal))
                             return true;
                     }
-                    else if (ChatClassifier.IsChat(
-                        text, ChatClassifier.ChatFlags.PlayerSaysChannel))
+                    else if (line.Kind == ChatMessageKind.Channel)
                     {
-                        if (text.Contains("\"Your fellowship", StringComparison.Ordinal)
-                            || text.Contains("\"Use one of the", StringComparison.Ordinal)
-                            || text.Contains("\"Don't forget", StringComparison.Ordinal))
+                        if (text.Contains("Your fellowship", StringComparison.Ordinal)
+                            || text.Contains("Use one of the", StringComparison.Ordinal)
+                            || text.Contains("Don't forget", StringComparison.Ordinal))
                             return true;
                     }
                 }
@@ -253,25 +263,6 @@ public sealed class ChatFilter
         }
 
         return false;
-
-        PluginObjectClass? ResolveSpeakerClass(string name)
-        {
-            if (string.IsNullOrEmpty(name))
-                return null;
-            if (speakerClassCache.TryGetValue(name, out PluginObjectClass cached))
-                return cached;
-
-            objectsCache ??= _host.Automation.Objects.CaptureObjects();
-            foreach (PluginWorldObject candidate in objectsCache)
-            {
-                if (!string.Equals(candidate.Name, name, StringComparison.OrdinalIgnoreCase))
-                    continue;
-                speakerClassCache[name] = candidate.ObjectClass;
-                return candidate.ObjectClass;
-            }
-
-            return null;
-        }
     }
 
     private bool SuppressStatusText(string text)
@@ -290,5 +281,29 @@ public sealed class ChatFilter
             return true;
 
         return false;
+    }
+
+    /// <summary>
+    /// Fallback speaker-class lookup for a line whose <c>SenderObjectId</c>
+    /// is 0 (a legacy/self-sent shape). Built once, on first miss, from
+    /// <see cref="IWorldObjectAutomation.CaptureObjects"/> and kept for the
+    /// filter's lifetime — a bulk build costs at most once per session
+    /// instead of once per chat line, since <see cref="Enable"/> only wires
+    /// this in when a class-based rule is actually on.
+    /// </summary>
+    private PluginObjectClass? ResolveSpeakerClassByName(string name)
+    {
+        _speakerClassByName ??= BuildSpeakerClassByName();
+        return _speakerClassByName.TryGetValue(name, out PluginObjectClass found)
+            ? found
+            : null;
+    }
+
+    private Dictionary<string, PluginObjectClass> BuildSpeakerClassByName()
+    {
+        var byName = new Dictionary<string, PluginObjectClass>(StringComparer.OrdinalIgnoreCase);
+        foreach (PluginWorldObject candidate in _host.Automation.Objects.CaptureObjects())
+            byName.TryAdd(candidate.Name, candidate.ObjectClass);
+        return byName;
     }
 }

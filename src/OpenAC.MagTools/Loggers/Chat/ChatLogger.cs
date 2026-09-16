@@ -100,6 +100,14 @@ public sealed class ChatLogger
 
     private void Import()
     {
+        // Nothing is ever written to storage while persistence is off (see
+        // Flush()), so reading it here would only ever replay whatever was
+        // left over from a session where it was still on — stale history the
+        // user has since turned off, not "recent" by any definition they'd
+        // recognize.
+        if (!_settings.ChatLogger.Persistent.Value)
+            return;
+
         if (string.IsNullOrEmpty(_character))
             return;
 
@@ -112,7 +120,7 @@ public sealed class ChatLogger
 
     private void OnReceived(PluginChatMessage message)
     {
-        if (!TryClassify(message.Text, out ChatClassifier.ChatChannels type))
+        if (!TryClassify(message, _host.Automation, out ChatClassifier.ChatChannels type))
             return;
 
         var entry = new LoggedChatEntry(message.Received, type, message.Text);
@@ -132,7 +140,10 @@ public sealed class ChatLogger
     {
         if (!_settings.ChatLogger.Persistent.Value)
         {
-            _fileStore.Discard();
+            // Leave whatever is pending alone rather than discarding it: it
+            // was enqueued while Persistent was on (OnReceived gates
+            // Enqueue() the same way), so a mid-session toggle-off-then-on
+            // still writes it out on the next flush instead of losing it.
             return;
         }
 
@@ -144,47 +155,36 @@ public sealed class ChatLogger
 
     /// <summary>
     /// Port of the original's <c>ChatLogger.Current_ChatBoxMessage</c>
-    /// classification: NPC says/tells and spell-casting echoes are dropped
-    /// outright, tells and local/channel speech are tagged, and everything
-    /// else (system text, combat lines, etc.) is not logged at all.
+    /// classification, now read from the message's structured fields via
+    /// <see cref="ChatClassifier.Classify"/> instead of retail's composed
+    /// text: NPC says/tells and spell-casting echoes are dropped outright,
+    /// tells and local/channel speech are tagged, and everything else
+    /// (system text, combat lines, etc.) is not logged at all.
     /// </summary>
-    internal static bool TryClassify(string? text, out ChatClassifier.ChatChannels type)
+    internal static bool TryClassify(
+        PluginChatMessage message,
+        IAutomationSurface automation,
+        out ChatClassifier.ChatChannels type)
     {
         type = ChatClassifier.ChatChannels.None;
-        if (string.IsNullOrEmpty(text))
+        if (string.IsNullOrEmpty(message.Text))
             return false;
 
-        if (ChatClassifier.IsChat(
-                text, ChatClassifier.ChatFlags.NpcSays | ChatClassifier.ChatFlags.NpcTellsYou))
+        ChatClassifier.ChatLine line = ChatClassifier.Classify(message, automation);
+
+        if (!line.IsChat)
             return false;
 
-        if (ChatClassifier.IsSpellCastingMessage(text))
+        if (line.IsNpc)
             return false;
 
-        if (ChatClassifier.IsChat(
-                text, ChatClassifier.ChatFlags.PlayerTellsYou | ChatClassifier.ChatFlags.YouTell))
-        {
-            type = ChatClassifier.ChatChannels.Tells;
-            return true;
-        }
+        if (line.IsSpellCast(mine: true, others: true))
+            return false;
 
-        if (ChatClassifier.IsChat(
-                text, ChatClassifier.ChatFlags.PlayerSaysLocal | ChatClassifier.ChatFlags.YouSay))
-        {
-            type = ChatClassifier.ChatChannels.Area;
-            return true;
-        }
+        if (line.Channel == ChatClassifier.ChatChannels.None)
+            return false;
 
-        if (ChatClassifier.IsChat(text, ChatClassifier.ChatFlags.PlayerSaysChannel))
-        {
-            ChatClassifier.ChatChannels channel = ChatClassifier.GetChatChannel(text);
-            if (channel == ChatClassifier.ChatChannels.None)
-                return false;
-
-            type = channel;
-            return true;
-        }
-
-        return false;
+        type = line.Channel;
+        return true;
     }
 }

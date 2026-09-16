@@ -114,10 +114,11 @@ public sealed class RecordingChat : IPluginChat
         string sender = "",
         string channelName = "",
         int logTextType = 0,
-        int combatKind = 0)
+        int combatKind = 0,
+        uint senderObjectId = 0u)
     {
         var message = new PluginChatMessage(
-            _nextSequence++, 0u, kind, sender, text, channelName)
+            _nextSequence++, senderObjectId, kind, sender, text, channelName)
         {
             LogTextType = logTextType,
             CombatKind = combatKind,

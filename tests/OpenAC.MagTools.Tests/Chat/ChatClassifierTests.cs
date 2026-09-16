@@ -2,6 +2,13 @@ using OpenAC.MagTools.Chat;
 
 namespace OpenAC.MagTools.Tests.Chat;
 
+/// <summary>
+/// Coverage for the legacy composed-text regex API — reserved for a
+/// hand-authored legacy import file and the rare System-shaped fallback in
+/// <see cref="ChatClassifier.Classify"/> (see its remarks). Production
+/// classification off the host's structured fields is
+/// <see cref="ChatClassifierClassifyTests"/>.
+/// </summary>
 public sealed class ChatClassifierTests
 {
     [Theory]

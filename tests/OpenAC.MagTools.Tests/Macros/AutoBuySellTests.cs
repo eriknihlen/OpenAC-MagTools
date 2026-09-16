@@ -1,0 +1,209 @@
+using AcDream.Plugin.Abstractions;
+using OpenAC.MagTools.ItemInfo;
+using OpenAC.MagTools.Macros;
+using OpenAC.MagTools.Settings;
+using OpenAC.MagTools.Tests.Fakes;
+using Xunit;
+
+namespace OpenAC.MagTools.Tests.Macros;
+
+public sealed class AutoBuySellTests
+{
+    private static (FakeHost Host, AutoBuySell Macro, OpenAC.MagTools.TickScheduler Scheduler) Build()
+    {
+        var host = new FakeHost();
+        host.LootClassifiers.Available.Add(new PluginLootClassifierInfo("plugin/moss-tank", "MossTank"));
+        var lootRules = new LootRuleProcessor(host.LootClassifiers);
+        var settings = new AutoBuySellSettings(new SettingsFile(host.Storage));
+        var chat = new ChatOutput(host);
+        var scheduler = new OpenAC.MagTools.TickScheduler(host.Events, chat);
+        var macro = new AutoBuySell(host, chat, settings, lootRules);
+        macro.Start(scheduler);
+        return (host, macro, scheduler);
+    }
+
+    private static PluginLootClassification KeepUpTo(int keepCount, string ruleName = "keep")
+        => new(Matched: true, Action: PluginLootAction.KeepUpTo, RuleName: ruleName, KeepCount: keepCount);
+
+    private static PluginLootClassification Keep(string ruleName = "keep")
+        => new(Matched: true, Action: PluginLootAction.Keep, RuleName: ruleName);
+
+    private static PluginLootClassification Sell(string ruleName = "sell")
+        => new(Matched: true, Action: PluginLootAction.Sell, RuleName: ruleName);
+
+    [Fact]
+    public void KeepUpToBuysOnlyTheShortfallClampedTo5000()
+    {
+        (FakeHost host, _, OpenAC.MagTools.TickScheduler scheduler) = Build();
+        host.Automation.Vendor.Items.Add(
+            new PluginVendorItem(1u, 100u, "Peerless Mana Potion", PluginObjectClass.Food, 10, 1));
+        host.Automation.Items.Owned.Add(FakeItems.Item(2u, "Peerless Mana Potion"));
+
+        host.LootClassifiers.ProfileClassifyHandler = (profile, context)
+            => context.Item.Name == "Peerless Mana Potion" && profile == "Fred"
+                ? KeepUpTo(9999)
+                : null;
+
+        host.Automation.Objects.Objects.Add(FakeObjects.Landscape(9u, "Fred", PluginObjectClass.Vendor, 0));
+        host.Automation.Vendor.RaiseOpened(9u);
+        scheduler.Tick(0.1);
+
+        // Owned count is 1, KeepCount is 9999 -> shortfall 9998, clamped to 5000.
+        Assert.Contains(("addbuy:1:5000"), host.Automation.Vendor.Calls);
+        Assert.Contains("buyall", host.Automation.Vendor.Calls);
+    }
+
+    [Fact]
+    public void PlainKeepBuysTheMaxClampAmount()
+    {
+        (FakeHost host, _, OpenAC.MagTools.TickScheduler scheduler) = Build();
+        host.Automation.Vendor.Items.Add(
+            new PluginVendorItem(1u, 100u, "Prismatic Taper", PluginObjectClass.Food, 10, 1));
+
+        host.LootClassifiers.ProfileClassifyHandler = (_, context)
+            => context.Item.Name == "Prismatic Taper" ? Keep() : null;
+
+        host.Automation.Objects.Objects.Add(FakeObjects.Landscape(9u, "Fred", PluginObjectClass.Vendor, 0));
+        host.Automation.Vendor.RaiseOpened(9u);
+        scheduler.Tick(0.1);
+
+        Assert.Contains("addbuy:1:5000", host.Automation.Vendor.Calls);
+    }
+
+    [Fact]
+    public void KeepUpToIsSkippedOnceOwnedCountMeetsTheThreshold()
+    {
+        (FakeHost host, _, OpenAC.MagTools.TickScheduler scheduler) = Build();
+        host.Automation.Vendor.Items.Add(
+            new PluginVendorItem(1u, 100u, "Peerless Mana Potion", PluginObjectClass.Food, 10, 1));
+        host.Automation.Items.Owned.Add(FakeItems.Item(2u, "Peerless Mana Potion"));
+        host.Automation.Items.Owned.Add(FakeItems.Item(3u, "Rusty Shortsword"));
+
+        host.LootClassifiers.ProfileClassifyHandler = (_, context) => context.Item.Name switch
+        {
+            "Peerless Mana Potion" => KeepUpTo(1),
+            "Rusty Shortsword" => Sell(),
+            _ => null,
+        };
+
+        host.Automation.Objects.Objects.Add(FakeObjects.Landscape(9u, "Fred", PluginObjectClass.Vendor, 0));
+        host.Automation.Vendor.RaiseOpened(9u);
+        scheduler.Tick(0.1);
+
+        Assert.DoesNotContain(host.Automation.Vendor.Calls, call => call.StartsWith("addbuy", StringComparison.Ordinal));
+        Assert.Contains(host.ChatLines, line => line.Contains("Nothing to Buy", StringComparison.Ordinal));
+        Assert.Contains("addsell:3", host.Automation.Vendor.Calls);
+    }
+
+    [Fact]
+    public void SellPrefersTheFirstPlainItemOverCheaperComponentsAndTradeNotes()
+    {
+        (FakeHost host, _, OpenAC.MagTools.TickScheduler scheduler) = Build();
+
+        PluginInventoryItem plain = FakeItems.Item(1u, "Rusty Shortsword") with { Value = 1000 };
+        PluginInventoryItem cheapComponent = new PluginInventoryItem(
+            2u, 0u, "Blue Snowberry", 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u,
+            1, 0, 0, 0u, 0, 0, 0u, false, 0d, 0, 0, 0, 0d, 0, 0, 0)
+        {
+            ObjectClass = PluginObjectClass.SpellComponent,
+            Value = 1,
+        };
+        host.Automation.Items.Owned.Add(cheapComponent);
+        host.Automation.Items.Owned.Add(plain);
+
+        host.LootClassifiers.ProfileClassifyHandler = (_, __) => Sell();
+
+        host.Automation.Objects.Objects.Add(FakeObjects.Landscape(9u, "Fred", PluginObjectClass.Vendor, 0));
+        host.Automation.Vendor.RaiseOpened(9u);
+        scheduler.Tick(0.1);
+
+        // Buy is empty (no vendor items configured) so the loop goes straight to sell.
+        Assert.Contains("addsell:1", host.Automation.Vendor.Calls);
+    }
+
+    [Fact]
+    public void SellFallsBackToCheapestNonNoteWhenNoPlainItemMatches()
+    {
+        (FakeHost host, _, OpenAC.MagTools.TickScheduler scheduler) = Build();
+
+        PluginInventoryItem expensiveComponent = new(
+            1u, 0u, "Aquamarine", 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u,
+            1, 0, 0, 0u, 0, 0, 0u, false, 0d, 0, 0, 0, 0d, 0, 0, 0)
+        {
+            ObjectClass = PluginObjectClass.SpellComponent,
+            Value = 500,
+        };
+        PluginInventoryItem cheapComponent = new(
+            2u, 0u, "Blue Snowberry", 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u,
+            1, 0, 0, 0u, 0, 0, 0u, false, 0d, 0, 0, 0, 0d, 0, 0, 0)
+        {
+            ObjectClass = PluginObjectClass.SpellComponent,
+            Value = 1,
+        };
+        host.Automation.Items.Owned.Add(expensiveComponent);
+        host.Automation.Items.Owned.Add(cheapComponent);
+
+        host.LootClassifiers.ProfileClassifyHandler = (_, __) => Sell();
+
+        host.Automation.Objects.Objects.Add(FakeObjects.Landscape(9u, "Fred", PluginObjectClass.Vendor, 0));
+        host.Automation.Vendor.RaiseOpened(9u);
+        scheduler.Tick(0.1);
+
+        Assert.Contains("addsell:2", host.Automation.Vendor.Calls);
+    }
+
+    [Fact]
+    public void RoundSequencesBuyThenSellAcrossTransactionCompletions()
+    {
+        (FakeHost host, _, OpenAC.MagTools.TickScheduler scheduler) = Build();
+        host.Automation.Vendor.Items.Add(
+            new PluginVendorItem(1u, 100u, "Prismatic Taper", PluginObjectClass.Food, 10, 1));
+        host.Automation.Items.Owned.Add(FakeItems.Item(2u, "Rusty Shortsword"));
+
+        host.LootClassifiers.ProfileClassifyHandler = (_, context) => context.Item.Name switch
+        {
+            "Prismatic Taper" => Keep(),
+            "Rusty Shortsword" => Sell(),
+            _ => null,
+        };
+
+        host.Automation.Objects.Objects.Add(FakeObjects.Landscape(9u, "Fred", PluginObjectClass.Vendor, 0));
+        host.Automation.Vendor.RaiseOpened(9u);
+        scheduler.Tick(0.1);
+
+        Assert.Contains("buyall", host.Automation.Vendor.Calls);
+        Assert.DoesNotContain("sellall", host.Automation.Vendor.Calls);
+
+        host.Automation.Vendor.RaiseTransactionCompleted(PluginVendorTransactionKind.Buy);
+        Assert.Contains("sellall", host.Automation.Vendor.Calls);
+    }
+
+    [Fact]
+    public void TestModeReportsWithoutTouchingTheWire()
+    {
+        var host = new FakeHost();
+        host.LootClassifiers.Available.Add(new PluginLootClassifierInfo("plugin/moss-tank", "MossTank"));
+        var lootRules = new LootRuleProcessor(host.LootClassifiers);
+        var settings = new AutoBuySellSettings(new SettingsFile(host.Storage));
+        settings.TestMode.Value = true;
+        var chat = new ChatOutput(host);
+        var scheduler = new OpenAC.MagTools.TickScheduler(host.Events, chat);
+        var macro = new AutoBuySell(host, chat, settings, lootRules);
+        macro.Start(scheduler);
+
+        host.Automation.Vendor.Items.Add(
+            new PluginVendorItem(1u, 100u, "Prismatic Taper", PluginObjectClass.Food, 10, 1));
+        host.LootClassifiers.ProfileClassifyHandler = (_, context)
+            => context.Item.Name == "Prismatic Taper" ? Keep() : null;
+
+        host.Automation.Objects.Objects.Add(FakeObjects.Landscape(9u, "Fred", PluginObjectClass.Vendor, 0));
+        host.Automation.Vendor.RaiseOpened(9u);
+
+        Assert.Contains(host.ChatLines, line => line.Contains("Buy Items:", StringComparison.Ordinal));
+        Assert.Contains(host.ChatLines, line => line.Contains("Prismatic Taper", StringComparison.Ordinal));
+        Assert.Empty(host.Automation.Vendor.Calls);
+
+        scheduler.Tick(0.1);
+        Assert.Empty(host.Automation.Vendor.Calls);
+    }
+}

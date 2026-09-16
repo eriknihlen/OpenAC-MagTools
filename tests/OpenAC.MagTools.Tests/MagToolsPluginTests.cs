@@ -185,4 +185,101 @@ public sealed class MagToolsPluginTests
             32,
             host.ChatLines.Count(line => line.Contains("Exception caught", StringComparison.Ordinal)));
     }
+
+    [Fact]
+    public void EnableRegistersThePackAndHealHotkeysWithTheirDefaultChords()
+    {
+        var host = new FakeHost { HasUi = false };
+        var plugin = new MagToolsPlugin();
+
+        plugin.Initialize(host);
+        plugin.Enable();
+
+        (string Id, string DisplayName, AcDream.Plugin.Abstractions.PluginKeyChord DefaultChord, Action Handler) pack =
+            Assert.Single(host.Hotkeys.Registrations, r => r.Id == "pack-inventory");
+        Assert.Equal("Pack Inventory", pack.DisplayName);
+        Assert.Equal(AcDream.Plugin.Abstractions.PluginKey.P, pack.DefaultChord.Key);
+        Assert.True(pack.DefaultChord.Ctrl);
+
+        (string Id, string DisplayName, AcDream.Plugin.Abstractions.PluginKeyChord DefaultChord, Action Handler) heal =
+            Assert.Single(host.Hotkeys.Registrations, r => r.Id == "one-touch-heal");
+        Assert.Equal("One Touch Heal", heal.DisplayName);
+        Assert.Equal(AcDream.Plugin.Abstractions.PluginKey.Unknown, heal.DefaultChord.Key);
+    }
+
+    [Fact]
+    public void DisableRevokesBothHotkeyRegistrations()
+    {
+        var host = new FakeHost { HasUi = false };
+        var plugin = new MagToolsPlugin();
+
+        plugin.Initialize(host);
+        plugin.Enable();
+
+        FakeHotkeyRegistration packHandle = host.Hotkeys.Handles["pack-inventory"];
+        FakeHotkeyRegistration healHandle = host.Hotkeys.Handles["one-touch-heal"];
+        Assert.False(packHandle.Disposed);
+        Assert.False(healHandle.Disposed);
+
+        plugin.Disable();
+
+        Assert.True(packHandle.Disposed);
+        Assert.True(healHandle.Disposed);
+    }
+
+    [Fact]
+    public void PackInventoryHotkeyStartsTheInventoryPackerWhenFired()
+    {
+        var host = new FakeHost { HasUi = false };
+        host.Automation.Character.Name = "Acdream";
+        host.LootClassifiers.Available.Add(
+            new AcDream.Plugin.Abstractions.PluginLootClassifierInfo("plugin/moss-tank", "MossTank"));
+        host.LootClassifiers.ProfileClassifyHandler = (profile, _)
+            => profile == "Default.AutoPack"
+                ? new AcDream.Plugin.Abstractions.PluginLootClassification(
+                    Matched: false, Action: AcDream.Plugin.Abstractions.PluginLootAction.NoLoot)
+                : null;
+        var plugin = new MagToolsPlugin();
+
+        plugin.Initialize(host);
+        plugin.Enable();
+        host.Events.RaiseLoginComplete();
+
+        host.Hotkeys.Fire("pack-inventory");
+
+        Assert.Contains(host.ChatLines, line => line.Contains("Auto Pack - Started.", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void OneTouchHealHotkeyAppliesAKitWhenFired()
+    {
+        var host = new FakeHost { HasUi = false };
+        host.Automation.Character.ObjectId = 999u;
+        host.Automation.Character.MaxHealth = 100;
+        host.Automation.Character.CurrentHealth = 50;
+        host.Automation.Character.Skills.Add(new AcDream.Plugin.Abstractions.PluginSkillInfo(
+            OpenAC.MagTools.Macros.OneTouchHeal.HealingSkillId,
+            "Healing",
+            AcDream.Plugin.Abstractions.PluginSkillTraining.Trained,
+            300));
+        host.Automation.Items.Owned.Add(new AcDream.Plugin.Abstractions.PluginInventoryItem(
+            1u, 0u, "Kit", 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u,
+            1, 1, 1, 0u, 0, 0, 0u, false, 0d, 0, 0, 0, 0d, 0, 0, 0)
+        {
+            ObjectClass = AcDream.Plugin.Abstractions.PluginObjectClass.HealingKit,
+        });
+        host.Automation.Objects.Objects.Add(new AcDream.Plugin.Abstractions.PluginWorldObject(
+            1u, 0u, "Kit", AcDream.Plugin.Abstractions.PluginObjectClass.HealingKit, 0u, 0u, 0u)
+        {
+            HasAppraisalData = true,
+        });
+        var plugin = new MagToolsPlugin();
+
+        plugin.Initialize(host);
+        plugin.Enable();
+
+        host.Hotkeys.Fire("one-touch-heal");
+
+        Assert.Contains(("apply", 1u, 999u), host.Automation.Items.Calls);
+    }
 }

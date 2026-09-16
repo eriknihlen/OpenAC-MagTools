@@ -149,4 +149,92 @@ public sealed class LootRuleProcessorTests
 
         Assert.False(processor.NeedsIdentification(EmptyContext()));
     }
+
+    [Fact]
+    public void TryClassifyLiveReturnsTheRawClassificationWhenMatched()
+    {
+        var registry = new FakeLootClassifierRegistry();
+        registry.Available.Add(new PluginLootClassifierInfo("engine", "Engine"));
+        registry.ClassificationResult = new PluginLootClassification(
+            Matched: true, Action: PluginLootAction.KeepUpTo, RuleName: "arrows", KeepCount: 200);
+        var processor = new LootRuleProcessor(registry);
+
+        Assert.True(processor.TryClassifyLive(EmptyContext(), out PluginLootClassification classification));
+        Assert.Equal(PluginLootAction.KeepUpTo, classification.Action);
+        Assert.Equal(200, classification.KeepCount);
+    }
+
+    [Fact]
+    public void TryClassifyLiveFailsWhenNotMatched()
+    {
+        var registry = new FakeLootClassifierRegistry();
+        registry.Available.Add(new PluginLootClassifierInfo("engine", "Engine"));
+        registry.ClassificationResult = new PluginLootClassification(Matched: false, Action: PluginLootAction.NoLoot);
+        var processor = new LootRuleProcessor(registry);
+
+        Assert.False(processor.TryClassifyLive(EmptyContext(), out _));
+    }
+
+    [Fact]
+    public void TryClassifyLiveFailsWithNoClassifier()
+    {
+        var registry = new FakeLootClassifierRegistry();
+        var processor = new LootRuleProcessor(registry);
+
+        Assert.False(processor.TryClassifyLive(EmptyContext(), out _));
+    }
+
+    [Fact]
+    public void TryClassifyWithProfileForwardsTheProfileNameToTheRegistry()
+    {
+        var registry = new FakeLootClassifierRegistry();
+        registry.Available.Add(new PluginLootClassifierInfo("engine", "Engine"));
+        registry.ProfileClassifyHandler = (profile, _)
+            => profile == "Vendor"
+                ? new PluginLootClassification(Matched: true, Action: PluginLootAction.Keep)
+                : null;
+        var processor = new LootRuleProcessor(registry);
+
+        Assert.True(processor.TryClassifyWithProfile("Vendor", EmptyContext(), out PluginLootClassification classification));
+        Assert.Equal(PluginLootAction.Keep, classification.Action);
+        Assert.False(processor.TryClassifyWithProfile("Trader", EmptyContext(), out _));
+    }
+
+    [Fact]
+    public void ProfileExistsIsTrueWhenTheRegistryFindsTheNamedProfileRegardlessOfMatch()
+    {
+        var registry = new FakeLootClassifierRegistry();
+        registry.Available.Add(new PluginLootClassifierInfo("engine", "Engine"));
+        registry.ProfileClassifyHandler = (profile, _)
+            => profile == "Vendor"
+                ? new PluginLootClassification(Matched: false, Action: PluginLootAction.NoLoot)
+                : null;
+        var processor = new LootRuleProcessor(registry);
+
+        Assert.True(processor.ProfileExists("Vendor"));
+        Assert.False(processor.ProfileExists("Trader"));
+    }
+
+    [Fact]
+    public void ProfileExistsIsFalseWithNoClassifier()
+    {
+        var registry = new FakeLootClassifierRegistry();
+        var processor = new LootRuleProcessor(registry);
+
+        Assert.False(processor.ProfileExists("Vendor"));
+    }
+
+    [Fact]
+    public void BuildMinimalItemCarriesTheNameClassStackAndValue()
+    {
+        PluginInventoryItem item = LootRuleProcessor.BuildMinimalItem(
+            7u, 700u, "Peerless Mana Potion", PluginObjectClass.Food, stackSize: 3, value: 25);
+
+        Assert.Equal(7u, item.ObjectId);
+        Assert.Equal(700u, item.WeenieClassId);
+        Assert.Equal("Peerless Mana Potion", item.Name);
+        Assert.Equal(PluginObjectClass.Food, item.ObjectClass);
+        Assert.Equal(3, item.StackSize);
+        Assert.Equal(25, item.Value);
+    }
 }

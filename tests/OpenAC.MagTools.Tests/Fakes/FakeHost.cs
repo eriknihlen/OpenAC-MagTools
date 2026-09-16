@@ -90,6 +90,24 @@ public sealed class FakeLootClassifierRegistry : IPluginLootClassifierRegistry
     /// <summary>What <see cref="TryClassifyWithProfile"/> returns for any classifier id.</summary>
     public PluginLootClassification? ProfileClassificationResult { get; set; }
 
+    /// <summary>
+    /// When set, overrides <see cref="ClassificationResult"/> with a
+    /// per-context verdict — for a test that needs different items to
+    /// classify differently. Returning null from the function means "no
+    /// match" (mirrors the live registry's <c>false</c> return).
+    /// </summary>
+    public Func<PluginLootClassificationContext, PluginLootClassification?>? ClassifyHandler { get; set; }
+
+    /// <summary>
+    /// When set, overrides <see cref="ProfileClassificationResult"/> with a
+    /// per-profile, per-context verdict. Returning null means "no profile,
+    /// or no match" (both collapse to the registry's <c>false</c>).
+    /// </summary>
+    public Func<string, PluginLootClassificationContext, PluginLootClassification?>? ProfileClassifyHandler { get; set; }
+
+    /// <summary>Every profile name ever probed/classified via <see cref="TryClassifyWithProfile"/>.</summary>
+    public List<string> ProfileNamesSeen { get; } = [];
+
     public List<string> ClassifyCalls { get; } = [];
 
     IReadOnlyList<PluginLootClassifierInfo> IPluginLootClassifierRegistry.Available => Available;
@@ -100,9 +118,23 @@ public sealed class FakeLootClassifierRegistry : IPluginLootClassifierRegistry
         out PluginLootClassification classification)
     {
         ClassifyCalls.Add(classifierId);
-        if (ClassificationResult is { } result)
+
+        if (ClassifyHandler is { } handler)
         {
-            classification = result;
+            PluginLootClassification? result = handler(context);
+            if (result is { } found)
+            {
+                classification = found;
+                return true;
+            }
+
+            classification = default;
+            return false;
+        }
+
+        if (ClassificationResult is { } fixedResult)
+        {
+            classification = fixedResult;
             return true;
         }
 
@@ -121,9 +153,24 @@ public sealed class FakeLootClassifierRegistry : IPluginLootClassifierRegistry
         in PluginLootClassificationContext context,
         out PluginLootClassification classification)
     {
-        if (ProfileClassificationResult is { } result)
+        ProfileNamesSeen.Add(profileName);
+
+        if (ProfileClassifyHandler is { } handler)
         {
-            classification = result;
+            PluginLootClassification? result = handler(profileName, context);
+            if (result is { } found)
+            {
+                classification = found;
+                return true;
+            }
+
+            classification = default;
+            return false;
+        }
+
+        if (ProfileClassificationResult is { } fixedResult)
+        {
+            classification = fixedResult;
             return true;
         }
 
@@ -137,6 +184,9 @@ public sealed class FakeHotkeyRegistry : IHotkeyRegistry
 {
     public List<(string Id, string DisplayName, PluginKeyChord DefaultChord, Action Handler)> Registrations { get; } = [];
 
+    /// <summary>The most recently returned handle for each id, so a test can assert on its Disposed/IsBound state.</summary>
+    public Dictionary<string, FakeHotkeyRegistration> Handles { get; } = new(StringComparer.Ordinal);
+
     public IPluginHotkeyRegistration Register(
         string id,
         string displayName,
@@ -144,7 +194,9 @@ public sealed class FakeHotkeyRegistry : IHotkeyRegistry
         Action handler)
     {
         Registrations.Add((id, displayName, defaultChord, handler));
-        return new FakeHotkeyRegistration(defaultChord);
+        var registration = new FakeHotkeyRegistration(defaultChord);
+        Handles[id] = registration;
+        return registration;
     }
 
     /// <summary>Invokes the handler registered under <paramref name="id"/>, as if the chord had just fired.</summary>

@@ -575,6 +575,33 @@ public sealed class FakeItems : IItemAutomation
         return new PluginItemCommandResult(PluginItemCommandStatus.Started);
     }
 
+    /// <summary>Every <see cref="MoveToContainer"/> call, in order.</summary>
+    public List<(uint ObjectId, uint ContainerObjectId, uint Amount, int Placement)> Moves { get; } = [];
+
+    /// <summary>Every <see cref="Merge"/> call, in order.</summary>
+    public List<(uint SourceObjectId, uint TargetObjectId, uint Amount)> Merges { get; } = [];
+
+    public PluginItemCommandResult MoveToContainer(
+        uint objectId,
+        uint containerObjectId,
+        uint amount = 0u,
+        int placement = 0)
+    {
+        Calls.Add(("move", objectId, containerObjectId));
+        Moves.Add((objectId, containerObjectId, amount, placement));
+        return new PluginItemCommandResult(PluginItemCommandStatus.Started);
+    }
+
+    public PluginItemCommandResult Merge(
+        uint sourceObjectId,
+        uint targetObjectId,
+        uint amount = 0u)
+    {
+        Calls.Add(("merge", sourceObjectId, targetObjectId));
+        Merges.Add((sourceObjectId, targetObjectId, amount));
+        return new PluginItemCommandResult(PluginItemCommandStatus.Started);
+    }
+
     /// <summary>Builds a minimal owned item for a test.</summary>
     public static PluginInventoryItem Item(
         uint objectId,

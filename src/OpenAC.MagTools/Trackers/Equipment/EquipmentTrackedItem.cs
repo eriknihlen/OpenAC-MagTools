@@ -1,0 +1,234 @@
+using AcDream.Plugin.Abstractions;
+
+namespace OpenAC.MagTools.Trackers.Equipment;
+
+/// <summary>Port of the original's <c>EquipmentTrackedItemState</c>.</summary>
+public enum EquipmentTrackedItemState
+{
+    Unknown,
+    NotActivatable,
+    Active,
+    NotActive,
+}
+
+/// <summary>
+/// One equipped item's mana/burn bookkeeping, ported from the original's
+/// <c>EquipmentTrackedItem</c>. Every derived number
+/// (<see cref="CalculatedCurrentMana"/>, <see cref="ManaTimeRemaining"/>,
+/// <see cref="State"/>, …) is computed on demand from the raw stored state
+/// rather than cached and invalidated, which sidesteps a whole class of
+/// "forgot to recompute" bugs the original's field-caching approach was
+/// exposed to — see docs/deviations.md.
+/// </summary>
+public sealed class EquipmentTrackedItem
+{
+    public EquipmentTrackedItem(uint objectId)
+    {
+        ObjectId = objectId;
+    }
+
+    public uint ObjectId { get; }
+
+    /// <summary>The most recent owned-item snapshot for this object (mana/value fields).</summary>
+    public PluginInventoryItem Item { get; private set; }
+
+    /// <summary>
+    /// The matching <see cref="PluginWorldObject"/> snapshot, which is where
+    /// the host puts <c>SpellIds</c>/<c>ActiveSpellIds</c> (a
+    /// <see cref="PluginInventoryItem"/> only carries
+    /// <see cref="PluginInventoryItem.AppraisedSpellIds"/>, the appraisal-panel
+    /// list, not the split "carried vs currently active" pair the original's
+    /// activation-state math needs) — see docs/deviations.md.
+    /// </summary>
+    public PluginWorldObject World { get; private set; }
+
+    public bool HasIdData { get; private set; }
+
+    /// <summary>Raw ACE <c>ManaRate</c> float (property id 5), usually negative.</summary>
+    public double? ManaRateOfChange { get; private set; }
+
+    /// <summary>ACE <c>Retained</c> bool (property id 91).</summary>
+    public bool? Retained { get; private set; }
+
+    /// <summary>
+    /// The original's <c>timeOfLastManaIdent</c> — updated on BOTH an ident
+    /// completing and a bare mana-value change (see <see cref="UpdateSnapshot"/>),
+    /// because a mana change alone does not re-run appraisal.
+    /// </summary>
+    public DateTime? LastManaIdentUtc { get; private set; }
+
+    /// <summary>
+    /// Applies a fresh owned-item snapshot (from a <c>CreateObject</c>/
+    /// <c>ChangeObject</c>-equivalent resync). If the item's current mana
+    /// differs from what we last saw, this counts as a "ManaChange" for
+    /// <see cref="LastManaIdentUtc"/> purposes, exactly like the original.
+    /// </summary>
+    public void UpdateSnapshot(PluginInventoryItem item, PluginWorldObject world, DateTime nowUtc)
+    {
+        bool firstSnapshot = !_hasSnapshot;
+        if (!firstSnapshot && item.ItemCurrentMana != Item.ItemCurrentMana)
+            LastManaIdentUtc = nowUtc;
+
+        Item = item;
+        World = world;
+        _hasSnapshot = true;
+    }
+
+    private bool _hasSnapshot;
+
+    /// <summary>Applies fresh appraisal data (an <c>IdentReceived</c> event).</summary>
+    public void OnIdentReceived(PluginItemProperties properties, DateTime nowUtc)
+    {
+        HasIdData = true;
+        ManaRateOfChange = properties.Floats.TryGetValue(
+            (uint)ItemInfo.ItemModel.ManaRateOfChangeKey, out double rate)
+            ? rate
+            : null;
+        Retained = properties.Bools.TryGetValue(
+            (uint)ItemInfo.ItemModel.RetainedKey, out bool retained)
+            ? retained
+            : null;
+        LastManaIdentUtc = nowUtc;
+    }
+
+    /// <summary>
+    /// <c>ceil(-0.2 / ManaRateOfChange) * 5</c> — items burn mana on a
+    /// 5-second grid. Zero when there is no (negative) burn rate.
+    /// </summary>
+    public int SecondsPerBurn
+    {
+        get
+        {
+            if (ManaRateOfChange is not { } rate || rate >= 0d)
+                return 0;
+            return (int)Math.Ceiling(-0.2d / rate) * 5;
+        }
+    }
+
+    private double SecondsSinceLastManaIdent(DateTime nowUtc)
+        => LastManaIdentUtc is { } last ? Math.Max(0d, (nowUtc - last).TotalSeconds) : 0d;
+
+    /// <summary>
+    /// The activation state, computed per the original's rules: no id data →
+    /// Unknown; no spells or no max mana → NotActivatable; zero current mana →
+    /// NotActive; otherwise every non-offensive, non-debuff spell the item
+    /// carries (other than its own associated activation spell) must be
+    /// matched by an active-on-the-item or player-carried enchantment of the
+    /// same spell family at an equal-or-higher difficulty, or the item counts
+    /// as NotActive.
+    /// </summary>
+    public EquipmentTrackedItemState GetState(
+        ISpellCatalog spells, IReadOnlyList<PluginActiveEnchantment> playerEnchantments)
+    {
+        if (!HasIdData)
+            return EquipmentTrackedItemState.Unknown;
+
+        if (Item.SpellId == 0u && Item.ItemMaximumMana == 0)
+        {
+            // No associated activation spell recorded and no mana pool at
+            // all — matches the original's "SpellCount == 0 || MaximumMana
+            // == 0" gate closely enough for the case that matters (a plain
+            // non-activatable piece of gear). See docs/deviations.md: the
+            // host does not expose a separate "spell count" distinct from
+            // the carried-spell id list used below.
+            if (SpellIds.Count == 0)
+                return EquipmentTrackedItemState.NotActivatable;
+        }
+
+        if (Item.ItemMaximumMana == 0)
+            return EquipmentTrackedItemState.NotActivatable;
+
+        if (Item.ItemCurrentMana == 0)
+            return EquipmentTrackedItemState.NotActive;
+
+        // Player enchantments that are item-cast (duration-less/expired the
+        // instant they land) rather than a timed buff — the original's
+        // "TimeRemaining <= 0" filter.
+        List<PluginActiveEnchantment> itemCastPlayerEnchantments = [];
+        foreach (PluginActiveEnchantment enchantment in playerEnchantments)
+        {
+            if (enchantment.SecondsRemaining <= 0d)
+                itemCastPlayerEnchantments.Add(enchantment);
+        }
+
+        foreach (uint spellId in SpellIds)
+        {
+            if (spellId == Item.SpellId)
+                continue; // the item's own associated activation spell
+
+            if (!spells.TryGet(spellId, out PluginSpellInfo info))
+                continue; // can't evaluate an unknown spell; don't fail the item over it
+
+            if (info.IsDebuff || info.IsOffensive)
+                continue; // cast-on-strike spells don't gate the "is it running" state
+
+            bool satisfied = false;
+            foreach (uint activeSpellId in World.ActiveSpellIds)
+            {
+                if (spells.TryGet(activeSpellId, out PluginSpellInfo activeInfo)
+                    && activeInfo.Family == info.Family
+                    && activeInfo.Difficulty >= info.Difficulty)
+                {
+                    satisfied = true;
+                    break;
+                }
+            }
+
+            if (!satisfied)
+            {
+                foreach (PluginActiveEnchantment enchantment in itemCastPlayerEnchantments)
+                {
+                    if (enchantment.Family != info.Family)
+                        continue;
+                    if (spells.TryGet(enchantment.SpellId, out PluginSpellInfo enchantInfo)
+                        && enchantInfo.Difficulty >= info.Difficulty)
+                    {
+                        satisfied = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!satisfied)
+                return EquipmentTrackedItemState.NotActive;
+        }
+
+        return EquipmentTrackedItemState.Active;
+    }
+
+    /// <summary>The item's carried spells (the appraisal-panel "Item is imbued with" list).</summary>
+    private IReadOnlyList<uint> SpellIds => World.SpellIds;
+
+    public int CalculatedCurrentMana(DateTime nowUtc, EquipmentTrackedItemState state)
+    {
+        int secondsPerBurn = SecondsPerBurn;
+        if (state != EquipmentTrackedItemState.Active || secondsPerBurn <= 0)
+            return Item.ItemCurrentMana;
+
+        int burned = (int)Math.Floor(SecondsSinceLastManaIdent(nowUtc) / secondsPerBurn);
+        int calculated = Item.ItemCurrentMana - burned;
+        return Math.Clamp(calculated, 0, Item.ItemCurrentMana);
+    }
+
+    public int ManaNeededToRefill(DateTime nowUtc, EquipmentTrackedItemState state)
+        => Math.Max(Item.ItemMaximumMana - CalculatedCurrentMana(nowUtc, state), 0);
+
+    /// <summary>
+    /// <c>TimeSpan(99, 99, 0)</c> when Active with no burn rate (the original's
+    /// "effectively forever" sentinel — constructing it exactly the way the
+    /// original did lets <see cref="TimeSpan"/> normalize the out-of-range
+    /// minutes field itself), zero otherwise, and the calculated burn-down
+    /// time when Active with a real burn rate.
+    /// </summary>
+    public TimeSpan ManaTimeRemaining(DateTime nowUtc, EquipmentTrackedItemState state)
+    {
+        if (state != EquipmentTrackedItemState.Active)
+            return TimeSpan.Zero;
+
+        int secondsPerBurn = SecondsPerBurn;
+        if (secondsPerBurn <= 0)
+            return new TimeSpan(99, 99, 0);
+
+        return TimeSpan.FromSeconds(CalculatedCurrentMana(nowUtc, state) * (double)secondsPerBurn);
+    }
+}

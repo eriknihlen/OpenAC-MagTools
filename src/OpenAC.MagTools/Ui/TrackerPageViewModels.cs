@@ -1,6 +1,9 @@
 using AcDream.Plugin.Abstractions;
+using OpenAC.MagTools.Macros;
 using OpenAC.MagTools.Settings;
 using OpenAC.MagTools.Trackers.Combat;
+using OpenAC.MagTools.Trackers.Equipment;
+using OpenAC.MagTools.Trackers.Inventory;
 
 namespace OpenAC.MagTools.Ui;
 
@@ -24,27 +27,111 @@ public abstract class ListPageViewModel
     public Action<int> RowIconClicked { get; }
 }
 
-/// <summary>Trackers → Mana. TODO(P5): the equipment/mana tracker fills this.</summary>
+/// <summary>Trackers → Mana, filled by P5's <see cref="EquipmentTrackerHost"/>.</summary>
 public sealed class ManaPageViewModel : ListPageViewModel
 {
     private readonly Setting<bool> _autoRecharge;
+    private readonly EquipmentTrackerHost? _equipmentTrackerHost;
+    private readonly IPluginHost? _host;
+    private readonly TimeProvider _timeProvider;
 
-    public ManaPageViewModel(SettingsManager settings)
+    private uint[] _itemIcons = [];
+    private string[] _itemNames = [];
+    private uint[] _stateIcons = [];
+    private string[] _itemMana = [];
+    private string[] _itemTime = [];
+    private bool _dirty = true;
+    private Action? _onChanged;
+    private bool _subscribed;
+
+    public ManaPageViewModel(
+        SettingsManager settings,
+        EquipmentTrackerHost? equipmentTrackerHost = null,
+        IPluginHost? host = null,
+        TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
         _autoRecharge = settings.ManaManagement.AutoRecharge;
+        _equipmentTrackerHost = equipmentTrackerHost;
+        _host = host;
+        _timeProvider = timeProvider ?? TimeProvider.System;
         ToggleRecharge = () => _autoRecharge.Value = !_autoRecharge.Value;
+
+        Resubscribe();
     }
 
-    public IReadOnlyList<uint> ItemIcons { get; } = [];
-    public IReadOnlyList<string> ItemNames { get; } = [];
-    public IReadOnlyList<uint> StateIcons { get; } = [];
-    public IReadOnlyList<string> ItemMana { get; } = [];
-    public IReadOnlyList<string> ItemTime { get; } = [];
+    public void Dispose()
+    {
+        if (_equipmentTrackerHost is null || !_subscribed)
+            return;
+        _subscribed = false;
+        _equipmentTrackerHost.Tracker.Changed -= _onChanged!;
+    }
 
-    public string TotalText => "Mana needed: 0";
+    public void Resubscribe()
+    {
+        if (_equipmentTrackerHost is null || _subscribed)
+            return;
+        _subscribed = true;
+        _onChanged = () => _dirty = true;
+        _equipmentTrackerHost.Tracker.Changed += _onChanged;
+    }
 
-    public string UnretainedTotalText => "Unretained Items: 0";
+    private void RefreshIfDirty()
+    {
+        if (!_dirty || _equipmentTrackerHost is null || _host is null)
+            return;
+        _dirty = false;
+
+        IReadOnlyList<ManaTrackerRows.Row> rows = ManaTrackerRows.Build(
+            _equipmentTrackerHost.Tracker,
+            _host.Automation.Spells,
+            _host.Automation.Character.ActiveEnchantments,
+            _timeProvider);
+
+        int count = rows.Count;
+        _itemIcons = new uint[count];
+        _itemNames = new string[count];
+        _stateIcons = new uint[count];
+        _itemMana = new string[count];
+        _itemTime = new string[count];
+        for (int i = 0; i < count; i++)
+        {
+            ManaTrackerRows.Row row = rows[i];
+            _itemIcons[i] = row.ItemIcon;
+            _itemNames[i] = row.Name;
+            _stateIcons[i] = row.StateIcon;
+            _itemMana[i] = row.ManaText;
+            _itemTime[i] = row.TimeText;
+        }
+    }
+
+    public IReadOnlyList<uint> ItemIcons { get { RefreshIfDirty(); return _itemIcons; } }
+    public IReadOnlyList<string> ItemNames { get { RefreshIfDirty(); return _itemNames; } }
+    public IReadOnlyList<uint> StateIcons { get { RefreshIfDirty(); return _stateIcons; } }
+    public IReadOnlyList<string> ItemMana { get { RefreshIfDirty(); return _itemMana; } }
+    public IReadOnlyList<string> ItemTime { get { RefreshIfDirty(); return _itemTime; } }
+
+    public string TotalText
+    {
+        get
+        {
+            if (_equipmentTrackerHost is null || _host is null)
+                return "Mana needed: 0";
+            int needed = _equipmentTrackerHost.Tracker.ManaNeededToRefillItems(
+                _host.Automation.Spells, _host.Automation.Character.ActiveEnchantments);
+            return "Mana needed: " + needed.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+    }
+
+    public string UnretainedTotalText
+    {
+        get
+        {
+            int count = _equipmentTrackerHost?.Tracker.NumberOfUnretainedItems() ?? 0;
+            return "Unretained Items: " + count.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+    }
 
     public bool RechargeEnabled => _autoRecharge.Value;
 
@@ -373,15 +460,81 @@ public sealed class PlayerPageViewModel : ListPageViewModel
 }
 
 /// <summary>
-/// Trackers → Inv. Items. TODO(P5): the consumables and profit/loss trackers
-/// fill the profit block and the per-consumable rows.
+/// Trackers → Inv. Items, filled by P5's <see cref="InventoryTrackerHost"/>
+/// (the consumables and profit/loss trackers) through
+/// <see cref="InventoryTrackerRows"/>.
 /// </summary>
 public sealed class InventoryItemsPageViewModel : ListPageViewModel
 {
-    public IReadOnlyList<uint> Icons { get; } = [];
-    public IReadOnlyList<string> Names { get; } = [];
-    public IReadOnlyList<string> Counts { get; } = [];
-    public IReadOnlyList<string> Average5m { get; } = [];
-    public IReadOnlyList<string> Average1h { get; } = [];
-    public IReadOnlyList<string> Hours { get; } = [];
+    private readonly InventoryTrackerHost? _inventoryTrackerHost;
+
+    private uint[] _icons = [];
+    private string[] _names = [];
+    private string[] _counts = [];
+    private string[] _average5m = [];
+    private string[] _average1h = [];
+    private string[] _hours = [];
+    private bool _dirty = true;
+    private Action? _onConsumablesChanged;
+    private Action? _onProfitLossChanged;
+    private bool _subscribed;
+
+    public InventoryItemsPageViewModel(InventoryTrackerHost? inventoryTrackerHost = null)
+    {
+        _inventoryTrackerHost = inventoryTrackerHost;
+        Resubscribe();
+    }
+
+    public void Dispose()
+    {
+        if (_inventoryTrackerHost is null || !_subscribed)
+            return;
+        _subscribed = false;
+        _inventoryTrackerHost.Consumables.Changed -= _onConsumablesChanged!;
+        _inventoryTrackerHost.ProfitLoss.Changed -= _onProfitLossChanged!;
+    }
+
+    public void Resubscribe()
+    {
+        if (_inventoryTrackerHost is null || _subscribed)
+            return;
+        _subscribed = true;
+        _onConsumablesChanged = () => _dirty = true;
+        _onProfitLossChanged = () => _dirty = true;
+        _inventoryTrackerHost.Consumables.Changed += _onConsumablesChanged;
+        _inventoryTrackerHost.ProfitLoss.Changed += _onProfitLossChanged;
+    }
+
+    private void RefreshIfDirty()
+    {
+        if (!_dirty || _inventoryTrackerHost is null)
+            return;
+        _dirty = false;
+
+        IReadOnlyList<InventoryTrackerRows.Row> rows = InventoryTrackerRows.Build(_inventoryTrackerHost);
+        int count = rows.Count;
+        _icons = new uint[count];
+        _names = new string[count];
+        _counts = new string[count];
+        _average5m = new string[count];
+        _average1h = new string[count];
+        _hours = new string[count];
+        for (int i = 0; i < count; i++)
+        {
+            InventoryTrackerRows.Row row = rows[i];
+            _icons[i] = row.Icon;
+            _names[i] = row.Name;
+            _counts[i] = row.Count;
+            _average5m[i] = row.Average5m;
+            _average1h[i] = row.Average1h;
+            _hours[i] = row.Hours;
+        }
+    }
+
+    public IReadOnlyList<uint> Icons { get { RefreshIfDirty(); return _icons; } }
+    public IReadOnlyList<string> Names { get { RefreshIfDirty(); return _names; } }
+    public IReadOnlyList<string> Counts { get { RefreshIfDirty(); return _counts; } }
+    public IReadOnlyList<string> Average5m { get { RefreshIfDirty(); return _average5m; } }
+    public IReadOnlyList<string> Average1h { get { RefreshIfDirty(); return _average1h; } }
+    public IReadOnlyList<string> Hours { get { RefreshIfDirty(); return _hours; } }
 }

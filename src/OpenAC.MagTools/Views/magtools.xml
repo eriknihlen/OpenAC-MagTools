@@ -214,23 +214,21 @@
   </group>
 
   <!-- ======================= Trackers -> Inv. Items ======================= -->
+  <!-- Runtime-built layout (§4.1): rows 0-4 profit block, row 5 blank, row 6
+       consumables header, rows 7+ tracked consumables — all baked into the
+       row data by InventoryTrackerRows, not authored as separate labels. -->
   <group x="4" y="84" w="312" h="372" visible="{InventoryItemsVisible}"
          anchor="left top right bottom">
-    <label x="20" y="0" text="Name" />
-    <label x="102" y="0" text="Count" />
-    <label x="144" y="0" text="Avg/h ~5m" />
-    <label x="206" y="0" text="Avg/h ~1h" />
-    <label x="268" y="0" text="(Hrs)" />
-    <list x="0" y="18" w="312" h="354" rowheight="18" selectionband="true"
+    <list x="0" y="0" w="312" h="372" rowheight="18" selectionband="true"
           anchor="left top right bottom"
           selected="{InventoryItemSelectedRow}" onchange="{SelectInventoryItemRow}">
       <column type="icon" width="16" values="{InventoryItemIcons}"
               iconkind="did" onclick="{InventoryItemIconClicked}" />
-      <column type="text" width="80" items="{InventoryItemNames}" />
-      <column type="text" width="40" items="{InventoryItemCounts}" />
-      <column type="text" width="60" items="{InventoryItemAverage5m}" />
-      <column type="text" width="60" items="{InventoryItemAverage1h}" />
-      <column type="text" width="*" items="{InventoryItemHours}" />
+      <column type="text" width="55" items="{InventoryItemNames}" />
+      <column type="text" width="35" items="{InventoryItemCounts}" />
+      <column type="text" width="65" items="{InventoryItemAverage5m}" />
+      <column type="text" width="65" items="{InventoryItemAverage1h}" />
+      <column type="text" width="40" items="{InventoryItemHours}" />
     </list>
   </group>
 

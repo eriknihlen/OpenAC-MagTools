@@ -127,6 +127,19 @@ public sealed class ItemModel
     public const int ActivationReqSkillIdKey = 176;
 
     /// <summary>
+    /// ACE's <c>ManaRate</c> float (5) — the original's Decal
+    /// <c>DoubleValueKey.ManaRateOfChange</c>. Used by the equipment/mana
+    /// tracker's burn-rate math (§2.4 of the port design).
+    /// </summary>
+    public const int ManaRateOfChangeKey = 5;
+
+    /// <summary>
+    /// ACE's <c>Retained</c> bool (91), used by the equipment tracker's
+    /// "unretained items" aggregate.
+    /// </summary>
+    public const int RetainedKey = 91;
+
+    /// <summary>
     /// The activation skill LEVEL (segment 21). Confirmed as ACE's
     /// <c>ItemSkillLevelLimit</c> (115).
     /// </summary>

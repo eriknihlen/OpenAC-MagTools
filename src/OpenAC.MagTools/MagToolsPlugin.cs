@@ -3,8 +3,11 @@ using OpenAC.MagTools.Chat;
 using OpenAC.MagTools.Commands;
 using OpenAC.MagTools.Inventory;
 using OpenAC.MagTools.ItemInfo;
+using OpenAC.MagTools.Macros;
 using OpenAC.MagTools.Settings;
 using OpenAC.MagTools.Trackers.Combat;
+using OpenAC.MagTools.Trackers.Equipment;
+using OpenAC.MagTools.Trackers.Inventory;
 using OpenAC.MagTools.Ui;
 
 namespace OpenAC.MagTools;
@@ -29,6 +32,10 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
     private ChatClassificationDispatcher? _chatDispatcher;
     private Loggers.Chat.ChatLogger? _chatLogger;
     private CombatTrackerHost? _combatTrackerHost;
+    private EquipmentTrackerHost? _equipmentTrackerHost;
+    private InventoryTrackerHost? _inventoryTrackerHost;
+    private AutoRecharge? _autoRecharge;
+    private HudUpdater? _hudUpdater;
     private LootRuleProcessor? _lootRules;
     private ItemInfoPrinter? _itemInfoPrinter;
     private UserIdentDetector? _userIdentDetector;
@@ -58,8 +65,15 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _chatDispatcher = new ChatClassificationDispatcher(host);
         _chatLogger = new Loggers.Chat.ChatLogger(host, _settings, _chatDispatcher);
         _combatTrackerHost = new CombatTrackerHost(host, _chat, _settings, _chatDispatcher);
-        _main = new MainViewModel(_settings, _chatLogger, host, _combatTrackerHost);
+        _equipmentTrackerHost = new EquipmentTrackerHost(host);
+        _inventoryTrackerHost = new InventoryTrackerHost(host);
+        _autoRecharge = new AutoRecharge(host, _settings);
+        _main = new MainViewModel(
+            _settings, _chatLogger, host, _combatTrackerHost,
+            _equipmentTrackerHost, _inventoryTrackerHost);
         _hud = new HudViewModel(host);
+        _hudUpdater = new HudUpdater(
+            host, _hud, _combatTrackerHost, _equipmentTrackerHost, _inventoryTrackerHost);
         _router = new MtCommandRouter(host, _chat, _settings);
         _session = new SessionContext(host, _chat);
         _lootRules = new LootRuleProcessor(host.LootClassifiers);
@@ -194,6 +208,10 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         // logoff would.
         _chatLogger?.Stop();
         _combatTrackerHost?.Stop();
+        _equipmentTrackerHost?.Stop();
+        _inventoryTrackerHost?.Stop();
+        _autoRecharge?.Stop();
+        _hudUpdater?.Stop();
         _chatDispatcher?.Stop();
 
         if (_session is not null)
@@ -230,12 +248,20 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _chatDispatcher?.Start();
         _chatLogger?.Start(_scheduler, _session.WorldName, _session.CharacterName);
         _combatTrackerHost?.Start(_scheduler, _session.WorldName, _session.CharacterName);
+        _equipmentTrackerHost?.Start();
+        _inventoryTrackerHost?.Start(_scheduler);
+        _autoRecharge?.Start(_scheduler);
+        _hudUpdater?.Start(_scheduler);
     }
 
     private void OnSessionLogoff()
     {
         _chatLogger?.Stop();
         _combatTrackerHost?.Stop();
+        _equipmentTrackerHost?.Stop();
+        _inventoryTrackerHost?.Stop();
+        _autoRecharge?.Stop();
+        _hudUpdater?.Stop();
         _chatDispatcher?.Stop();
         _chatFilter?.OnLogoff();
     }

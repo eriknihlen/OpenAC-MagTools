@@ -36,16 +36,18 @@ public sealed class MainViewModel : IDisposable
         SettingsManager settings,
         ChatLoggerFeature chatLogger,
         IPluginHost? host = null,
-        Trackers.Combat.CombatTrackerHost? combatTrackerHost = null)
+        Trackers.Combat.CombatTrackerHost? combatTrackerHost = null,
+        Trackers.Equipment.EquipmentTrackerHost? equipmentTrackerHost = null,
+        Trackers.Inventory.InventoryTrackerHost? inventoryTrackerHost = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(chatLogger);
 
-        Mana = new ManaPageViewModel(settings);
+        Mana = new ManaPageViewModel(settings, equipmentTrackerHost, host);
         Combat = new CombatPageViewModel(settings, combatTrackerHost, host);
         Corpse = new CorpsePageViewModel(settings);
         Player = new PlayerPageViewModel(settings);
-        InventoryItems = new InventoryItemsPageViewModel();
+        InventoryItems = new InventoryItemsPageViewModel(inventoryTrackerHost);
         ChatLogger = new ChatLoggerPageViewModel(settings, chatLogger);
         InventoryTools = new InventoryToolsPageViewModel(
             host, settings.ItemInfoOnIdent, host?.Automation.Spells);
@@ -106,6 +108,8 @@ public sealed class MainViewModel : IDisposable
         Filters.Options.Dispose();
         ChatLogger.Dispose();
         Combat.Dispose();
+        Mana.Dispose();
+        InventoryItems.Dispose();
     }
 
     /// <summary>Reverses <see cref="Dispose"/> for a Disable()/Enable() cycle.</summary>
@@ -119,6 +123,8 @@ public sealed class MainViewModel : IDisposable
         Filters.Options.Resubscribe();
         ChatLogger.Resubscribe();
         Combat.Resubscribe();
+        Mana.Resubscribe();
+        InventoryItems.Resubscribe();
     }
 
     private enum TopTab { Trackers, Loggers, Tools, Misc }

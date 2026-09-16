@@ -62,24 +62,101 @@ public sealed class MtCommandRouterTests
         }
     }
 
-    [Theory]
-    [InlineData("trade accept")]
-    [InlineData("vendor buy")]
-    [InlineData("vendor addbuy Peerless Mana Potion 5")]
-    public void TradeAndVendorCommandsNameTheMissingApi(string command)
+    [Fact]
+    public void TradeAcceptCallsTheTradeAutomation()
     {
-        Assert.True(_router.Execute(command));
-        Assert.Contains(Chat, line => line.Contains(
-            "requires the trade/vendor API (coming)", StringComparison.Ordinal));
+        Assert.True(_router.Execute("trade accept"));
+        Assert.Equal(["accept"], _host.Automation.Trade.Calls);
     }
 
-    [Theory]
-    [InlineData("logoff")]
-    [InlineData("logout")]
-    public void LogoutSaysItIsNotAvailableYet(string command)
+    [Fact]
+    public void TradeDeclineResetEndCallTheTradeAutomation()
     {
-        Assert.True(_router.Execute(command));
-        Assert.Equal(Line("logout is not available yet"), Assert.Single(Chat));
+        Assert.True(_router.Execute("trade decline"));
+        Assert.True(_router.Execute("trade reset"));
+        Assert.True(_router.Execute("trade end"));
+        Assert.Equal(["decline", "reset", "end"], _host.Automation.Trade.Calls);
+    }
+
+    [Fact]
+    public void TradeAddFindsAnInventoryItemAndAddsIt()
+    {
+        _host.Automation.Items.Owned.Add(FakeItems.Item(42u, "Peerless Mana Potion"));
+
+        Assert.True(_router.Execute("trade add Peerless Mana Potion"));
+        Assert.Equal(["add:42"], _host.Automation.Trade.Calls);
+    }
+
+    [Fact]
+    public void TradeAddpMatchesPartially()
+    {
+        _host.Automation.Items.Owned.Add(FakeItems.Item(42u, "Peerless Mana Potion"));
+
+        Assert.True(_router.Execute("trade addp mana potion"));
+        Assert.Equal(["add:42"], _host.Automation.Trade.Calls);
+    }
+
+    [Fact]
+    public void TradeAddFailsWhenNoInventoryItemMatches()
+    {
+        Assert.False(_router.Execute("trade add nothing here"));
+        Assert.Empty(_host.Automation.Trade.Calls);
+    }
+
+    [Fact]
+    public void VendorBuySellClearCallTheVendorAutomation()
+    {
+        Assert.True(_router.Execute("vendor buy"));
+        Assert.True(_router.Execute("vendor sell"));
+        Assert.True(_router.Execute("vendor clearbuy"));
+        Assert.True(_router.Execute("vendor clearsell"));
+        Assert.Equal(["buyall", "sellall", "clearbuy", "clearsell"], _host.Automation.Vendor.Calls);
+    }
+
+    [Fact]
+    public void VendorAddBuyRequiresAnOpenVendorPane()
+    {
+        Assert.False(_router.Execute("vendor addbuy Peerless Mana Potion 5"));
+        Assert.Empty(_host.Automation.Vendor.Calls);
+        Assert.Contains(Chat, line => line.Contains("No vendor is open.", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void VendorAddBuyParsesTheTrailingCountAndAddsTheTemplateId()
+    {
+        _host.Automation.Vendor.IsOpen = true;
+        _host.Automation.Vendor.Items.Add(
+            new PluginVendorItem(7u, 700u, "Peerless Mana Potion", PluginObjectClass.Food, 10, 1));
+
+        // "vendor addbuy" lower-cases the whole command line, but the item
+        // name is still resolved case-insensitively against the vendor's
+        // real-cased listing name.
+        Assert.True(_router.Execute("vendor addbuy peerless mana potion 5"));
+        Assert.Equal(["addbuy:7:5"], _host.Automation.Vendor.Calls);
+    }
+
+    [Fact]
+    public void VendorAddSellFindsAnOwnedItem()
+    {
+        _host.Automation.Items.Owned.Add(FakeItems.Item(9u, "Rusty Shortsword"));
+
+        Assert.True(_router.Execute("vendor addsell Rusty Shortsword"));
+        Assert.Equal(["addsell:9"], _host.Automation.Vendor.Calls);
+    }
+
+    [Fact]
+    public void LogoutCallsLoginLogout()
+    {
+        Assert.True(_router.Execute("logoff"));
+        Assert.True(_router.Execute("logout"));
+        Assert.Equal(2, _host.Automation.Login.LogoutCalls);
+    }
+
+    [Fact]
+    public void LogoutReturnsFalseWhenThereIsNoSessionToLogOutOf()
+    {
+        _host.Automation.Login.LogoutResult = false;
+        Assert.False(_router.Execute("logoff"));
     }
 
     [Fact]
@@ -442,10 +519,14 @@ public sealed class MtCommandRouterTests
     }
 
     [Fact]
-    public void AutopackSaysItIsNotAvailableYet()
+    public void AutopackIsANoOpWithoutAnInventoryPacker()
     {
+        // The router was built without an InventoryPacker in this test's
+        // constructor (matching a headless-with-no-classifier session) --
+        // autopack still counts as handled (eats the chat line) but does
+        // nothing.
         Assert.True(_router.Execute("autopack"));
-        Assert.Equal(Line("autopack is not available yet"), Assert.Single(Chat));
+        Assert.Empty(Chat);
     }
 
     [Fact]

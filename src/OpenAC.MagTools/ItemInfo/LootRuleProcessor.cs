@@ -111,4 +111,96 @@ public sealed class LootRuleProcessor
         string? classifierId = ActiveClassifierId;
         return classifierId is not null && _registry.TryNeedsIdentification(classifierId, in context);
     }
+
+    /// <summary>
+    /// The raw live-profile verdict (not the printer's folded
+    /// <see cref="LootVerdict"/>) for callers that need
+    /// <see cref="PluginLootClassification.Action"/> and
+    /// <see cref="PluginLootClassification.KeepCount"/> directly — the
+    /// looter and inventory packer both branch on Keep vs. KeepUpTo vs.
+    /// Sell, which <see cref="Classify"/>'s folded Passes/IsSalvage shape
+    /// does not expose. Returns false (and a default classification) when
+    /// there is no active classifier or the item did not match any rule.
+    /// </summary>
+    public bool TryClassifyLive(
+        in PluginLootClassificationContext context,
+        out PluginLootClassification classification)
+    {
+        string? classifierId = ActiveClassifierId;
+        if (classifierId is null)
+        {
+            classification = default;
+            return false;
+        }
+
+        return _registry.TryClassify(classifierId, in context, out classification)
+            && classification.Matched;
+    }
+
+    /// <summary>
+    /// Classifies against a named, stored profile (a vendor's, a trade
+    /// partner's, or an auto-pack profile) rather than the classifier's live
+    /// one — E-LOOT's <see cref="IPluginLootClassifierRegistry.TryClassifyWithProfile"/>.
+    /// Returns false when there is no active classifier, the named profile
+    /// does not exist, or the item did not match any rule in it.
+    /// </summary>
+    public bool TryClassifyWithProfile(
+        string profileName,
+        in PluginLootClassificationContext context,
+        out PluginLootClassification classification)
+    {
+        string? classifierId = ActiveClassifierId;
+        if (classifierId is null)
+        {
+            classification = default;
+            return false;
+        }
+
+        return _registry.TryClassifyWithProfile(classifierId, profileName, in context, out classification)
+            && classification.Matched;
+    }
+
+    /// <summary>
+    /// True when <paramref name="profileName"/> resolves to a real, loaded
+    /// profile for the active classifier: a probe classification call
+    /// against an empty item returns <c>true</c> as long as the named
+    /// profile itself exists, per E-LOOT's contract ("returns false when the
+    /// named profile does not exist") — independent of whether the probe
+    /// item happens to match any rule in it.
+    /// </summary>
+    public bool ProfileExists(string profileName)
+    {
+        string? classifierId = ActiveClassifierId;
+        if (classifierId is null)
+            return false;
+
+        var probe = new PluginLootClassificationContext(
+            BuildMinimalItem(0u, 0u, string.Empty, PluginObjectClass.Unknown),
+            default,
+            Array.Empty<PluginInventoryItem>());
+        return _registry.TryClassifyWithProfile(
+            classifierId, profileName, in probe, out _);
+    }
+
+    /// <summary>
+    /// Builds a minimal <see cref="PluginInventoryItem"/> good enough for a
+    /// loot-rule classification call when the real automation surface only
+    /// hands back a shape other than <see cref="PluginInventoryItem"/> (a
+    /// vendor listing, a probe item) — every field the classifier does not
+    /// need for name/class/value-based rules stays at its default.
+    /// </summary>
+    public static PluginInventoryItem BuildMinimalItem(
+        uint objectId,
+        uint weenieClassId,
+        string name,
+        PluginObjectClass objectClass,
+        int stackSize = 1,
+        int value = 0)
+        => new(
+            objectId, weenieClassId, name, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u,
+            stackSize, 0, 0, 0u, 0, 0, 0u, false, 0d, 0, 0, 0, 0d, 0, 0, 0)
+        {
+            ObjectClass = objectClass,
+            Value = value,
+        };
 }

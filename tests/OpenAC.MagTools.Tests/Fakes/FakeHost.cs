@@ -30,6 +30,8 @@ public sealed class FakeHost : IPluginHost
 
     public FakeClipboard Clipboard { get; } = new();
 
+    public FakeHotkeyRegistry Hotkeys { get; } = new();
+
     IEvents IPluginHost.Events => Events;
 
     ISelectionService IPluginHost.Selection => Selection;
@@ -45,6 +47,8 @@ public sealed class FakeHost : IPluginHost
     IPluginLootClassifierRegistry IPluginHost.LootClassifiers => LootClassifiers;
 
     IPluginClipboard IPluginHost.Clipboard => Clipboard;
+
+    IHotkeyRegistry IPluginHost.Hotkeys => Hotkeys;
 
     /// <summary>The chat lines the plugin posted, in order.</summary>
     public IReadOnlyList<string> ChatLines => Automation.Chat.Posted;
@@ -126,6 +130,46 @@ public sealed class FakeLootClassifierRegistry : IPluginLootClassifierRegistry
         classification = default;
         return false;
     }
+}
+
+/// <summary>Records every registration and lets a test fire the handler or flip <see cref="IPluginHotkeyRegistration.IsBound"/>.</summary>
+public sealed class FakeHotkeyRegistry : IHotkeyRegistry
+{
+    public List<(string Id, string DisplayName, PluginKeyChord DefaultChord, Action Handler)> Registrations { get; } = [];
+
+    public IPluginHotkeyRegistration Register(
+        string id,
+        string displayName,
+        PluginKeyChord defaultChord,
+        Action handler)
+    {
+        Registrations.Add((id, displayName, defaultChord, handler));
+        return new FakeHotkeyRegistration(defaultChord);
+    }
+
+    /// <summary>Invokes the handler registered under <paramref name="id"/>, as if the chord had just fired.</summary>
+    public void Fire(string id)
+    {
+        foreach ((string registeredId, _, _, Action handler) in Registrations)
+        {
+            if (string.Equals(registeredId, id, StringComparison.Ordinal))
+            {
+                handler();
+                return;
+            }
+        }
+    }
+}
+
+public sealed class FakeHotkeyRegistration(PluginKeyChord chord) : IPluginHotkeyRegistration
+{
+    public bool IsBound { get; set; } = true;
+    public PluginKeyChord EffectiveChord { get; private set; } = chord;
+    public bool Disposed { get; private set; }
+
+    public void Rebind(PluginKeyChord newChord) => EffectiveChord = newChord;
+
+    public void Dispose() => Disposed = true;
 }
 
 public sealed class RecordingLogger : IPluginLogger

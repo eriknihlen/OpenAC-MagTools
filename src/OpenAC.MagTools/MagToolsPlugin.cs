@@ -50,6 +50,12 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
     private UserIdentDetector? _userIdentDetector;
     private ContainerIdentDetector? _containerIdentDetector;
     private InventoryExporter? _inventoryExporter;
+    private AutoBuySell? _autoBuySell;
+    private AutoTradeAdd? _autoTradeAdd;
+    private AutoTradeAccept? _autoTradeAccept;
+    private Looter? _looter;
+    private InventoryPacker? _inventoryPacker;
+    private OneTouchHeal? _oneTouchHeal;
     private Action<ItemIdentArgs>? _onUserItemIdentified;
     private Action<ItemIdentArgs>? _onContainerItemIdentified;
     private Action<double>? _tick;
@@ -58,6 +64,8 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
     private IDisposable? _commandRegistration;
     private IDisposable? _mainPanelRegistration;
     private IDisposable? _hudPanelRegistration;
+    private IPluginHotkeyRegistration? _packHotkey;
+    private IPluginHotkeyRegistration? _healHotkey;
 
     public void Initialize(IPluginHost host)
     {
@@ -90,10 +98,16 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _hud = new HudViewModel(host);
         _hudUpdater = new HudUpdater(
             host, _hud, _combatTrackerHost, _equipmentTrackerHost, _inventoryTrackerHost);
-        _router = new MtCommandRouter(host, _chat, _settings);
         _session = new SessionContext(host, _chat);
         _lootRules = new LootRuleProcessor(host.LootClassifiers);
         _itemInfoPrinter = new ItemInfoPrinter(host, _chat, _settings.ItemInfoOnIdent, _lootRules);
+        _autoBuySell = new AutoBuySell(host, _chat, _settings.AutoBuySell, _lootRules);
+        _autoTradeAdd = new AutoTradeAdd(host, _chat, _settings.AutoTradeAdd, _lootRules);
+        _autoTradeAccept = new AutoTradeAccept(host, _settings.AutoTradeAccept);
+        _looter = new Looter(host, _chat, _settings.Looting, _lootRules);
+        _inventoryPacker = new InventoryPacker(host, _chat, _lootRules);
+        _oneTouchHeal = new OneTouchHeal(host);
+        _router = new MtCommandRouter(host, _chat, _settings, _inventoryPacker);
 
         host.Log.Info("Mag-Tools initialized");
     }
@@ -165,6 +179,19 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
 
         _chatFilter?.Enable();
         _tinkeringAutoConfirm?.Start();
+        _autoTradeAccept?.Start();
+        _inventoryPacker?.AttachChatTrigger();
+
+        _packHotkey = _host.Hotkeys.Register(
+            "pack-inventory",
+            "Pack Inventory",
+            new PluginKeyChord(PluginKey.P, Ctrl: true),
+            () => _inventoryPacker?.Start());
+        _healHotkey = _host.Hotkeys.Register(
+            "one-touch-heal",
+            "One Touch Heal",
+            default,
+            () => _oneTouchHeal?.TryHeal());
 
         _onSessionLoginComplete = OnSessionLoginComplete;
         _onSessionLogoff = OnSessionLogoff;
@@ -220,6 +247,13 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
 
         _chatFilter?.Disable();
         _tinkeringAutoConfirm?.Stop();
+        _autoTradeAccept?.Stop();
+        _inventoryPacker?.DetachChatTrigger();
+
+        _packHotkey?.Dispose();
+        _packHotkey = null;
+        _healHotkey?.Dispose();
+        _healHotkey = null;
 
         // In case we are still mid-session when the plugin is disabled: stop
         // the logger and flush what it has before we go, same as a real
@@ -236,6 +270,10 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _autoRecharge?.Stop();
         _hudUpdater?.Stop();
         _chatDispatcher?.Stop();
+        _autoBuySell?.Stop();
+        _autoTradeAdd?.Stop();
+        _looter?.Stop();
+        _inventoryPacker?.Stop();
 
         if (_session is not null)
         {
@@ -280,6 +318,10 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _tinkeringToolsHost?.Attach(_scheduler);
         _autoRecharge?.Start(_scheduler);
         _hudUpdater?.Start(_scheduler);
+        _autoBuySell?.Start(_scheduler);
+        _autoTradeAdd?.Start(_scheduler);
+        _looter?.Start(_scheduler);
+        _inventoryPacker?.Bind(_scheduler);
     }
 
     private void OnSessionLogoff()
@@ -297,6 +339,10 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _hudUpdater?.Stop();
         _chatDispatcher?.Stop();
         _chatFilter?.OnLogoff();
+        _autoBuySell?.Stop();
+        _autoTradeAdd?.Stop();
+        _looter?.Stop();
+        _inventoryPacker?.Stop();
     }
 
     /// <summary>

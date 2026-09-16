@@ -34,6 +34,12 @@ public sealed class FakeAutomation : IAutomationSurface
 
     public FakeDialogAutomation Dialogs { get; } = new();
 
+    public FakeTrade Trade { get; } = new();
+
+    public FakeVendor Vendor { get; } = new();
+
+    public FakeLogin Login { get; } = new();
+
     ICharacterInfo IAutomationSurface.Character => Character;
     ISpellCatalog IAutomationSurface.Spells => Spells;
     IMagicCommands IAutomationSurface.Magic => Magic;
@@ -46,6 +52,239 @@ public sealed class FakeAutomation : IAutomationSurface
     ICombatAutomation IAutomationSurface.Combat => Combat;
     IEquipmentAutomation IAutomationSurface.Equipment => Equipment;
     IDialogAutomation IAutomationSurface.Dialogs => Dialogs;
+    ITradeAutomation IAutomationSurface.Trade => Trade;
+    IVendorAutomation IAutomationSurface.Vendor => Vendor;
+    ILoginAutomation IAutomationSurface.Login => Login;
+}
+
+/// <summary>A settable <see cref="ITradeAutomation"/>: a test drives <see cref="Raise*"/> and inspects <see cref="Calls"/>.</summary>
+public sealed class FakeTrade : ITradeAutomation
+{
+    public bool IsAvailable { get; set; } = true;
+    public bool IsOpen { get; set; }
+    public uint PartnerObjectId { get; set; }
+    public string PartnerName { get; set; } = string.Empty;
+    public List<uint> MyItems { get; } = [];
+    public List<uint> PartnerItems { get; } = [];
+    public bool MyAccepted { get; set; }
+    public bool PartnerAccepted { get; set; }
+
+    public List<string> Calls { get; } = [];
+
+    /// <summary>The status <see cref="Add"/>/<see cref="Accept"/>/<see cref="Decline"/>/<see cref="Reset"/>/<see cref="End"/> answer with.</summary>
+    public PluginTradeCommandStatus NextStatus { get; set; } = PluginTradeCommandStatus.Sent;
+
+    IReadOnlyList<uint> ITradeAutomation.MyItems => MyItems;
+    IReadOnlyList<uint> ITradeAutomation.PartnerItems => PartnerItems;
+
+    public event Action<PluginTradeOpened>? Opened;
+    public event Action? Closed;
+    public event Action<uint>? PartnerTradeAccepted;
+    public event Action<PluginTradeItemAdded>? ItemAdded;
+
+    public void RaiseOpened(uint initiatorObjectId, uint partnerObjectId)
+    {
+        IsOpen = true;
+        PartnerObjectId = partnerObjectId;
+        Opened?.Invoke(new PluginTradeOpened(initiatorObjectId, partnerObjectId));
+    }
+
+    public void RaiseClosed()
+    {
+        IsOpen = false;
+        Closed?.Invoke();
+    }
+
+    public void RaisePartnerAccepted(uint partnerObjectId)
+        => PartnerTradeAccepted?.Invoke(partnerObjectId);
+
+    public void RaiseItemAdded(uint itemObjectId, bool mine)
+        => ItemAdded?.Invoke(new PluginTradeItemAdded(itemObjectId, mine));
+
+    public PluginTradeCommandResult Add(uint itemObjectId)
+    {
+        Calls.Add("add:" + itemObjectId);
+        return new PluginTradeCommandResult(NextStatus);
+    }
+
+    public PluginTradeCommandResult Accept()
+    {
+        Calls.Add("accept");
+        return new PluginTradeCommandResult(NextStatus);
+    }
+
+    public PluginTradeCommandResult Decline()
+    {
+        Calls.Add("decline");
+        return new PluginTradeCommandResult(NextStatus);
+    }
+
+    public PluginTradeCommandResult Reset()
+    {
+        Calls.Add("reset");
+        return new PluginTradeCommandResult(NextStatus);
+    }
+
+    public PluginTradeCommandResult End()
+    {
+        Calls.Add("end");
+        return new PluginTradeCommandResult(NextStatus);
+    }
+
+    event Action<PluginTradeOpened> ITradeAutomation.Opened
+    {
+        add => Opened += value;
+        remove => Opened -= value;
+    }
+
+    event Action ITradeAutomation.Closed
+    {
+        add => Closed += value;
+        remove => Closed -= value;
+    }
+
+    event Action<uint> ITradeAutomation.PartnerTradeAccepted
+    {
+        add => PartnerTradeAccepted += value;
+        remove => PartnerTradeAccepted -= value;
+    }
+
+    event Action<PluginTradeItemAdded> ITradeAutomation.ItemAdded
+    {
+        add => ItemAdded += value;
+        remove => ItemAdded -= value;
+    }
+}
+
+/// <summary>A settable <see cref="IVendorAutomation"/>.</summary>
+public sealed class FakeVendor : IVendorAutomation
+{
+    public bool IsAvailable { get; set; } = true;
+    public bool IsOpen { get; set; }
+    public uint VendorObjectId { get; set; }
+    public string VendorName { get; set; } = string.Empty;
+    public List<PluginVendorItem> Items { get; } = [];
+    public bool IsBusy { get; set; }
+
+    public Dictionary<uint, PluginItemProperties> Properties { get; } = [];
+
+    public List<(uint TemplateObjectId, int Count)> BuyList { get; } = [];
+    public List<uint> SellList { get; } = [];
+
+    public List<string> Calls { get; } = [];
+
+    public PluginVendorCommandStatus NextStatus { get; set; } = PluginVendorCommandStatus.Sent;
+
+    IReadOnlyList<PluginVendorItem> IVendorAutomation.Items => Items;
+    IReadOnlyList<(uint TemplateObjectId, int Count)> IVendorAutomation.BuyList => BuyList;
+    IReadOnlyList<uint> IVendorAutomation.SellList => SellList;
+
+    public event Action<uint>? Opened;
+    public event Action? Closed;
+    public event Action<PluginVendorTransaction>? TransactionCompleted;
+
+    public void RaiseOpened(uint vendorObjectId)
+    {
+        IsOpen = true;
+        VendorObjectId = vendorObjectId;
+        Opened?.Invoke(vendorObjectId);
+    }
+
+    public void RaiseClosed()
+    {
+        IsOpen = false;
+        Closed?.Invoke();
+    }
+
+    public void RaiseTransactionCompleted(PluginVendorTransactionKind kind, bool success = true)
+        => TransactionCompleted?.Invoke(new PluginVendorTransaction(kind, success, null));
+
+    public bool TryCaptureProperties(uint templateObjectId, out PluginItemProperties properties)
+        => Properties.TryGetValue(templateObjectId, out properties);
+
+    public PluginVendorCommandResult AddToBuyList(uint templateObjectId, int count)
+    {
+        Calls.Add("addbuy:" + templateObjectId + ":" + count);
+        BuyList.Add((templateObjectId, count));
+        return new PluginVendorCommandResult(NextStatus);
+    }
+
+    public PluginVendorCommandResult AddToSellList(uint itemObjectId)
+    {
+        Calls.Add("addsell:" + itemObjectId);
+        SellList.Add(itemObjectId);
+        return new PluginVendorCommandResult(NextStatus);
+    }
+
+    public PluginVendorCommandResult RemoveFromBuyList(uint templateObjectId)
+    {
+        Calls.Add("removebuy:" + templateObjectId);
+        return new PluginVendorCommandResult(NextStatus);
+    }
+
+    public PluginVendorCommandResult RemoveFromSellList(uint itemObjectId)
+    {
+        Calls.Add("removesell:" + itemObjectId);
+        return new PluginVendorCommandResult(NextStatus);
+    }
+
+    public PluginVendorCommandResult ClearBuyList()
+    {
+        Calls.Add("clearbuy");
+        BuyList.Clear();
+        return new PluginVendorCommandResult(NextStatus);
+    }
+
+    public PluginVendorCommandResult ClearSellList()
+    {
+        Calls.Add("clearsell");
+        SellList.Clear();
+        return new PluginVendorCommandResult(NextStatus);
+    }
+
+    public PluginVendorCommandResult BuyAll()
+    {
+        Calls.Add("buyall");
+        return new PluginVendorCommandResult(NextStatus);
+    }
+
+    public PluginVendorCommandResult SellAll()
+    {
+        Calls.Add("sellall");
+        return new PluginVendorCommandResult(NextStatus);
+    }
+
+    event Action<uint> IVendorAutomation.Opened
+    {
+        add => Opened += value;
+        remove => Opened -= value;
+    }
+
+    event Action IVendorAutomation.Closed
+    {
+        add => Closed += value;
+        remove => Closed -= value;
+    }
+
+    event Action<PluginVendorTransaction> IVendorAutomation.TransactionCompleted
+    {
+        add => TransactionCompleted += value;
+        remove => TransactionCompleted -= value;
+    }
+}
+
+/// <summary>A settable <see cref="ILoginAutomation"/>.</summary>
+public sealed class FakeLogin : ILoginAutomation
+{
+    public bool IsAvailable { get; set; } = true;
+    public bool LogoutResult { get; set; } = true;
+    public int LogoutCalls { get; private set; }
+
+    public bool Logout()
+    {
+        LogoutCalls++;
+        return LogoutResult;
+    }
 }
 
 /// <summary>Records every <see cref="Answer"/> call; a test can pre-arm which context ids it accepts.</summary>

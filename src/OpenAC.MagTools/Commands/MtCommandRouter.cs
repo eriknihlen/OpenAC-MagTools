@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using AcDream.Plugin.Abstractions;
+using OpenAC.MagTools.Macros;
 using OpenAC.MagTools.Settings;
 
 namespace OpenAC.MagTools.Commands;
@@ -48,13 +49,15 @@ public sealed class MtCommandRouter
     private readonly IPluginHost _host;
     private readonly ChatOutput _chat;
     private readonly SettingsManager _settings;
+    private readonly InventoryPacker? _inventoryPacker;
     private readonly Dictionary<string, string> _remembered =
         new(StringComparer.OrdinalIgnoreCase);
 
     public MtCommandRouter(
         IPluginHost host,
         ChatOutput chat,
-        SettingsManager settings)
+        SettingsManager settings,
+        InventoryPacker? inventoryPacker = null)
     {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(chat);
@@ -62,6 +65,7 @@ public sealed class MtCommandRouter
         _host = host;
         _chat = chat;
         _settings = settings;
+        _inventoryPacker = inventoryPacker;
     }
 
     /// <summary>The registry entry point.</summary>
@@ -91,24 +95,17 @@ public sealed class MtCommandRouter
             }
         }
 
-        if (Matches(lower, "trade") || Matches(lower, "vendor"))
-        {
-            // TODO(E-TRADE / E-VENDOR): the trade and vendor automation
-            // surfaces land in the plugin API slice A3.
-            _chat.Write(lower + " requires the trade/vendor API (coming)");
-            return true;
-        }
+        if (Matches(lower, "trade"))
+            return Trade(Remainder(lower, "trade"));
+
+        if (Matches(lower, "vendor"))
+            return Vendor(Remainder(lower, "vendor"), Remainder(text, "vendor"));
 
         if (lower == "test")
             return true;
 
         if (lower is "logoff" or "logout")
-        {
-            // TODO(E-SESSION): ILoginAutomation.Logout() is not in the contract
-            // yet; there is no other graceful-logout route from a plugin.
-            _chat.Write("logout is not available yet");
-            return true;
-        }
+            return _host.Automation.Login.Logout();
 
         if (Matches(lower, "face"))
             return Face(Remainder(lower, "face"));
@@ -172,8 +169,7 @@ public sealed class MtCommandRouter
 
         if (lower == "autopack")
         {
-            // TODO(P7): the inventory packer ships with the looting slice.
-            _chat.Write("autopack is not available yet");
+            _inventoryPacker?.Start();
             return true;
         }
 
@@ -503,6 +499,129 @@ public sealed class MtCommandRouter
         PluginCombatCommandResult result = _host.Automation.Combat.EnterMode(mode);
         return result.Status is PluginCombatCommandStatus.ModeChangeSent
             or PluginCombatCommandStatus.AlreadyReady;
+    }
+
+    private bool Trade(string argument)
+    {
+        ITradeAutomation trade = _host.Automation.Trade;
+
+        if (Matches(argument, "addp"))
+            return TradeAdd(Remainder(argument, "addp"), partial: true);
+        if (Matches(argument, "add"))
+            return TradeAdd(Remainder(argument, "add"), partial: false);
+
+        if (argument == "accept")
+            return trade.Accept().Status
+                is PluginTradeCommandStatus.Sent or PluginTradeCommandStatus.AlreadyAccepted;
+        if (argument == "decline")
+            return trade.Decline().Status == PluginTradeCommandStatus.Sent;
+        if (argument == "reset")
+            return trade.Reset().Status == PluginTradeCommandStatus.Sent;
+        if (argument == "end")
+            return trade.End().Status == PluginTradeCommandStatus.Sent;
+
+        _chat.Write("Usage: /mt trade add|addp <name>|accept|decline|reset|end");
+        return false;
+    }
+
+    private bool TradeAdd(string name, bool partial)
+    {
+        uint id = FindIdForName(
+            name,
+            searchInventory: true,
+            searchOpenContainer: false,
+            searchEnvironment: false,
+            partial);
+        if (id == 0)
+        {
+            _chat.Write("No inventory item found named: " + name);
+            return false;
+        }
+
+        return _host.Automation.Trade.Add(id).Status == PluginTradeCommandStatus.Sent;
+    }
+
+    /// <param name="argument">The lower-cased argument.</param>
+    /// <param name="original">The argument as typed, for the item-name portion of addbuy/addsell (names are case-preserved).</param>
+    private bool Vendor(string argument, string original)
+    {
+        IVendorAutomation vendor = _host.Automation.Vendor;
+
+        if (Matches(argument, "addbuyp"))
+            return VendorAddBuy(Remainder(original, "addbuyp"), partial: true);
+        if (Matches(argument, "addbuy"))
+            return VendorAddBuy(Remainder(original, "addbuy"), partial: false);
+
+        if (Matches(argument, "addsellp"))
+            return VendorAddSell(Remainder(argument, "addsellp"), partial: true);
+        if (Matches(argument, "addsell"))
+            return VendorAddSell(Remainder(argument, "addsell"), partial: false);
+
+        if (argument == "buy")
+            return vendor.BuyAll().Status == PluginVendorCommandStatus.Sent;
+        if (argument == "sell")
+            return vendor.SellAll().Status == PluginVendorCommandStatus.Sent;
+        if (argument == "clearbuy")
+            return vendor.ClearBuyList().Status == PluginVendorCommandStatus.Sent;
+        if (argument == "clearsell")
+            return vendor.ClearSellList().Status == PluginVendorCommandStatus.Sent;
+
+        _chat.Write(
+            "Usage: /mt vendor addbuy|addbuyp <name> [count]|addsell|addsellp <name>|buy|sell|clearbuy|clearsell");
+        return false;
+    }
+
+    private bool VendorAddBuy(string argument, bool partial)
+    {
+        // Only when a vendor pane is actually open, exactly like the
+        // original's Actions.VendorId != 0 gate.
+        if (!_host.Automation.Vendor.IsOpen)
+        {
+            _chat.Write("No vendor is open.");
+            return false;
+        }
+
+        (string name, int count) = VendorCommandArguments.ParseAddBuy(argument);
+        PluginVendorItem? item = FindVendorItemByName(name, partial);
+        if (item is not { } found)
+        {
+            _chat.Write("No vendor item found named: " + name);
+            return false;
+        }
+
+        return _host.Automation.Vendor.AddToBuyList(found.TemplateObjectId, count).Status
+            == PluginVendorCommandStatus.Sent;
+    }
+
+    private bool VendorAddSell(string name, bool partial)
+    {
+        uint id = FindIdForName(
+            name,
+            searchInventory: true,
+            searchOpenContainer: false,
+            searchEnvironment: false,
+            partial);
+        if (id == 0)
+        {
+            _chat.Write("No inventory item found named: " + name);
+            return false;
+        }
+
+        return _host.Automation.Vendor.AddToSellList(id).Status == PluginVendorCommandStatus.Sent;
+    }
+
+    private PluginVendorItem? FindVendorItemByName(string name, bool partial)
+    {
+        foreach (bool substring in partial ? new[] { false, true } : new[] { false })
+        {
+            foreach (PluginVendorItem item in _host.Automation.Vendor.Items)
+            {
+                if (NameMatches(item.Name, name, substring))
+                    return item;
+            }
+        }
+
+        return null;
     }
 
     private bool AttackMelee(string argument)

@@ -226,6 +226,76 @@ public sealed class SessionContextTests
     }
 
     [Fact]
+    public void AReconnectWithAnEmptyNameStillResolvesAndReRaisesSessionReady()
+    {
+        // A reconnect (Logoff then a fresh LoginComplete) must re-arm name
+        // resolution from scratch -- it must not stay stuck on whatever the
+        // FIRST session's resolution state was.
+        _session.Subscribe();
+        GoInWorld();
+        _host.Events.RaiseLoginComplete();
+        Assert.Equal(1, _sessionReadies);
+
+        _host.Automation.IsAvailable = false;
+        _host.Events.RaiseLogoff();
+
+        // The reconnected session's name is empty at first, exactly like the
+        // first session's host defect.
+        _host.Automation.IsAvailable = true;
+        _host.Automation.Character.IsInWorld = true;
+        _host.Automation.Character.Name = string.Empty;
+        _host.Automation.Character.WorldName = string.Empty;
+        _host.Automation.Character.AccountName = string.Empty;
+        _host.Events.RaiseLoginComplete();
+
+        Assert.Equal(2, _logins);
+        // The name is still empty on this reconnected session -- SessionReady
+        // must not fire again yet (still 1, from the first session).
+        Assert.Equal(1, _sessionReadies);
+
+        _host.Events.RaiseTick(0.1);
+        Assert.Equal(1, _sessionReadies); // still pending after one tick
+
+        _host.Automation.Character.Name = "+Horan";
+        _host.Automation.Character.WorldName = "Frostfell";
+        _host.Automation.Character.AccountName = "testaccount";
+        _host.Events.RaiseTick(0.1);
+
+        Assert.Equal(2, _sessionReadies);
+        Assert.Equal("+Horan", _session.CharacterName);
+    }
+
+    [Fact]
+    public void UnsubscribeDuringPendingResolutionStopsTheTickSubscription()
+    {
+        // If Disable() (Unsubscribe) runs while a name resolution is still
+        // pending, the Tick subscription it armed must be dropped -- an
+        // Unsubscribe must not leave a stray Tick handler running against a
+        // session the plugin no longer considers itself attached to.
+        _session.Subscribe();
+
+        _host.Automation.IsAvailable = true;
+        _host.Automation.Character.IsInWorld = true;
+        _host.Automation.Character.Name = string.Empty;
+        _host.Automation.Character.WorldName = string.Empty;
+        _host.Automation.Character.AccountName = string.Empty;
+        _host.Events.RaiseLoginComplete();
+
+        Assert.Equal(0, _sessionReadies);
+
+        _session.Unsubscribe();
+
+        // Even though the name resolves after Unsubscribe, no SessionReady
+        // should fire -- the tick handler was dropped.
+        _host.Automation.Character.Name = "+Acdream";
+        _host.Automation.Character.WorldName = "Frostfell";
+        _host.Automation.Character.AccountName = "testaccount";
+        _host.Events.RaiseTick(0.1);
+
+        Assert.Equal(0, _sessionReadies);
+    }
+
+    [Fact]
     public void UnsubscribeStopsReactingToTheHostEvents()
     {
         _session.Subscribe();

@@ -226,8 +226,13 @@ public sealed class PeriodicCommandsTests
         clock.Now += TimeSpan.FromSeconds(20);
         macro.OnTimer();
         scheduler.Tick(0.1);
+        scheduler.Tick(0.1);
 
+        // ... and it must NOT re-dispatch the server-scoped command that
+        // already matched this minute: the backfill re-arms only the
+        // character scope.
         Assert.Equal(["server", "char"], host.Automation.Chat.Submitted);
+        Assert.Equal(0, macro.PendingCount);
     }
 
     [Fact]

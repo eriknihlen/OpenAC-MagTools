@@ -64,6 +64,16 @@ public sealed class PeriodicCommands
     /// </remarks>
     private int? _lastEvaluatedUtcMinute;
 
+    /// <summary>
+    /// Same-minute guard for the character scope alone. It is kept apart
+    /// from <see cref="_lastEvaluatedUtcMinute"/> because the character
+    /// scope can be backfilled AFTER the server scope was already evaluated
+    /// for the current minute: the character scope then still needs its
+    /// own evaluation this minute, while the server scope must not be
+    /// evaluated a second time (that would double-dispatch its commands).
+    /// </summary>
+    private int? _lastCharacterEvaluatedUtcMinute;
+
     public PeriodicCommands(
         IPluginHost host,
         MtCommandRouter router,
@@ -99,6 +109,7 @@ public sealed class PeriodicCommands
         _characterScopePath = string.Empty;
         _serverScopePath = serverScopePath;
         _lastEvaluatedUtcMinute = null;
+        _lastCharacterEvaluatedUtcMinute = null;
         _runner.Clear();
         _runner.Bind(scheduler);
 
@@ -112,23 +123,17 @@ public sealed class PeriodicCommands
     /// already-running timer.
     /// </summary>
     /// <remarks>
-    /// MEDIUM-B (P9 re-review): if <see cref="OnTimer"/> already evaluated
-    /// this UTC minute BEFORE this backfill (the character scope was still
-    /// empty at that first poll), <see cref="_lastEvaluatedUtcMinute"/> is
-    /// already stamped, so the character scope's commands for the CURRENT
-    /// minute would be skipped entirely -- not just delayed, since the guard
-    /// only re-evaluates on a NEW minute. This resets that guard whenever a
-    /// previously-empty character scope is backfilled, so the very next
-    /// 20-second poll re-evaluates both scopes for the current minute
-    /// instead of waiting for the minute to roll over. A no-op once the
-    /// character scope is already set (a redundant SetCharacterScope call
-    /// must not force a re-evaluation).
+    /// If <see cref="OnTimer"/> already evaluated this UTC minute BEFORE the
+    /// backfill (the character scope was still empty at that first poll),
+    /// the character scope's commands for the CURRENT minute would
+    /// otherwise be skipped until the minute rolls over. The character
+    /// scope keeps its own same-minute guard, so the very next 20-second
+    /// poll evaluates it for the current minute while the server scope,
+    /// already evaluated, is left alone.
     /// </remarks>
     public void SetCharacterScope(string characterScopePath)
     {
         ArgumentNullException.ThrowIfNull(characterScopePath);
-        if (_characterScopePath.Length == 0 && characterScopePath.Length > 0)
-            _lastEvaluatedUtcMinute = null;
         _characterScopePath = characterScopePath;
     }
 
@@ -141,26 +146,37 @@ public sealed class PeriodicCommands
         _characterScopePath = string.Empty;
         _serverScopePath = string.Empty;
         _lastEvaluatedUtcMinute = null;
+        _lastCharacterEvaluatedUtcMinute = null;
     }
 
     /// <summary>Runs one 20-second tick of the timer. Internal so a test can drive it directly at a fixed clock instead of stepping the scheduler 3 times.</summary>
     internal void OnTimer()
     {
         int utcMinute = _timeProvider.GetUtcNow().UtcDateTime.Minute;
-        if (_lastEvaluatedUtcMinute == utcMinute)
+        bool evaluateServer = _lastEvaluatedUtcMinute != utcMinute;
+        // The character scope can still be unset (empty) if this fires
+        // before SetCharacterScope backfills it: the timer starts as soon as
+        // the server scope is known, which can be earlier than the
+        // character name resolves. Its guard is separate so the backfill
+        // still gets evaluated this minute without re-running the server
+        // scope.
+        bool evaluateCharacter = _characterScopePath.Length > 0 && _lastCharacterEvaluatedUtcMinute != utcMinute;
+        if (!evaluateServer && !evaluateCharacter)
             return;
-        _lastEvaluatedUtcMinute = utcMinute;
 
         DateTime localNow = _timeProvider.GetLocalNow().DateTime;
         int minutesAfterMidnight = (int)(localNow - localNow.Date).TotalMinutes;
 
-        // The character scope can still be unset (empty) if this fires
-        // before SetCharacterScope backfills it -- MEDIUM-4 starts the timer
-        // as soon as the server scope is known, which can be earlier than
-        // the character name resolves.
-        if (_characterScopePath.Length > 0)
+        if (evaluateCharacter)
+        {
+            _lastCharacterEvaluatedUtcMinute = utcMinute;
             EnqueueMatching(_store.GetPeriodicCommands(_characterScopePath), minutesAfterMidnight);
-        EnqueueMatching(_store.GetPeriodicCommands(_serverScopePath), minutesAfterMidnight);
+        }
+        if (evaluateServer)
+        {
+            _lastEvaluatedUtcMinute = utcMinute;
+            EnqueueMatching(_store.GetPeriodicCommands(_serverScopePath), minutesAfterMidnight);
+        }
     }
 
     private void EnqueueMatching(IReadOnlyList<PeriodicCommand> commands, int minutesAfterMidnight)

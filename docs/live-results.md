@@ -318,3 +318,51 @@ open.
   `@telepoi Holtburg` was undone with
   `@teleloc 0x0108020D 46.438545 -54.503498 0.004200 -0.128570 0 0 -0.991700`.
   `Mag-Tools.xml` was restored to its pre-round contents.
+
+## P10 review round (2026-09-16, no live gate -- code review findings)
+
+A dual-lens code review of the P10 fix round (defects 8/9/10) surfaced nine
+further findings against the SAME files, addressed here as a local fix round
+(no live client session; all findings and fixes are covered by fail-first
+unit tests). Fixed at `af98176` (MEDIUM-4), `19ebb25` (MEDIUM-6), `13918f6`
+(LOW-8), and `59df03a` (HIGH-1/HIGH-2/HIGH-3/MEDIUM-5/LOW-9/MEDIUM-7):
+
+- **HIGH-1** `_lastOwnedSnapshot` only refreshed at startup and at id-wait
+  completion, so `Stop()`'s logoff dump wrote the login-time inventory,
+  missing anything looted/bought/tinkered mid-session. Fixed: refreshed at
+  the top of `Dump()` whenever non-empty, and every second by the
+  HIGH-3 poll for the rest of the session.
+- **HIGH-2** `Stop()` wrote `Export([])` over an existing file when nothing
+  was ever captured (empty character, or teardown before the pack streamed
+  in). Fixed: `Stop()` skips the dump when the snapshot is still empty.
+- **HIGH-3** the startup wait subscribed `Events.Tick` directly, running a
+  full `CaptureOwnedItems()` walk every frame -- breaking the "TickScheduler
+  is the plugin's only clock" rule. Fixed: `Start()` now takes the plugin's
+  `TickScheduler` and polls at 1 Hz, bounded at 60 polls (~60s) before
+  giving up.
+- **MEDIUM-4** `WorldObjectSorter`'s "directly mine" test used
+  `ContainerObjectId == myObjectId`, which is 0 for every equipped item on
+  this host, making the equipped-ordering block unreachable. Fixed: also
+  treats `WielderObjectId == myObjectId` as directly mine.
+- **MEDIUM-5** `OnObjectChanged`'s per-item identify path required
+  `ContainerObjectId == Character.ObjectId`, so an item equipped mid-session
+  (host-shaped: `WielderObjectId` is the player, not `ContainerObjectId`)
+  was never id-requested. Fixed: accepts `WielderObjectId` too, H7 ordering
+  preserved.
+- **MEDIUM-6** the inventory-search page called `Items.Use(0)` for any
+  equipped search result (same host-shape cause). Fixed: skips the
+  container-open when the item is equipped by the player.
+- **MEDIUM-7** `docs/deviations.md` rows added for the deferred/polled
+  startup dump and the `anyMissing == false` immediate-dump branch.
+- **LOW-8** the give-up branch printed "N items lacked id data" even when
+  the clipboard write failed, contradicting the paired "Clipboard is
+  unavailable" message. Fixed: suppressed when the write failed.
+- **LOW-9** while `_waitingForIdData`, `OnObjectChanged` returned before the
+  per-item Identify path ran, so an item arriving during the wait was never
+  requested and the wait could hang. Fixed: falls through to the per-item
+  path (H7-ordered) instead of returning.
+
+Owed: a live re-gate of the inventory logger, exporter, and worn-equipment
+sort order against a real host, since this round's evidence is unit tests
+only (no game client was launched for this round per the coordinator's
+instruction).

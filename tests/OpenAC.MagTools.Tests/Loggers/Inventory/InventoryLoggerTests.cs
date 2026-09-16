@@ -107,6 +107,91 @@ public sealed class InventoryLoggerTests
     }
 
     [Fact]
+    public void AnOwnedItemWithNoWorldObjectYetIsStillDumpedNotDropped()
+    {
+        // Defect #3/#5: an owned item the object table has no full
+        // PluginWorldObject for yet (only the lightweight
+        // PluginInventoryItem snapshot exists) used to be dropped from the
+        // dump entirely instead of appearing with HasIdData=false, like the
+        // original always wrote every owned item.
+        (FakeHost host, ChatOutput chat, InventoryManagementSettings settings) = Make();
+        host.Automation.Items.Owned.Add(new PluginInventoryItem(
+            7u, 0u, "Unresolved Trinket", 0u, 500u, 0u, 0u, 0u, 0u, 0u, 0u,
+            1, 0, 0, 0u, 0, 0, 0u, false, 0d, 0, 0, 0, 0, 0, 0, 0)
+        {
+            ObjectClass = PluginObjectClass.Jewelry,
+        });
+        // Deliberately no matching entry in host.Automation.Objects.Objects.
+
+        var logger = new InventoryLogger(host, chat, settings);
+        logger.Start("ACServer", "Acdream");
+        logger.Stop();
+
+        string? xml = host.Storage.ReadText("ACServer/Acdream.Inventory.xml");
+        Assert.NotNull(xml);
+        Assert.True(InventoryLoggerXml.TryImport(xml!, out List<MyWorldObjectRecord> records));
+        MyWorldObjectRecord record = Assert.Single(records);
+        Assert.Equal(7u, record.Id);
+        Assert.False(record.HasIdData);
+        Assert.Equal((int)PluginObjectClass.Jewelry, record.ObjectClass);
+
+        // It also should have had an id requested for it, same as any other
+        // ident-worthy owned item.
+        Assert.Contains(7u, host.Automation.Objects.IdentifyRequests);
+    }
+
+    [Fact]
+    public void FullLoginSequenceRequestsWaitsAndDumpsEveryOwnedItem()
+    {
+        // The whole §1 login sequencing the live gate found broken: print
+        // the request line, request ids for the ident-worthy classes,
+        // wait for ObjectChanged(IdentReceived), then dump a document that
+        // includes every owned item -- appraised or not.
+        (FakeHost host, ChatOutput chat, InventoryManagementSettings settings) = Make();
+        host.Automation.Items.Owned.Add(new PluginInventoryItem(
+            1u, 0u, "Sword", 0u, 500u, 0u, 0u, 0u, 0u, 0u, 0u,
+            1, 0, 0, 0u, 0, 0, 0u, false, 0d, 0, 0, 0, 0, 0, 0, 0)
+        {
+            ObjectClass = PluginObjectClass.MeleeWeapon,
+        });
+        host.Automation.Objects.Objects.Add(new PluginWorldObject(
+            1u, 0u, "Sword", PluginObjectClass.MeleeWeapon, 0u, 500u, 0u) { HasAppraisalData = false });
+        // A second owned item that will never get appraisal data this
+        // session (e.g. a plain trade good) -- still must show up.
+        host.Automation.Items.Owned.Add(new PluginInventoryItem(
+            2u, 0u, "Trade Notes", 0u, 500u, 0u, 0u, 0u, 0u, 0u, 0u,
+            1, 0, 0, 0u, 0, 0, 0u, false, 0d, 0, 0, 0, 0, 0, 0, 0)
+        {
+            ObjectClass = PluginObjectClass.Misc,
+        });
+        host.Automation.Objects.Objects.Add(new PluginWorldObject(
+            2u, 0u, "Trade Notes", PluginObjectClass.Misc, 0u, 500u, 0u) { HasAppraisalData = true });
+
+        var logger = new InventoryLogger(host, chat, settings);
+        logger.Start("ACServer", "Acdream");
+
+        Assert.Contains(
+            host.ChatLines,
+            line => line.Contains("Requesting id information", StringComparison.Ordinal));
+        Assert.Contains(1u, host.Automation.Objects.IdentifyRequests);
+        Assert.Null(host.Storage.ReadText("ACServer/Acdream.Inventory.xml"));
+
+        host.Automation.Objects.Objects[0] = host.Automation.Objects.Objects[0] with { HasAppraisalData = true };
+        host.Events.RaiseObjectChanged(1u, PluginObjectChangeKind.IdentReceived);
+
+        Assert.Contains(
+            host.ChatLines,
+            line => line.Contains("completed. Log file written.", StringComparison.Ordinal));
+
+        string? xml = host.Storage.ReadText("ACServer/Acdream.Inventory.xml");
+        Assert.NotNull(xml);
+        Assert.True(InventoryLoggerXml.TryImport(xml!, out List<MyWorldObjectRecord> records));
+        Assert.Equal(2, records.Count);
+        Assert.Contains(records, r => r.Id == 1u);
+        Assert.Contains(records, r => r.Id == 2u);
+    }
+
+    [Fact]
     public void NewIdentWorthyItemInMyContainerRequestsIdOnce()
     {
         (FakeHost host, ChatOutput chat, InventoryManagementSettings settings) = Make();

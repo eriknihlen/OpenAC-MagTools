@@ -178,8 +178,21 @@ public sealed class InventoryLogger
         var current = new List<MyWorldObjectRecord>();
         foreach (PluginInventoryItem item in _host.Automation.Items.CaptureOwnedItems())
         {
+            // An owned item the object table has no full PluginWorldObject
+            // for yet (not yet resolved/appraised) is still owned and still
+            // belongs in the dump -- the original always wrote every owned
+            // item, with an empty id block for anything unresolved. See
+            // defect #3/#5 in docs/live-results.md: this `continue` used to
+            // drop it outright, so a fresh dump before ident data arrived
+            // came out as an effectively-empty document.
             if (!_host.Automation.Objects.TryGet(item.ObjectId, out PluginWorldObject wo))
+            {
+                if (requestIdsIfMissing && ObjectClassNeedsIdent(item.ObjectClass, item.Name))
+                    _host.Automation.Objects.Identify(item.ObjectId);
+                current.Add(MyWorldObjectRecord.CreateUnresolved(item));
                 continue;
+            }
+
             if (!_host.Automation.Objects.TryCaptureProperties(item.ObjectId, out PluginItemProperties properties))
                 properties = ItemModel.EmptyProperties;
 

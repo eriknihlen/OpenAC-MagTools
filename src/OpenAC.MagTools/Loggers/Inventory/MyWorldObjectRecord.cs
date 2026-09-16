@@ -21,6 +21,23 @@ public sealed class MyWorldObjectRecord
     public IReadOnlyList<int> ActiveSpells { get; init; } = [];
     public IReadOnlyList<int> Spells { get; init; } = [];
 
+    /// <summary>
+    /// Fallback for an owned item the object table has no full
+    /// <see cref="PluginWorldObject"/> for yet — the item is still real and
+    /// owned, so it belongs in the dump, just with no property/spell data
+    /// and <see cref="HasIdData"/> false, exactly like the original always
+    /// wrote every owned item and let unresolved ones show up with an empty
+    /// id block rather than silently dropping them.
+    /// </summary>
+    public static MyWorldObjectRecord CreateUnresolved(PluginInventoryItem item)
+        => new()
+        {
+            HasIdData = false,
+            Id = item.ObjectId,
+            LastIdTime = 0,
+            ObjectClass = (int)item.ObjectClass,
+        };
+
     /// <summary><c>MyWorldObjectCreator.Create</c>.</summary>
     public static MyWorldObjectRecord Create(PluginWorldObject wo, PluginItemProperties properties)
         => new()

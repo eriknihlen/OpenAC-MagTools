@@ -104,14 +104,14 @@
           onchange="{SelectCombatCurrentMonster}">
       <column type="text" width="111" items="{CombatCurrentMonsterNames}" />
       <column type="text" width="37" items="{CombatCurrentMonsterKillingBlows}" />
-      <column type="text" width="55" items="{CombatCurrentMonsterDamageReceived}" />
+      <column type="text" width="66" items="{CombatCurrentMonsterDamageReceived}" />
       <column type="text" width="*" items="{CombatCurrentMonsterDamageGiven}" />
     </list>
     <list x="0" y="186" w="312" h="186" rowheight="18" selectionband="true"
           anchor="left top right bottom"
           selected="{CombatCurrentDamageSelectedRow}"
           onchange="{SelectCombatCurrentDamage}">
-      <column type="text" width="40" items="{CombatCurrentDamageLabels}" />
+      <column type="text" width="52" items="{CombatCurrentDamageLabels}" />
       <column type="text" width="52" items="{CombatCurrentDamageMeleeMissile}" />
       <column type="text" width="52" items="{CombatCurrentDamageMagic}" />
       <column type="text" width="45" items="{CombatCurrentDamageStatLabels}" />
@@ -128,14 +128,14 @@
           onchange="{SelectCombatPersistentMonster}">
       <column type="text" width="111" items="{CombatPersistentMonsterNames}" />
       <column type="text" width="37" items="{CombatPersistentMonsterKillingBlows}" />
-      <column type="text" width="55" items="{CombatPersistentMonsterDamageReceived}" />
+      <column type="text" width="66" items="{CombatPersistentMonsterDamageReceived}" />
       <column type="text" width="*" items="{CombatPersistentMonsterDamageGiven}" />
     </list>
     <list x="0" y="186" w="312" h="186" rowheight="18" selectionband="true"
           anchor="left top right bottom"
           selected="{CombatPersistentDamageSelectedRow}"
           onchange="{SelectCombatPersistentDamage}">
-      <column type="text" width="40" items="{CombatPersistentDamageLabels}" />
+      <column type="text" width="52" items="{CombatPersistentDamageLabels}" />
       <column type="text" width="52" items="{CombatPersistentDamageMeleeMissile}" />
       <column type="text" width="52" items="{CombatPersistentDamageMagic}" />
       <column type="text" width="45" items="{CombatPersistentDamageStatLabels}" />
@@ -465,7 +465,7 @@
               onchange="{ToggleOption}" />
       <column type="text" width="*" items="{OptionCaptions}" />
     </list>
-    <label x="220" y="2" w="90" text="Target Output Window:" />
+    <label x="220" y="2" text="Target Output Window:" />
     <field x="220" y="36" w="32" h="16" maxlength="2"
            text="{OutputWindowText}" onchange="{SetOutputWindow}" />
   </group>

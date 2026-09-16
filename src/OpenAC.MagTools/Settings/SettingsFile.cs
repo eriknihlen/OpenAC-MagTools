@@ -466,16 +466,27 @@ public sealed class SettingsFile
     /// <summary>
     /// Merges <paramref name="source"/> INTO <paramref name="destination"/>
     /// in place — children (recursively, via <see cref="SyncChildrenWholesale"/>),
-    /// attributes, and (for a leaf with no child elements on either side) the
-    /// text value — instead of cloning <paramref name="source"/> over it, so
-    /// <paramref name="destination"/>'s own <see cref="XElement"/> identity
-    /// is preserved for whoever is holding a reference to it.
+    /// attributes, and (whenever the reloaded <paramref name="source"/> is a
+    /// leaf) the text value — instead of cloning <paramref name="source"/>
+    /// over it, so <paramref name="destination"/>'s own <see cref="XElement"/>
+    /// identity is preserved for whoever is holding a reference to it.
     /// </summary>
+    /// <remarks>
+    /// The leaf-value copy is keyed on <c>source.HasElements</c> alone —
+    /// the reloaded copy is authoritative for whether this node is a leaf or
+    /// a container now — rather than also requiring
+    /// <c>destination.HasElements</c> to already agree. The two happen to
+    /// always agree by the time this line runs (<see cref="SyncChildrenWholesale"/>
+    /// just finished making destination's children match source's), but
+    /// deriving the leaf/container decision from BOTH sides was redundant at
+    /// best and a trap for a future edit at worst: source is the fact, not a
+    /// side effect worth re-deriving.
+    /// </remarks>
     private static void MergeElementInPlace(XElement destination, XElement source)
     {
         SyncChildrenWholesale(destination, source);
         SyncAttributes(destination, source);
-        if (!destination.HasElements && !source.HasElements)
+        if (!source.HasElements)
             destination.Value = source.Value;
     }
 

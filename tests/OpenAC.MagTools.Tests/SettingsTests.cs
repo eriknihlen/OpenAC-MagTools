@@ -294,6 +294,53 @@ public sealed class SettingsFileTests
         Assert.Equal(1, storage.WriteCount);
         Assert.False(file.HasPendingSave);
     }
+
+    [Fact]
+    public void FlushCopiesTheLeafValueWhenAnUntouchedNodeChangedFromContainerToLeaf()
+    {
+        var storage = new MemoryStorage();
+        var file = new SettingsFile(storage);
+        XElement node = file.GetNode("Misc/WindowPositions", createIfMissing: true)!;
+        node.Add(new XElement("Window", "Main:10,10"));
+        file.MarkDirty("Misc/WindowPositions");
+        file.Flush();
+
+        var writtenElsewhere = new SettingsFile(storage);
+        writtenElsewhere.PutSetting("Misc/WindowPositions", "flat-value");
+        writtenElsewhere.Flush();
+
+        // `file` never touches Misc/WindowPositions itself again — only
+        // Filters/AttackEvades is dirty for this flush.
+        file.PutSetting("Filters/AttackEvades", true);
+        file.Flush();
+
+        // The held reference sees the new leaf value in place...
+        Assert.Equal("flat-value", node.Value);
+        Assert.Empty(node.Elements());
+        // ...and so does a fresh read.
+        Assert.Equal("flat-value", file.GetSetting("Misc/WindowPositions", string.Empty));
+    }
+
+    [Fact]
+    public void FlushRebuildsChildrenWhenAnUntouchedNodeChangedFromLeafToContainer()
+    {
+        var storage = new MemoryStorage();
+        var file = new SettingsFile(storage);
+        file.PutSetting("Misc/WindowPositions", "flat-value");
+        file.Flush();
+
+        var writtenElsewhere = new SettingsFile(storage);
+        writtenElsewhere.SetNodeChildren(
+            "Misc/WindowPositions", "Window", ["Main:10,10", "Hud:20,20"]);
+        writtenElsewhere.Flush();
+
+        file.PutSetting("Filters/AttackEvades", true);
+        file.Flush();
+
+        Assert.Equal(
+            ["Main:10,10", "Hud:20,20"],
+            file.GetChildrenInnerTexts("Misc/WindowPositions"));
+    }
 }
 
 public sealed class SettingTests

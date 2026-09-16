@@ -51,6 +51,25 @@ public sealed class OptionListViewModel : IDisposable
             setting.Changed -= OnSettingChanged;
     }
 
+    /// <summary>
+    /// Re-subscribes after <see cref="Dispose"/>, for a plugin
+    /// Disable()/Enable() cycle that reuses the same view-model instance
+    /// instead of rebuilding it. A no-op when this instance was never
+    /// disposed. Also refreshes <see cref="Checks"/>, since a setting could
+    /// have changed while nobody was listening.
+    /// </summary>
+    public void Resubscribe()
+    {
+        if (!_disposed)
+            return;
+        _disposed = false;
+
+        foreach (ISetting setting in _settings)
+            setting.Changed += OnSettingChanged;
+
+        Refresh();
+    }
+
     private void OnSettingChanged(ISetting setting) => Refresh();
 
     public IReadOnlyList<string> Captions { get; }

@@ -57,6 +57,12 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
 
         _scheduler = new TickScheduler(_host.Events, _chat);
 
+        // Reverses the unsubscribe a previous Disable() did, for a
+        // Disable()/Enable() cycle that reuses this same MainViewModel
+        // instance (Initialize() only builds it once). A no-op the first
+        // time Enable() runs, since nothing has been disposed yet.
+        _main.Resubscribe();
+
         // Markup ships beside the plugin assembly, which is not the host's
         // working directory.
         string directory =
@@ -141,6 +147,10 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         // Anything the debounce still owes is written before we go.
         _settingsFile?.Flush();
 
+        // Unsubscribes the four OptionListViewModel instances' Setting.Changed
+        // handlers, so a Disable that outlives the panel does not leak them.
+        _main?.Dispose();
+
         // The session survives Initialize (it is built once), so without
         // this an Enable that follows a Disable would still see the previous
         // in-world state and never re-fire the login edge.
@@ -159,6 +169,13 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
     }
 
     private void OnSessionLogoff() => _chatLogger?.Stop();
+
+    /// <summary>
+    /// Caps <see cref="_reportedTickExceptions"/> so a tick loop that throws
+    /// many DIFFERENT exception shapes (varying data in the message, say)
+    /// cannot grow this set without bound for the life of the session.
+    /// </summary>
+    private const int MaxReportedTickExceptionShapes = 32;
 
     private readonly HashSet<string> _reportedTickExceptions = new(StringComparer.Ordinal);
 
@@ -179,8 +196,23 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
             _host?.Log.Error("Mag-Tools tick failed: " + exception.Message, exception);
 
             string key = exception.GetType().FullName + "|" + exception.Message;
-            if (_reportedTickExceptions.Add(key))
+            bool alreadyTracked = _reportedTickExceptions.Contains(key);
+            if (alreadyTracked)
+            {
+                // Already reported once for this exact shape — stay quiet.
+            }
+            else if (_reportedTickExceptions.Count < MaxReportedTickExceptionShapes)
+            {
+                _reportedTickExceptions.Add(key);
                 _chat?.WriteException(exception);
+            }
+            else
+            {
+                // At the cap: stop tracking new distinct shapes (the log
+                // above already has every occurrence), but still surface
+                // this one to chat rather than silently dropping it.
+                _chat?.WriteException(exception);
+            }
         }
     }
 }

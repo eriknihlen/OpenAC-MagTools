@@ -87,6 +87,13 @@ public sealed class SessionContext
 
     private void OnLoginComplete()
     {
+        // A duplicate LoginComplete for a session already in-world (a
+        // belt-and-suspenders host redelivery, for instance) must not
+        // reprint the banner or re-run every LoginComplete subscriber's
+        // one-time setup a second time for the same session.
+        if (IsInWorld)
+            return;
+
         ICharacterInfo character = _host.Automation.Character;
         CharacterName = character.Name;
         WorldName = character.WorldName;
@@ -105,6 +112,12 @@ public sealed class SessionContext
 
     private void OnLogoff()
     {
+        // Mirrors the OnLoginComplete guard: a Logoff with no matching
+        // in-world session must not re-fire the edge or re-run every
+        // subscriber's teardown for a session that already ended.
+        if (!IsInWorld)
+            return;
+
         IsInWorld = false;
         Logoff?.Invoke();
         CharacterName = string.Empty;

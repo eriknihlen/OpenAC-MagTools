@@ -18,6 +18,7 @@ public sealed class TickScheduler : IDisposable
     private readonly ChatOutput _chat;
     private readonly Action<double> _handler;
     private readonly List<Entry> _entries = [];
+    private readonly List<Entry> _dueScratch = [];
     private readonly Queue<Action> _nextTick = new();
     private bool _disposed;
 
@@ -82,13 +83,17 @@ public sealed class TickScheduler : IDisposable
         ElapsedSeconds += elapsedSeconds;
 
         // Snapshot both collections: a callback may queue more work or cancel
-        // an entry, and neither may disturb the pass in flight.
+        // an entry, and neither may disturb the pass in flight. _dueScratch
+        // is a reusable buffer rather than a fresh array every tick — Clear()
+        // keeps its backing storage, so a steady-state tick allocates nothing
+        // here once the list has grown to its high-water mark.
         int queued = _nextTick.Count;
         for (int index = 0; index < queued; index++)
             Invoke(_nextTick.Dequeue());
 
-        Entry[] due = [.. _entries];
-        foreach (Entry entry in due)
+        _dueScratch.Clear();
+        _dueScratch.AddRange(_entries);
+        foreach (Entry entry in _dueScratch)
         {
             if (entry.Cancelled)
                 continue;
@@ -114,6 +119,7 @@ public sealed class TickScheduler : IDisposable
         _disposed = true;
         _events.Tick -= _handler;
         _entries.Clear();
+        _dueScratch.Clear();
         _nextTick.Clear();
     }
 

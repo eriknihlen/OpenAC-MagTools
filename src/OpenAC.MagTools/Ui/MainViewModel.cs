@@ -19,8 +19,9 @@ namespace OpenAC.MagTools.Ui;
 /// notebook) with every page built once and only its visibility flipped.
 /// </para>
 /// </remarks>
-public sealed class MainViewModel
+public sealed class MainViewModel : IDisposable
 {
+    private bool _disposed;
     private TopTab _top = TopTab.Trackers;
     private TrackerTab _tracker = TrackerTab.Mana;
     private LoggerTab _logger = LoggerTab.Group1;
@@ -81,6 +82,35 @@ public sealed class MainViewModel
         ShowCorpseOptions = () => _corpseOptions = true;
         ShowPlayerList = () => _playerOptions = false;
         ShowPlayerOptions = () => _playerOptions = true;
+    }
+
+    /// <summary>
+    /// Disposes the four <see cref="OptionListViewModel"/> instances this
+    /// view-model owns (Options, Filters, and the chat logger's two group
+    /// checkbox lists), so their <see cref="ISetting.Changed"/> subscriptions
+    /// do not outlive a plugin <c>Disable()</c>.
+    /// </summary>
+    public void Dispose()
+    {
+        if (_disposed)
+            return;
+        _disposed = true;
+
+        MiscOptions.Options.Dispose();
+        Filters.Options.Dispose();
+        ChatLogger.Dispose();
+    }
+
+    /// <summary>Reverses <see cref="Dispose"/> for a Disable()/Enable() cycle.</summary>
+    public void Resubscribe()
+    {
+        if (!_disposed)
+            return;
+        _disposed = false;
+
+        MiscOptions.Options.Resubscribe();
+        Filters.Options.Resubscribe();
+        ChatLogger.Resubscribe();
     }
 
     private enum TopTab { Trackers, Loggers, Tools, Misc }

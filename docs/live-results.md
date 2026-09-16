@@ -43,6 +43,7 @@ the graphical primary session per the design doc's live-gate protocol (§8).
 | `/mt trade *`, `/mt vendor *`, `/mt autopack` (P7 commands) | 2026-09-16 | same | probe 10: `/mt trade accept`, `/mt vendor buy`, `/mt vendor addbuy Foo 3`, `/mt autopack`, `/mt trade add Foo` with no vendor/trade open and no AutoPack profile | `No vendor is open.` ×2, `No inventory item found named: foo`; trade accept and autopack silent (no trade open / no profile) as the original | PASS (messages); real trade/vendor flows need a partner/vendor — P8 gate round |
 | `/mt logoff` | 2026-09-16 | same | probe 10 | log: `logout-confirmed`, `returning to character select`, `character logoff complete` — the client's own graceful logout | PASS |
 | Open main pack on login (P8, enabled default) | 2026-09-16 | plugin 5822062 / OpenAC abc748d | probe 12: login with `Misc/OpenMainPackOnLogin` at its default (true), screenshot at +10 s | `Inventory of +Acdream` window open at +10 s — `Ui.ShowClientWindow(PluginClientWindow.Inventory)` (OpenAC slice A6) opens the main pack the same as the original's `Actions.UseItem(myId, 0)` did | PASS |
+| Combat page after the P8 column polish | 2026-09-16 | plugin e8fba24 / OpenAC d5c37bb | probe 11: Trackers → Combat | `Typeless`/`Electric` labels and the `Dmg Rcvd`/`Dmg Givn` headers render in full (screenshot 35) | PASS |
 
 ## Pending (owed before the port can be called fully live-gated)
 

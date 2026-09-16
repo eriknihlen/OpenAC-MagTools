@@ -63,7 +63,7 @@ WAS run and failed is recorded as FAIL/PARTIAL in the Gated table with the
 host fix that resolved it (see below); every host gap found during P1–P7 live
 gating has since landed and re-gated PASS.
 
-## OpenAC API changes (branch `claude/magtools-plugin-api`, reviewed head `d5c37bb`; A6 at `abc748d`)
+## OpenAC API changes (branch `claude/magtools-plugin-api`, reviewed head `d5c37bb`; A6 at `669832d`)
 
 Six slices, each Sonnet-implemented and Opus dual-lens reviewed (contract
 hygiene + parity), landed on this branch (not `main` — push/merge waits for

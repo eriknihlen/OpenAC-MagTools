@@ -17,8 +17,8 @@ extended plugin contract added on OpenAC branch `claude/magtools-plugin-api`
 and by P7 also E-TRADE/E-VENDOR/E-SESSION/E-HOTKEYS), which has not merged to
 OpenAC `main` yet. Until it does,
 `Directory.Build.props` points `OpenAcRoot` at a frozen detached worktree
-snapshot of that branch's head -- currently `magtools-api-a6` (review-closed
-head `abc748d` or later on `claude/magtools-plugin-api`; the branch is
+snapshot of that branch's head -- currently `magtools-api-final` (review-closed
+head `669832d` on `claude/magtools-plugin-api`; the branch is
 expected to pick up one more commit from the A6 fix round, so treat the
 exact SHA as a moving target until it settles. The earlier `magtools-api-a4`/
 `magtools-api-a5` snapshots this pointed at are retired and no longer

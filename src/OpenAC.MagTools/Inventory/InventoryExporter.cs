@@ -176,19 +176,28 @@ public sealed class InventoryExporter
         => Array.IndexOf(IdentWorthyClasses, objectClass) >= 0;
 
     /// <summary>
-    /// <c>ItemIsEquippedByMe</c>, verbatim: <c>EquippedSlots &gt; 0</c>, and for
-    /// weapons (<c>Slot == -1</c>) additionally requires the item's container
-    /// to be the player.
+    /// Ports <c>ItemIsEquippedByMe</c> (<c>EquippedSlots &gt; 0</c>, and for
+    /// weapons the original's Decal-era <c>Slot == -1</c> additionally
+    /// required the item's container to be the player) against this host's
+    /// actual field shape rather than the original's assumption -- see
+    /// <c>PluginInventoryItem</c> in
+    /// <c>AcDream.Plugin.Abstractions/ItemAutomation.cs</c> and how
+    /// <c>AcDream.App/Plugins/AppAutomationSurface.cs</c> populates it for
+    /// equipped items. On this host <see cref="PluginInventoryItem.ContainerSlot"/>
+    /// is -1 for EVERY equipped item, not only weapons, and
+    /// <see cref="PluginInventoryItem.ContainerObjectId"/> is left as whatever
+    /// container the item was equipped FROM (or 0) -- never the player. The
+    /// wielding entity's id lives in <see cref="PluginInventoryItem.WielderObjectId"/>
+    /// instead. Defect 9: the original's container-based check rejected every
+    /// equipped item on this host, so "Clipboard Worn Equipment" always wrote
+    /// an empty string. See the deviations doc for this row.
     /// </summary>
     private bool IsEquippedByMe(PluginInventoryItem item)
     {
         if (!item.IsEquipped)
             return false;
 
-        if (item.ContainerSlot == -1)
-            return item.ContainerObjectId == _host.Automation.Character.ObjectId;
-
-        return true;
+        return item.WielderObjectId == _host.Automation.Character.ObjectId;
     }
 
     private bool ExportObjects(List<PluginInventoryItem> items)

@@ -71,11 +71,21 @@ public sealed class InventoryExporterTests
     [Fact]
     public void WornEquipmentGroupOnlyExportsEquippedItems()
     {
+        // Defect 9 fixture shape: AppAutomationSurface (see
+        // src/AcDream.App/Plugins/AppAutomationSurface.cs and
+        // src/AcDream.Plugin.Abstractions/ItemAutomation.cs's
+        // PluginInventoryItem) sets ContainerSlot == -1 on EVERY equipped
+        // item -- not just weapons like the original Decal assumption
+        // required -- and puts the wielding entity's id in WielderObjectId,
+        // not ContainerObjectId. An equipped item's ContainerObjectId is
+        // whatever container it was equipped FROM (or 0), never the player.
         (FakeHost host, _, _, InventoryExporter exporter) = Build();
         host.Automation.Items.Owned.Add(FakeItems.Item(101u, "Equipped Sword", equippedLocation: 1u) with
         {
             ObjectClass = PluginObjectClass.MeleeWeapon,
-            ContainerObjectId = host.Automation.Character.ObjectId,
+            ContainerObjectId = 0u,
+            WielderObjectId = host.Automation.Character.ObjectId,
+            ContainerSlot = -1,
         });
         host.Automation.Objects.Replace(new PluginWorldObject(
             101u, 0u, "Equipped Sword", PluginObjectClass.MeleeWeapon, 0u, 1u, 0u) { HasAppraisalData = true });

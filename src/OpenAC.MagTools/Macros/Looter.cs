@@ -117,10 +117,15 @@ public sealed class Looter
         bool isMyCorpse = isCorpse
             && string.Equals(container.Name, myCorpseName, StringComparison.Ordinal);
 
+        // LOW: the original's chest-name check carries no class restriction
+        // of its own -- a corpse whose name happens to contain "Chest",
+        // "Vault" or "Reliquary" is a genuinely odd case, but upstream does
+        // not exempt it, so this port does not invent an `!isCorpse` guard
+        // here either.
         bool shouldStart =
             (isCorpse && _settings.AutoLootCorpses.Value)
             || (isMyCorpse && _settings.AutoLootMyCorpses.Value)
-            || (!isCorpse && _settings.AutoLootChests.Value && ContainsChestName(container.Name));
+            || (_settings.AutoLootChests.Value && ContainsChestName(container.Name));
 
         if (!shouldStart)
             return;
@@ -166,9 +171,13 @@ public sealed class Looter
         if (contents.Count == 0)
             return;
 
-        if (_host.Automation.Loot.IsBusy)
-            return;
-
+        // LOW: matches upstream's ordering -- the id-request pass runs
+        // UNCONDITIONALLY (even while Loot.IsBusy), and only the
+        // classify/pickup pass below skips a busy tick. Requesting ids
+        // while busy costs nothing (the host itself queues/refuses as
+        // appropriate) and keeps identification moving instead of also
+        // waiting on whatever unrelated inventory action is in flight.
+        //
         // One id request per think, for the first item that still needs one
         // -- H1: this used to `return` right after issuing that request,
         // which meant a single item that kept coming back Refused/Busy (or
@@ -189,6 +198,9 @@ public sealed class Looter
                 break;
             }
         }
+
+        if (_host.Automation.Loot.IsBusy)
+            return;
 
         PluginInventoryItem? pick = PickNext(contents);
         if (pick is null)

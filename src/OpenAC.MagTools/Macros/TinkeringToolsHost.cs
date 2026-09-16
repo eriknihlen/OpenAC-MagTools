@@ -75,6 +75,12 @@ public sealed class TinkeringToolsHost
         StopScan();
         _scheduler = null;
         _rows.Clear();
+
+        // M6: TinkeringPageViewModel caches its row projection until
+        // Changed fires (P6 re-review item 2) -- without raising it here,
+        // the cached tab keeps showing whatever rows were on screen right
+        // before a logoff/Disable() instead of emptying with the session.
+        Changed?.Invoke();
     }
 
     /// <summary><c>TinkeringAddSelectedItem_Hit</c>.</summary>

@@ -13,7 +13,9 @@ namespace OpenAC.MagTools.Macros;
 /// items that have appraisal data, the one with the fewest uses remaining
 /// (<see cref="PluginInventoryItem.Structure"/> — the port's shape for the
 /// original's <c>UsesRemaining</c>); if none are appraised yet, request an id
-/// for the first one instead of applying anything this press. Required skill
+/// for the first one AND still attempt to apply it in the SAME press (M3) --
+/// the original falls through with a 0 bonus rather than waiting a full
+/// press cycle for the id to land first. Required skill
 /// is <c>2 × missingHealth</c> in Peace, <c>ceil(2.6 × missingHealth)</c>
 /// otherwise; effective skill is <c>Skill[Healing].Current +
 /// kit.BoostValue</c> (the port's shape for <c>AffectsVitalAmt</c>). Applies
@@ -67,24 +69,28 @@ public sealed class OneTouchHeal
                     best = item;
             }
 
-            if (best is null)
+            // M3: when NO kit is appraised yet, the original still falls
+            // through and applies the (unappraised) kit in the SAME press --
+            // it does not wait a full press cycle for the id to land first.
+            // The request goes out AND the apply is attempted, with
+            // AffectsVitalAmt/BoostValue simply reading 0 until the id
+            // arrives (an un-appraised item carries no appraised bonus).
+            if (best is null && unidentified is { } toIdentify)
             {
-                if (unidentified is { } toIdentify)
-                {
-                    _host.Automation.Objects.Identify(toIdentify.ObjectId);
-                    return true;
-                }
+                _host.Automation.Objects.Identify(toIdentify.ObjectId);
+                best = toIdentify;
             }
-            else
+
+            if (best is { } kit)
             {
                 bool peace = _host.Automation.Combat.Snapshot.Mode == PluginCombatMode.Peace;
                 double required = peace ? 2d * missing : Math.Ceiling(2.6d * missing);
-                double effective = healing.Current + best.Value.BoostValue;
+                double effective = healing.Current + kit.BoostValue;
                 bool haveFood = FindHealingFood(owned) is not null;
 
                 if (required < effective || !haveFood)
                 {
-                    _host.Automation.Items.Apply(best.Value.ObjectId, character.ObjectId);
+                    _host.Automation.Items.Apply(kit.ObjectId, character.ObjectId);
                     return true;
                 }
             }

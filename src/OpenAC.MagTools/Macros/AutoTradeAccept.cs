@@ -29,6 +29,17 @@ public sealed class AutoTradeAccept
     private readonly TimeProvider _timeProvider;
 
     private Action<uint>? _onPartnerAccepted;
+
+    /// <summary>
+    /// LOW: stamped only at the point <see cref="ITradeAutomation.Accept"/>
+    /// is actually SENT (a whitelist match), not on every
+    /// <see cref="ITradeAutomation.PartnerTradeAccepted"/> event this macro
+    /// observes. A non-matching partner accepting, or Enabled being false,
+    /// never consumes the rate-limit window -- the 2-second guard exists
+    /// purely to stop OUR OWN `Accept()` call's own acceptance echo from
+    /// re-triggering this handler, not to throttle how often partners may
+    /// accept.
+    /// </summary>
     private DateTime _lastAcceptUtc = DateTime.MinValue;
 
     public AutoTradeAccept(

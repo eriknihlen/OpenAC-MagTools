@@ -616,6 +616,8 @@ public sealed class FakeLoot : ILootAutomation
 {
     public bool IsAvailable { get; set; } = true;
 
+    public bool IsBusy { get; set; }
+
     public List<PluginInventoryItem> Contents { get; } = [];
 
     public List<uint> PickedUp { get; } = [];

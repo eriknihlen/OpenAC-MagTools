@@ -187,6 +187,51 @@ public sealed class LooterTests
         Assert.Contains(host.ChatLines, line => line.Contains("No more lootable items found.", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void RequestsIdsEvenWhileBusyButSkipsPickupUntilNotBusy()
+    {
+        // LOW: matches upstream ordering -- the id-request pass runs even
+        // while Loot.IsBusy; only classify/pickup waits for it to clear.
+        (FakeHost host, _, OpenAC.MagTools.TickScheduler scheduler, _) = Build();
+        OpenContainer(host, 5u, "Treasure Chest", PluginObjectClass.Container);
+        host.Automation.Loot.Contents.Add(new PluginWorldObjectItem(1u, "Ring", PluginObjectClass.Jewelry).ToItem());
+        host.LootClassifiers.NeedsIdentificationHandler = _ => true;
+        host.Automation.Loot.IsBusy = true;
+
+        scheduler.Tick(0.1);
+
+        Assert.Contains(1u, host.Automation.Loot.IdentifyRequests);
+        Assert.Empty(host.Automation.Loot.PickedUp);
+    }
+
+    [Fact]
+    public void ChestNameMatchStartsEvenWhenTheContainerIsClassClassifiedAsACorpseAndCorpseLootingIsOff()
+    {
+        // LOW: the original's chest-name check carries no class restriction
+        // of its own -- this port does not invent an !isCorpse guard.
+        // AutoLootCorpses/AutoLootMyCorpses are both off, so ONLY the
+        // AutoLootChests branch can be what starts this run.
+        var host = new FakeHost();
+        host.LootClassifiers.Available.Add(new PluginLootClassifierInfo("plugin/moss-tank", "MossTank"));
+        var lootRules = new LootRuleProcessor(host.LootClassifiers);
+        var settings = new LootingSettings(new SettingsFile(host.Storage));
+        settings.AutoLootCorpses.Value = false;
+        settings.AutoLootMyCorpses.Value = false;
+        var chat = new ChatOutput(host);
+        var scheduler = new OpenAC.MagTools.TickScheduler(host.Events, chat);
+        var macro = new Looter(host, chat, settings, lootRules);
+        macro.Start(scheduler);
+
+        OpenContainer(host, 5u, "Corpse of a Reliquary Guardian", PluginObjectClass.Corpse);
+        host.Automation.Loot.Contents.Add(new PluginWorldObjectItem(1u, "Loot", PluginObjectClass.Misc).ToItem());
+        host.LootClassifiers.ClassifyHandler = _
+            => new PluginLootClassification(Matched: true, Action: PluginLootAction.Keep);
+
+        scheduler.Tick(0.1);
+
+        Assert.Contains(1u, host.Automation.Loot.PickedUp);
+    }
+
     /// <summary>Tiny helper so a test can build a corpse-content item without repeating the 27-arg constructor.</summary>
     private readonly record struct PluginWorldObjectItem(uint ObjectId, string Name, PluginObjectClass ObjectClass)
     {

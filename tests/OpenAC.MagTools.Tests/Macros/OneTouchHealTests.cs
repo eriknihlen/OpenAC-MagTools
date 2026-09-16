@@ -36,9 +36,14 @@ public sealed class OneTouchHealTests
     }
 
     [Fact]
-    public void RequestsIdForTheFirstUnidentifiedKitWhenNoneAreAppraised()
+    public void RequestsIdForTheFirstUnidentifiedKitAndStillAppliesItInTheSamePress()
     {
+        // M3: the original falls through and applies the kit in the SAME
+        // press it requests the id for -- it does not wait a full press
+        // cycle. When the required-skill check would still pass with a 0
+        // bonus (or there is no food fallback), the kit is applied anyway.
         var host = new FakeHost();
+        host.Automation.Character.ObjectId = 999u;
         host.Automation.Character.MaxHealth = 100;
         host.Automation.Character.CurrentHealth = 50;
         host.Automation.Character.Skills.Add(
@@ -49,7 +54,38 @@ public sealed class OneTouchHealTests
         Assert.True(heal.TryHeal());
 
         Assert.Contains(1u, host.Automation.Objects.IdentifyRequests);
+        Assert.Contains(("apply", 1u, 999u), host.Automation.Items.Calls);
+    }
+
+    [Fact]
+    public void FallsThroughToFoodWhenTheUnidentifiedKitsZeroBonusIsNotEnoughAndFoodExists()
+    {
+        // Same "no kit appraised" starting point, but this time the 0-bonus
+        // required-skill check genuinely fails AND a food fallback exists --
+        // the kit must NOT be applied blind in that case.
+        var host = new FakeHost();
+        host.Automation.Character.ObjectId = 999u;
+        host.Automation.Character.MaxHealth = 100;
+        host.Automation.Character.CurrentHealth = 10; // missing 10 -> required = 20 in Peace
+        host.Automation.Character.Skills.Add(
+            new PluginSkillInfo(OneTouchHeal.HealingSkillId, "Healing", PluginSkillTraining.Trained, 5));
+        host.Automation.Combat.Snapshot = host.Automation.Combat.Snapshot with { Mode = PluginCombatMode.Peace };
+        // effective (with a 0 bonus, since it is not yet appraised) = 5 < required 20.
+        host.Automation.Items.Owned.Add(Kit(1u, "First Aid Kit", usesRemaining: 5, affectsVitalAmt: 0));
+        PluginInventoryItem food = new(
+            2u, 0u, "Healing Meat", 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u,
+            1, 0, 0, 0u, 0, 0, 0u, false, 0d, 0, 0, 0, 0d, 0, 0, 0)
+        {
+            ObjectClass = PluginObjectClass.Food,
+        };
+        host.Automation.Items.Owned.Add(food);
+
+        var heal = new OneTouchHeal(host);
+        Assert.True(heal.TryHeal());
+
+        Assert.Contains(1u, host.Automation.Objects.IdentifyRequests);
         Assert.DoesNotContain(host.Automation.Items.Calls, call => call.Command == "apply");
+        Assert.Contains(("use", 2u, 0u), host.Automation.Items.Calls);
     }
 
     [Fact]

@@ -553,9 +553,9 @@ public sealed class MtCommandRouter
             return VendorAddBuy(Remainder(original, "addbuy"), partial: false);
 
         if (Matches(argument, "addsellp"))
-            return VendorAddSell(Remainder(argument, "addsellp"), partial: true);
+            return VendorAddSell(Remainder(original, "addsellp"), partial: true);
         if (Matches(argument, "addsell"))
-            return VendorAddSell(Remainder(argument, "addsell"), partial: false);
+            return VendorAddSell(Remainder(original, "addsell"), partial: false);
 
         if (argument == "buy")
             return vendor.BuyAll().Status == PluginVendorCommandStatus.Sent;

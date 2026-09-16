@@ -107,6 +107,26 @@ public sealed class TinkeringToolsHostTests
     }
 
     [Fact]
+    public void DetachRaisesChangedSoACachedTabEmpties()
+    {
+        // M6: TinkeringPageViewModel caches its row projection until
+        // Changed fires -- Detach() must raise it too, or the cached tab
+        // keeps showing stale rows across a logoff/Disable().
+        (FakeHost host, TinkeringToolsHost toolsHost, _) = Make();
+        host.Automation.Objects.Objects.Add(new PluginWorldObject(1u, 0u, "Sword", PluginObjectClass.MeleeWeapon, 0u, 500u, 0u));
+        host.Selection.Select(1u);
+        toolsHost.AddSelectedItem();
+
+        int changedCount = 0;
+        toolsHost.Changed += () => changedCount++;
+
+        toolsHost.Detach();
+
+        Assert.True(changedCount > 0);
+        Assert.Empty(toolsHost.Rows);
+    }
+
+    [Fact]
     public void SelectRowSelectsTheRowsObject()
     {
         (FakeHost host, TinkeringToolsHost toolsHost, _) = Make();

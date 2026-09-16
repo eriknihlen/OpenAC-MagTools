@@ -246,4 +246,33 @@ public sealed class InventoryExporterTests
             host.ChatLines,
             line => line.Contains("never received identification data", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void GiveUpWithAnUnavailableClipboardOnlyPrintsTheClipboardMessage()
+    {
+        // LOW-8 (P10 review): the give-up branch printed "N item(s) never
+        // received identification data..." unconditionally, then called
+        // Stop(clipboardSet), which ALSO prints "Clipboard is unavailable;
+        // nothing was copied." when the write failed -- two contradictory
+        // messages for the same failed export (nothing was copied, so
+        // reporting how many items were missing from a copy that never
+        // happened is misleading).
+        (FakeHost host, _, _, InventoryExporter exporter) = Build();
+        AddOwnedSword(host, 101u, identified: false);
+        host.Clipboard.Available = false;
+
+        exporter.ExportToClipboard(ExportGroups.Inventory);
+        host.Events.RaiseTick(0.1); // request pass
+
+        for (int i = 0; i < 300 && exporter.IsRunning; i++)
+            host.Events.RaiseTick(0.1);
+
+        Assert.False(exporter.IsRunning);
+        Assert.Contains(
+            host.ChatLines,
+            line => line.Contains("Clipboard is unavailable; nothing was copied.", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            host.ChatLines,
+            line => line.Contains("never received identification data", StringComparison.Ordinal));
+    }
 }

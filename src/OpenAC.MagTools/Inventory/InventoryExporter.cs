@@ -200,8 +200,17 @@ public sealed class InventoryExporter
         if (_idRetryCount > MaxIdRetries)
         {
             bool clipboardSet = ExportObjects(selected);
-            _chat.Write(
-                pending.Count + " item(s) never received identification data and were exported without it.");
+            // LOW-8: only report the missing-id count when something was
+            // actually copied -- a failed clipboard write already reports
+            // "Clipboard is unavailable; nothing was copied." via Stop(),
+            // and pairing that with "N items were exported without it" is
+            // a contradiction (nothing was exported at all).
+            if (clipboardSet)
+            {
+                _chat.Write(
+                    pending.Count + " item(s) never received identification data and were exported without it.");
+            }
+
             Stop(clipboardSet);
             return;
         }

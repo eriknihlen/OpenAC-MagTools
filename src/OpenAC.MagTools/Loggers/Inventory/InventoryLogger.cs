@@ -108,6 +108,13 @@ public sealed class InventoryLogger
     {
         if (!_settings.InventoryLogger.Value)
             return;
+        // The original hooks CreateObject and ChangeObject (any change, not
+        // only ident). This narrows to Created/IdentReceived because those
+        // are the only PluginObjectChangeKind values that can plausibly flip
+        // "needs an id request" or "just got its id" for an owned item; an
+        // ordinary property Updated never does. If a real gap shows up here
+        // (an item whose id-worthiness only becomes knowable on a later
+        // Updated), widen this back to include it.
         if (change.Kind != PluginObjectChangeKind.Created && change.Kind != PluginObjectChangeKind.IdentReceived)
             return;
 
@@ -126,13 +133,24 @@ public sealed class InventoryLogger
             return;
         }
 
+        // A TryGet miss means the object already left the table between the
+        // event firing and this handler running (a Released can be queued
+        // right behind a Created in the same delivery batch) -- there is
+        // nothing to request an id for, so this silently skips rather than
+        // restoring a synthetic default PluginWorldObject.
         if (!_host.Automation.Objects.TryGet(change.ObjectId, out PluginWorldObject wo))
             return;
         if (wo.HasAppraisalData || !ObjectClassNeedsIdent(wo.ObjectClass, wo.Name))
             return;
-        if (!_requestedIds.Add(change.ObjectId))
-            return;
+        // H7: the container check must run BEFORE marking the id as
+        // requested. An object seen on the ground (not yet in my container)
+        // must not get poisoned into _requestedIds -- otherwise once it's
+        // picked up, this handler fires again for the same id but
+        // _requestedIds.Add already returns false, and its id is never
+        // actually requested.
         if (wo.ContainerObjectId != _host.Automation.Character.ObjectId)
+            return;
+        if (!_requestedIds.Add(change.ObjectId))
             return;
 
         _host.Automation.Objects.Identify(change.ObjectId);

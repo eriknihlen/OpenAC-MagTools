@@ -120,4 +120,29 @@ public sealed class InventoryLoggerTests
 
         Assert.Equal([2u], host.Automation.Objects.IdentifyRequests);
     }
+
+    [Fact]
+    public void AnItemSeenOnTheGroundStillGetsItsIdRequestedOncePickedUp()
+    {
+        // H7: the container check must run BEFORE _requestedIds records the
+        // id, or an object first seen on the ground (not yet in my
+        // container) poisons _requestedIds and never gets a real request
+        // once it's actually picked up.
+        (FakeHost host, ChatOutput chat, InventoryManagementSettings settings) = Make();
+        host.Storage.WriteText("ACServer/Acdream.Inventory.xml", "<ArrayOfMyWorldObject></ArrayOfMyWorldObject>");
+        var logger = new InventoryLogger(host, chat, settings);
+        logger.Start("ACServer", "Acdream");
+
+        // First seen on the ground: some other container (or none), not me.
+        host.Automation.Objects.Objects.Add(new PluginWorldObject(3u, 0u, "Ring", PluginObjectClass.Jewelry, 0u, 0u, 0u) { HasAppraisalData = false });
+        host.Events.RaiseObjectChanged(3u, PluginObjectChangeKind.Created);
+
+        Assert.Empty(host.Automation.Objects.IdentifyRequests);
+
+        // Now picked up into my container.
+        host.Automation.Objects.Objects[0] = host.Automation.Objects.Objects[0] with { ContainerObjectId = 500u };
+        host.Events.RaiseObjectChanged(3u, PluginObjectChangeKind.Created);
+
+        Assert.Equal([3u], host.Automation.Objects.IdentifyRequests);
+    }
 }

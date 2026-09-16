@@ -168,7 +168,11 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _chatLogger?.Start(_scheduler, _session.WorldName, _session.CharacterName);
     }
 
-    private void OnSessionLogoff() => _chatLogger?.Stop();
+    private void OnSessionLogoff()
+    {
+        _chatLogger?.Stop();
+        _chatFilter?.OnLogoff();
+    }
 
     /// <summary>
     /// Caps <see cref="_reportedTickExceptions"/> so a tick loop that throws
@@ -208,10 +212,11 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
             }
             else
             {
-                // At the cap: stop tracking new distinct shapes (the log
-                // above already has every occurrence), but still surface
-                // this one to chat rather than silently dropping it.
-                _chat?.WriteException(exception);
+                // At the cap: a tick loop throwing this many DIFFERENT
+                // exception shapes is itself the flood the dedup exists to
+                // stop — the log above already has every occurrence, so
+                // this stays log-only rather than reporting every further
+                // distinct shape to chat once per tick.
             }
         }
     }

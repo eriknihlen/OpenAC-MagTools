@@ -176,6 +176,44 @@ public sealed class ChatClassifierClassifyTests
     }
 
     [Fact]
+    public void SpeakerClassSkipsTheNameFallbackForAChannelLine()
+    {
+        // A received channel broadcast's SenderObjectId is ALWAYS 0
+        // (ChatLog.OnChannelBroadcast hardcodes it), but a channel speaker
+        // is, in practice, never an NPC — the fallback must not run for it
+        // even when the caller supplies one.
+        var calls = new List<string>();
+        Func<string, PluginObjectClass?> fallback = name =>
+        {
+            calls.Add(name);
+            return PluginObjectClass.Npc;
+        };
+
+        ChatLine line = ChatClassifier.Classify(
+            _host.ChannelSay("General", "Bob", "hi"), _host.Automation, fallback);
+
+        Assert.Empty(calls);
+        Assert.Null(line.SpeakerClass);
+    }
+
+    [Fact]
+    public void SpeakerClassIsNullForASystemLineEvenWithANonzeroSenderObjectId()
+    {
+        // ChatLog.OnPlayerKilled puts the VICTIM's guid in SenderObjectId
+        // for a Kind == System death message — that id is not a speaker,
+        // and Objects.TryGet must never be asked about it.
+        _host.Automation.Objects.Objects.Add(
+            new PluginWorldObject(9u, 0u, "Ruschk Warlord", PluginObjectClass.Monster, 0u, 0u, 0u));
+        var message = new PluginChatMessage(
+            1, 9u, (int)ChatMessageKind.System, "", "You have slain Ruschk Warlord!", "");
+
+        ChatLine line = ChatClassifier.Classify(message, _host.Automation);
+
+        Assert.Null(line.SpeakerClass);
+        Assert.False(line.IsNpc);
+    }
+
+    [Fact]
     public void IsNpcTrueForVendorMonsterAndPlainNpcOnly()
     {
         Assert.True(new ChatLine(
@@ -200,6 +238,20 @@ public sealed class ChatClassifierClassifyTests
     [Fact]
     public void IsSpellCastRequiresChat()
         => Assert.False(Classify(_host.System("Zojak arwreth")).IsSpellCast(true, true));
+
+    [Fact]
+    public void IsSpellCastIsLocalSpeechOnlyEvenForOtherChatKinds()
+    {
+        // The original's two regexes anchor on "You say"/"X says" only —
+        // never a shout (ranged speech), a tell, or a channel line, even one
+        // whose body starts with the exact same spell word.
+        Assert.False(Classify(_host.Tell("Bob", "Zojak arwreth")).IsSpellCast(true, true));
+        Assert.False(Classify(_host.YouTell("Bob", "Zojak arwreth")).IsSpellCast(true, true));
+        Assert.False(
+            Classify(_host.ChannelSay("General", "Bob", "Zojak arwreth")).IsSpellCast(true, true));
+        Assert.False(
+            Classify(_host.Say("Bob", "Zojak arwreth", ranged: true)).IsSpellCast(true, true));
+    }
 
     [Fact]
     public void IsSpellCastMineHonorsTheMineFlag()

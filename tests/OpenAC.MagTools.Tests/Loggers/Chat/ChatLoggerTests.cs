@@ -35,6 +35,24 @@ public sealed class ChatLoggerTests
     }
 
     [Fact]
+    public void TryClassifyKeepsATellOrChannelLineThatStartsWithASpellWord()
+    {
+        // The spell-cast drop is local-speech-only (see ChatLine.IsSpellCast's
+        // remarks) — a tell or channel line that merely starts with the same
+        // word is ordinary chat and gets tagged/logged like any other.
+        var host = new FakeHost();
+
+        Assert.True(TryClassify(
+            host, host.Tell("Bob", "Zojak arwreth"), out ChatClassifier.ChatChannels tellType));
+        Assert.Equal(ChatClassifier.ChatChannels.Tells, tellType);
+
+        Assert.True(TryClassify(
+            host, host.ChannelSay("General", "Bob", "Zojak arwreth"),
+            out ChatClassifier.ChatChannels channelType));
+        Assert.Equal(ChatClassifier.ChatChannels.General, channelType);
+    }
+
+    [Fact]
     public void TryClassifyDropsNonChatLines()
     {
         var host = new FakeHost();

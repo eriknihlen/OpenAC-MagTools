@@ -146,6 +146,17 @@ public sealed class ChatFilterTests
         Assert.False(Suppressed(_host.Say("Bob", "Zojak arwreth", mine: false)));
     }
 
+    [Fact]
+    public void SpellCastingMineLeavesATellAndAChannelLineAlone()
+    {
+        // The original anchored on "You say, \"..."/"<Tell...> says, \"..."
+        // only — never a tell or a channel line, even one whose body starts
+        // with a spell word.
+        _settings.Filters.SpellCastingMine.Value = true;
+        Assert.False(Suppressed(_host.YouTell("Bob", "Zojak arwreth")));
+        Assert.False(Suppressed(_host.ChannelSay("General", "Bob", "Zojak arwreth", mine: true)));
+    }
+
     // ---- 9. SpellCastingOthers -----------------------------------------------
 
     [Fact]
@@ -162,6 +173,14 @@ public sealed class ChatFilterTests
     {
         _settings.Filters.SpellCastingOthers.Value = true;
         Assert.False(Suppressed(_host.Say("Bob", "Malar tuash", mine: true)));
+    }
+
+    [Fact]
+    public void SpellCastingOthersLeavesATellAndAChannelLineAlone()
+    {
+        _settings.Filters.SpellCastingOthers.Value = true;
+        Assert.False(Suppressed(_host.Tell("Bob", "Malar tuash")));
+        Assert.False(Suppressed(_host.ChannelSay("General", "Bob", "Malar tuash")));
     }
 
     // ---- 10. SpellCastFizzles -------------------------------------------------
@@ -377,6 +396,32 @@ public sealed class ChatFilterTests
         AddWorldObject(1u, "+Acdream", PluginObjectClass.Npc);
         _settings.Filters.NpcChatter.Value = true;
         Assert.False(Suppressed(_host.Say("+Acdream", "Hear ye!", mine: true)));
+    }
+
+    [Fact]
+    public void NpcChatterFallsBackToNameLookupForZeroIdLocalSpeech()
+    {
+        // A local-speech line with no SenderObjectId at all (id 0, not the
+        // local player) is the by-name fallback's actual reason to exist.
+        AddWorldObject(1u, "Ghost Voice", PluginObjectClass.Npc);
+        _settings.Filters.NpcChatter.Value = true;
+        Assert.True(Suppressed(_host.Say("Ghost Voice", "Hear ye!", fromObjectId: 0u)));
+    }
+
+    [Fact]
+    public void NpcChatterNameCacheIsInvalidatedOnLogoff()
+    {
+        _settings.Filters.NpcChatter.Value = true;
+
+        // First lookup with no matching world object: caches "not found".
+        Assert.False(Suppressed(_host.Say("Ghost Voice", "Hear ye!", fromObjectId: 0u)));
+
+        // A stale cache would keep reporting "not found" for the same name
+        // even after the object shows up (a fresh session's world state).
+        AddWorldObject(1u, "Ghost Voice", PluginObjectClass.Npc);
+        _filter.OnLogoff();
+
+        Assert.True(Suppressed(_host.Say("Ghost Voice", "Hear ye!", fromObjectId: 0u)));
     }
 
     // ---- 25. MasterArbitratorSpam ---------------------------------------------

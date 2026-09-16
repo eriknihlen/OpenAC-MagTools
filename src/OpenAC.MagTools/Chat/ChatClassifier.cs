@@ -121,9 +121,17 @@ public static class ChatClassifier
         /// shape — restricted by <paramref name="mine"/> /
         /// <paramref name="others"/> to which speaker it should match for.
         /// </summary>
+        /// <remarks>
+        /// Local (unshouted) speech ONLY: the original's two regexes anchor
+        /// on <c>"^You say, \"..."</c> and
+        /// <c>"^&lt;Tell:...&gt;...&lt;\Tell&gt; says, \"..."</c> — never
+        /// "shouts" (ranged speech), a tell, or a channel line. A retail
+        /// incantation is local speech; nothing else counts as one here even
+        /// if its text happens to start with a spell word.
+        /// </remarks>
         public bool IsSpellCast(bool mine, bool others)
         {
-            if (!IsChat)
+            if (Kind != ChatMessageKind.LocalSpeech)
                 return false;
             if (!(IsMine ? mine : others))
                 return false;
@@ -149,10 +157,15 @@ public static class ChatClassifier
 
     /// <summary>
     /// Classifies <paramref name="message"/> from its structured fields.
-    /// <paramref name="resolveSpeakerByName"/> is consulted only when
-    /// <see cref="PluginChatMessage.SenderObjectId"/> is 0 (a self-sent tell,
-    /// or the rare System-shaped fallback below); a caller that has no class
-    /// rule enabled should pass null so no name-based lookup ever runs.
+    /// <paramref name="resolveSpeakerByName"/> is consulted only for a Tell,
+    /// LocalSpeech, or RangedSpeech line whose
+    /// <see cref="PluginChatMessage.SenderObjectId"/> is 0 (a self-sent
+    /// tell — the only realistic zero-id case for those three kinds); a
+    /// received Channel broadcast ALSO always carries a 0 id
+    /// (<c>ChatLog.OnChannelBroadcast</c> hardcodes it), but its speaker is
+    /// effectively always a player, so the fallback is never worth running
+    /// for it. A caller with no class rule enabled should pass null so no
+    /// name-based lookup ever runs.
     /// </summary>
     public static ChatLine Classify(
         in PluginChatMessage message,
@@ -172,11 +185,14 @@ public static class ChatClassifier
         // NPC dialogue, some quest text) arrive with Kind == System instead
         // of riding the structured speech path, but are still shaped exactly
         // like retail's own "X says, ..." / "X tells you, ..." display text.
-        // Recognize that shape with the legacy regexes so a filter written
-        // against NPC chatter still catches it — this is the only production
-        // use of those regexes; see their remarks for the other one (a
-        // hand-authored legacy import file using the old decorated-text
-        // shape rather than the current comma-separated log format).
+        // Recognize that shape with the legacy regexes so a Source-based
+        // rule (MasterArbitratorSpam, say — it never gates on Kind) still
+        // catches it — this is the only production use of those regexes;
+        // see their remarks for the other one (a hand-authored legacy import
+        // file using the old decorated-text shape rather than the current
+        // comma-separated log format). Kind itself stays System either way,
+        // so a rule that DOES gate on a speech Kind (NpcChatter, VendorTells)
+        // never matches this path — same as it never matched before.
         if (kind == ChatMessageKind.System && IsChat(text))
         {
             isChat = true;
@@ -186,7 +202,7 @@ public static class ChatClassifier
         }
 
         PluginObjectClass? speakerClass = ResolveSpeakerClass(
-            message.SenderObjectId, source, automation, resolveSpeakerByName);
+            kind, message.SenderObjectId, source, automation, resolveSpeakerByName);
 
         return new ChatLine(
             kind,
@@ -263,16 +279,38 @@ public static class ChatClassifier
         string.IsNullOrEmpty(sender) || string.Equals(sender, "You", StringComparison.Ordinal);
 
     private static PluginObjectClass? ResolveSpeakerClass(
+        ChatMessageKind kind,
         uint senderObjectId,
         string source,
         IAutomationSurface automation,
         Func<string, PluginObjectClass?>? resolveSpeakerByName)
     {
+        // A System line's SenderObjectId is not a speaker id at all —
+        // ChatLog.OnPlayerKilled puts the VICTIM's guid there (with the
+        // killer's in ChannelId) for a death message, the only System case
+        // that carries a nonzero one. Looking it up via Objects.TryGet would
+        // silently report the victim's class as if it were "who said this".
+        if (kind == ChatMessageKind.System)
+            return null;
+
         if (senderObjectId != 0)
         {
             return automation.Objects.TryGet(senderObjectId, out PluginWorldObject worldObject)
                 ? worldObject.ObjectClass
                 : null;
+        }
+
+        // The by-name fallback only makes sense for the three kinds whose
+        // zero-id case is a genuine "no id available" gap (Tell's self-sent
+        // shape, or plain local/ranged speech): a Channel broadcast's id is
+        // ALWAYS 0 (OnChannelBroadcast hardcodes it) regardless of who is
+        // speaking, so running a name lookup for it would be pure overhead
+        // for a case that is, in practice, never an NPC.
+        if (kind is not (ChatMessageKind.Tell
+            or ChatMessageKind.LocalSpeech
+            or ChatMessageKind.RangedSpeech))
+        {
+            return null;
         }
 
         if (resolveSpeakerByName is null || string.IsNullOrEmpty(source))

@@ -27,10 +27,16 @@ public sealed class ChatFilter
     /// <summary>
     /// Speaker name to resolved world-object class, built lazily and only
     /// while at least one of the three class-based rules is on
-    /// (<see cref="NeedsSpeakerClassByName"/>). Covers only the rare
-    /// zero-<c>SenderObjectId</c> case — the common path resolves a speaker
-    /// in O(1) via <see cref="IWorldObjectAutomation.TryGet"/> straight off
-    /// <c>SenderObjectId</c> and never touches this cache at all.
+    /// (<see cref="NeedsSpeakerClassByName"/>). <see cref="ChatClassifier.Classify"/>
+    /// only ever consults this for a Tell/LocalSpeech/RangedSpeech line whose
+    /// <c>SenderObjectId</c> is 0 (a self-sent tell, or plain local/ranged
+    /// speech with no id) — never a channel line, whose <c>SenderObjectId</c>
+    /// is also always 0 but is, in practice, never an NPC. The common path
+    /// (a real <c>SenderObjectId</c>) resolves a speaker in O(1) via
+    /// <see cref="IWorldObjectAutomation.TryGet"/> and never touches this
+    /// cache at all. Cleared on <see cref="OnLogoff"/> as well as
+    /// <see cref="Disable"/>, since object ids and names from a previous
+    /// session are not guaranteed to mean the same thing in a new one.
     /// </summary>
     private Dictionary<string, PluginObjectClass>? _speakerClassByName;
 
@@ -50,6 +56,15 @@ public sealed class ChatFilter
         _registration = null;
         _speakerClassByName = null;
     }
+
+    /// <summary>
+    /// Drops the speaker-class-by-name cache without touching the filter
+    /// registration itself — called on session logoff so a name→class
+    /// mapping from the session that just ended cannot leak into the next
+    /// one (object ids and even names are not guaranteed stable across a
+    /// reconnect).
+    /// </summary>
+    public void OnLogoff() => _speakerClassByName = null;
 
     private bool NeedsSpeakerClassByName =>
         _settings.VendorTells.Value || _settings.MonsterTell.Value || _settings.NpcChatter.Value;

@@ -191,15 +191,34 @@ public sealed class TinkeringPageViewModel : ListPageViewModel
         _tinkeringHost = tinkeringHost;
 
         AddSelectedItem = () => _tinkeringHost?.AddSelectedItem();
-        Start = () => _tinkeringHost?.StartScan(SelectedMaterial);
+        Start = () => _tinkeringHost?.StartScan(() => SelectedMaterial);
         Stop = () => _tinkeringHost?.StopScan();
         SelectMaterial = material => SelectedMaterial = material;
         SetMinimumPercent = text => MinimumPercentText = text;
         SetTargetTotalTinks = text => TargetTotalTinksText = text;
         DeleteRow = index => _tinkeringHost?.DeleteRow(index);
+
+        Resubscribe();
     }
 
     protected override void OnRowSelected(int index) => _tinkeringHost?.SelectRow(index);
+
+    public void Dispose()
+    {
+        if (_tinkeringHost is null || !_subscribed)
+            return;
+        _subscribed = false;
+        _tinkeringHost.Changed -= _onChanged!;
+    }
+
+    public void Resubscribe()
+    {
+        if (_tinkeringHost is null || _subscribed)
+            return;
+        _subscribed = true;
+        _onChanged = () => _dirty = true;
+        _tinkeringHost.Changed += _onChanged;
+    }
 
     public Action AddSelectedItem { get; }
     public Action Start { get; }
@@ -226,14 +245,43 @@ public sealed class TinkeringPageViewModel : ListPageViewModel
 
     public Action<string> SetTargetTotalTinks { get; }
 
-    private IReadOnlyList<Macros.TinkeringRow> Rows => _tinkeringHost?.Rows ?? [];
+    private Action? _onChanged;
+    private bool _subscribed;
+    private bool _dirty = true;
+    private IReadOnlyList<string> _cachedCurrentMarks = [];
+    private IReadOnlyList<uint> _cachedIcons = [];
+    private IReadOnlyList<string> _cachedNames = [];
+    private IReadOnlyList<string> _cachedWork = [];
+    private IReadOnlyList<string> _cachedTinks = [];
+    private IReadOnlyList<uint> _cachedDeleteIcons = [];
 
-    public IReadOnlyList<string> CurrentMarks => Rows.Select(static _ => string.Empty).ToList();
-    public IReadOnlyList<uint> Icons => Rows.Select(row => row.IconId).ToList();
-    public IReadOnlyList<string> Names => Rows.Select(row => row.Name).ToList();
-    public IReadOnlyList<string> Work => Rows.Select(row => row.Work).ToList();
-    public IReadOnlyList<string> Tinks => Rows.Select(row => row.Tinks).ToList();
-    public IReadOnlyList<uint> DeleteIcons => Rows.Select(static _ => 0x60011F8u).ToList();
+    /// <summary>
+    /// Cached until <see cref="Macros.TinkeringToolsHost.Changed"/> reports a
+    /// row add/delete/ident-fill (P6 re-review LOW: the event existed but was
+    /// never subscribed to -- every property below re-derived a fresh list
+    /// via LINQ on every single poll, dirty or not).
+    /// </summary>
+    private void RefreshIfDirty()
+    {
+        if (!_dirty)
+            return;
+        _dirty = false;
+
+        IReadOnlyList<Macros.TinkeringRow> rows = _tinkeringHost?.Rows ?? [];
+        _cachedCurrentMarks = rows.Select(static _ => string.Empty).ToList();
+        _cachedIcons = rows.Select(row => row.IconId).ToList();
+        _cachedNames = rows.Select(row => row.Name).ToList();
+        _cachedWork = rows.Select(row => row.Work).ToList();
+        _cachedTinks = rows.Select(row => row.Tinks).ToList();
+        _cachedDeleteIcons = rows.Select(static _ => 0x60011F8u).ToList();
+    }
+
+    public IReadOnlyList<string> CurrentMarks { get { RefreshIfDirty(); return _cachedCurrentMarks; } }
+    public IReadOnlyList<uint> Icons { get { RefreshIfDirty(); return _cachedIcons; } }
+    public IReadOnlyList<string> Names { get { RefreshIfDirty(); return _cachedNames; } }
+    public IReadOnlyList<string> Work { get { RefreshIfDirty(); return _cachedWork; } }
+    public IReadOnlyList<string> Tinks { get { RefreshIfDirty(); return _cachedTinks; } }
+    public IReadOnlyList<uint> DeleteIcons { get { RefreshIfDirty(); return _cachedDeleteIcons; } }
 
     public Action<int> DeleteRow { get; }
 }

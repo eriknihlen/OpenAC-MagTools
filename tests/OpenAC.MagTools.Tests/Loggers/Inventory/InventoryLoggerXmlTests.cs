@@ -46,7 +46,10 @@ public sealed class InventoryLoggerXmlTests
         // wraps each key/value in an XmlSerializer-typed inner element
         // (bool -> "boolean", int -> "int") and writes lowercase true/false
         // -- not a flat <key>131</key>. A file this logger writes must be
-        // byte-shape compatible with one the original wrote.
+        // structurally interchangeable with one the original wrote (same
+        // element names/nesting/value shapes) -- not byte-shape identical;
+        // this writer has no <?xml ...?> declaration or xmlns:xsi/xsd
+        // attributes the way XmlSerializer's own default output does.
         var item = new MyWorldObjectRecord
         {
             HasIdData = true,

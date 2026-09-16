@@ -522,31 +522,96 @@ public sealed class CorpsePageViewModel : ListPageViewModel
 /// <summary>Trackers → Player, filled by P6's <see cref="PlayerTrackerHost"/>.</summary>
 public sealed class PlayerPageViewModel : ListPageViewModel
 {
+    private static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(10);
+
     private readonly PlayerTrackerSettings _settings;
     private readonly PlayerTrackerHost? _playerTrackerHost;
     private readonly IPluginHost? _host;
+    private readonly Func<DateTime> _now;
     // Stateful across accesses: the 10-second rate-limited re-sort (see
     // PlayerTrackerRowsBuilder) needs its own clock, not a fresh one per call.
     private readonly PlayerTrackerRowsBuilder _rowsBuilder = new();
 
+    private IReadOnlyList<PlayerRow> _cachedRows = [];
+    private IReadOnlyList<string> _cachedTimes = [];
+    private IReadOnlyList<string> _cachedNames = [];
+    private IReadOnlyList<string> _cachedCoordinates = [];
+    private bool _dirty = true;
+    private DateTime _lastBuild = DateTime.MinValue;
+    private Action<TrackedPlayer>? _onChanged;
+    private bool _subscribed;
+
     public PlayerPageViewModel(
         SettingsManager settings,
         PlayerTrackerHost? playerTrackerHost = null,
-        IPluginHost? host = null)
+        IPluginHost? host = null,
+        Func<DateTime>? now = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
         _settings = settings.PlayerTracker;
         _playerTrackerHost = playerTrackerHost;
         _host = host;
+        _now = now ?? (() => DateTime.UtcNow);
 
         ClearHistory = () => _playerTrackerHost?.Tracker.ClearStats();
         ToggleEnabled = () => _settings.Enabled.Value = !_settings.Enabled.Value;
         TogglePersistent = () =>
             _settings.Persistent.Value = !_settings.Persistent.Value;
+
+        Resubscribe();
     }
 
+    public void Dispose()
+    {
+        if (_playerTrackerHost is null || !_subscribed)
+            return;
+        _subscribed = false;
+        _playerTrackerHost.Tracker.ItemAdded -= _onChanged!;
+        _playerTrackerHost.Tracker.ItemChanged -= _onChanged!;
+        _playerTrackerHost.Tracker.ItemRemoved -= _onChanged!;
+    }
+
+    public void Resubscribe()
+    {
+        if (_playerTrackerHost is null || _subscribed)
+            return;
+        _subscribed = true;
+        _onChanged = _ => _dirty = true;
+        _playerTrackerHost.Tracker.ItemAdded += _onChanged;
+        _playerTrackerHost.Tracker.ItemChanged += _onChanged;
+        _playerTrackerHost.Tracker.ItemRemoved += _onChanged;
+    }
+
+    /// <summary>
+    /// Cached until the tracker reports a change OR 10 seconds have passed
+    /// since the last build (P6 re-review LOW: this used to call
+    /// <see cref="PlayerTrackerRowsBuilder.Build"/> -- which allocates a
+    /// fresh <c>Dictionary</c> plus a fresh <c>List&lt;PlayerRow&gt;</c> --
+    /// AND re-project three more fresh lists (Times/Names/Coordinates), on
+    /// every single property read, unconditionally). The 10-second fallback
+    /// mirrors <see cref="PlayerTrackerRowsBuilder"/>'s own internal re-sort
+    /// cadence: display order can go stale across that window even with no
+    /// <c>ItemChanged</c> in between (a tracked player's <c>LastSeen</c>
+    /// updates do fire ItemChanged today, but the fallback keeps this cache
+    /// honest even if that ever stops being true).
+    /// </summary>
     private IReadOnlyList<PlayerRow> Rows
-        => _playerTrackerHost is null ? [] : _rowsBuilder.Build(_playerTrackerHost.Tracker);
+    {
+        get
+        {
+            DateTime now = _now();
+            if (!_dirty && now - _lastBuild < RefreshInterval)
+                return _cachedRows;
+
+            _dirty = false;
+            _lastBuild = now;
+            _cachedRows = _playerTrackerHost is null ? [] : _rowsBuilder.Build(_playerTrackerHost.Tracker);
+            _cachedTimes = _cachedRows.Select(row => row.Time).ToList();
+            _cachedNames = _cachedRows.Select(row => row.Name).ToList();
+            _cachedCoordinates = _cachedRows.Select(row => row.Coords).ToList();
+            return _cachedRows;
+        }
+    }
 
     /// <summary>
     /// Selects through the SAME cached, rate-limited row projection the
@@ -563,9 +628,9 @@ public sealed class PlayerPageViewModel : ListPageViewModel
             _host.Selection.Select(rows[index].ObjectId);
     }
 
-    public IReadOnlyList<string> Times => Rows.Select(row => row.Time).ToList();
-    public IReadOnlyList<string> Names => Rows.Select(row => row.Name).ToList();
-    public IReadOnlyList<string> Coordinates => Rows.Select(row => row.Coords).ToList();
+    public IReadOnlyList<string> Times { get { _ = Rows; return _cachedTimes; } }
+    public IReadOnlyList<string> Names { get { _ = Rows; return _cachedNames; } }
+    public IReadOnlyList<string> Coordinates { get { _ = Rows; return _cachedCoordinates; } }
 
     public Action ClearHistory { get; }
 

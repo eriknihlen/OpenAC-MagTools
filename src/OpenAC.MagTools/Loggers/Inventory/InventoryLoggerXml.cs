@@ -15,9 +15,15 @@ namespace OpenAC.MagTools.Loggers.Inventory;
 /// XSD-primitive root name for the value's CLR type (<c>bool</c> -&gt;
 /// <c>boolean</c>, <c>double</c> -&gt; <c>double</c>, <c>int</c> -&gt; <c>int</c>,
 /// <c>string</c> -&gt; <c>string</c>), lowercase <c>true</c>/<c>false</c> for
-/// booleans (M2). This makes a file this logger writes byte-shape compatible
-/// with one the original wrote (and vice versa), not merely readable by our
-/// own importer.
+/// booleans (M2). This makes a file this logger writes STRUCTURALLY
+/// INTERCHANGEABLE with one the original wrote (and vice versa) -- same
+/// element names, nesting, and value shapes, so either importer can read
+/// either file -- not merely readable by our own importer. It is NOT
+/// byte-shape compatible: this writer emits no <c>&lt;?xml ...?&gt;</c>
+/// declaration and no <c>xmlns:xsi</c>/<c>xmlns:xsd</c> namespace attributes
+/// on the root element the way <c>XmlSerializer</c>'s own default output
+/// does, so a byte-for-byte diff against an original-written file will not
+/// match even when both parse to the same structure.
 /// </summary>
 public static class InventoryLoggerXml
 {

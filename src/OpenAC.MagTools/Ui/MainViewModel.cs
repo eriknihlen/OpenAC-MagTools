@@ -114,6 +114,8 @@ public sealed class MainViewModel : IDisposable
         Mana.Dispose();
         InventoryItems.Dispose();
         Corpse.Dispose();
+        Player.Dispose();
+        Tinkering.Dispose();
     }
 
     /// <summary>Reverses <see cref="Dispose"/> for a Disable()/Enable() cycle.</summary>
@@ -130,6 +132,8 @@ public sealed class MainViewModel : IDisposable
         Mana.Resubscribe();
         InventoryItems.Resubscribe();
         Corpse.Resubscribe();
+        Player.Resubscribe();
+        Tinkering.Resubscribe();
     }
 
     private enum TopTab { Trackers, Loggers, Tools, Misc }

@@ -40,6 +40,19 @@ public sealed class IdleActionManager
     private bool _confirmationArmed;
     private bool _running;
 
+    /// <summary>
+    /// Keyring object ids an id has already been requested for, this run --
+    /// P6 re-review: the original's Create/Change wake triggers really did
+    /// re-request every 2-second tick until IdentReceived, but that was a
+    /// side effect of Decal's own per-event dispatch, not a deliberate
+    /// "spam the server" design; a plugin identify can also be legitimately
+    /// <c>Refused</c>/<c>Busy</c> while a user appraisal is in flight (see
+    /// docs/plugin-api.md's Identify section), so repeating the SAME request
+    /// every tick wastes a slot without a matching benefit. Requested once
+    /// per object id until <c>HasAppraisalData</c> flips true.
+    /// </summary>
+    private readonly HashSet<uint> _keyringIdRequested = [];
+
     public IdleActionManager(IPluginHost host, InventoryManagementSettings settings)
     {
         ArgumentNullException.ThrowIfNull(host);
@@ -76,6 +89,7 @@ public sealed class IdleActionManager
             _host.Events.ConfirmationRequested -= _onConfirmation;
         _onConfirmation = null;
         _confirmationArmed = false;
+        _keyringIdRequested.Clear();
     }
 
     private void Think()
@@ -173,14 +187,23 @@ public sealed class IdleActionManager
                     {
                         // The original's wake triggers kept requesting id
                         // data for an unidentified keyring on every Create/
-                        // Change until IdentReceived (H3) -- without this,
-                        // a keyring that never happened to get appraised by
-                        // some other path could never become ring/dering
-                        // reachable.
-                        if (options.KeyRinger || options.KeyDeringer)
+                        // Change until IdentReceived (H3) -- without SOME
+                        // request, a keyring that never happened to get
+                        // appraised by some other path could never become
+                        // ring/dering reachable. Deduped to once per object
+                        // id (P6 re-review) rather than re-issued every
+                        // 2-second tick: see the remark on
+                        // _keyringIdRequested.
+                        if ((options.KeyRinger || options.KeyDeringer)
+                            && _keyringIdRequested.Add(item.ObjectId))
                             automation.Objects.Identify(item.ObjectId);
                         break;
                     }
+
+                    // Now appraised -- if it comes back unidentified again in
+                    // some future session (a fresh object id reuse, in
+                    // practice), it must be eligible for a fresh request.
+                    _keyringIdRequested.Remove(item.ObjectId);
                     automation.Objects.TryCaptureProperties(item.ObjectId, out PluginItemProperties properties);
                     int usesRemaining = properties.Ints.TryGetValue((uint)ItemModel.UsesRemainingKey, out int uses) ? uses : 0;
                     int keysHeld = properties.Ints.TryGetValue((uint)ItemModel.KeysHeldKey, out int keys) ? keys : 0;

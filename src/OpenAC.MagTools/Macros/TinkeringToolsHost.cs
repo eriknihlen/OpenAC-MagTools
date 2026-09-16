@@ -26,7 +26,7 @@ public sealed class TinkeringToolsHost
     private Action<PluginObjectChange>? _onObjectChanged;
     private IDisposable? _scanRegistration;
     private TickScheduler? _scheduler;
-    private string _material = Materials[0];
+    private Func<string> _materialProvider = () => Materials[0];
     private bool _attached;
     private bool _scanning;
 
@@ -112,13 +112,21 @@ public sealed class TinkeringToolsHost
         _host.Selection.Select(_rows[index].ObjectId);
     }
 
-    /// <summary><c>TinkeringStart_Hit</c>: request every unidentified matching salvage bag once, then start the 1 s timer.</summary>
-    public void StartScan(string material)
+    /// <summary>
+    /// <c>TinkeringStart_Hit</c>: request every unidentified matching salvage
+    /// bag once, then start the 1 s timer. <paramref name="materialProvider"/>
+    /// is re-invoked on every tick (see <see cref="ScanTick"/>) rather than
+    /// captured once, matching the original reading the dropdown's CURRENT
+    /// selection every timer tick rather than snapshotting it at Start time
+    /// -- a material change mid-scan takes effect on the very next tick.
+    /// </summary>
+    public void StartScan(Func<string> materialProvider)
     {
+        ArgumentNullException.ThrowIfNull(materialProvider);
         if (_scanning || _scheduler is null)
             return;
         _scanning = true;
-        _material = material;
+        _materialProvider = materialProvider;
 
         foreach (PluginInventoryItem item in _host.Automation.Items.CaptureOwnedItems())
         {
@@ -181,7 +189,7 @@ public sealed class TinkeringToolsHost
             return false;
 
         int materialId = properties.Ints.TryGetValue((uint)ItemModel.MaterialKey, out int value) ? value : 0;
-        return Dictionaries.MaterialInfo.TryGetValue(materialId, out string? name) && name == _material;
+        return Dictionaries.MaterialInfo.TryGetValue(materialId, out string? name) && name == _materialProvider();
     }
 
     /// <summary><c>WorldFilter_ChangeObject</c>: fills Work/Tinks for a tracked row once its id arrives.</summary>
@@ -197,8 +205,11 @@ public sealed class TinkeringToolsHost
         if (!_host.Automation.Objects.TryCaptureProperties(change.ObjectId, out PluginItemProperties properties))
             return;
 
-        int workmanship = properties.Ints.TryGetValue((uint)ItemModel.WorkmanshipKey, out int work) ? work : 0;
-        int tinks = properties.Ints.TryGetValue((uint)ItemModel.NumberTimesTinkeredKey, out int tinksValue) ? tinksValue : 0;
+        // -1, not 0, matches the original's MyWorldObject property-lookup
+        // sentinel for "this int property is not present on the item" --
+        // 0 is a real, distinct workmanship/tinker-count value.
+        int workmanship = properties.Ints.TryGetValue((uint)ItemModel.WorkmanshipKey, out int work) ? work : -1;
+        int tinks = properties.Ints.TryGetValue((uint)ItemModel.NumberTimesTinkeredKey, out int tinksValue) ? tinksValue : -1;
 
         TinkeringRow current = _rows[index];
         _rows[index] = current with

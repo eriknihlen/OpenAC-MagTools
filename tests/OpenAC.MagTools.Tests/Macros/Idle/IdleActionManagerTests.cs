@@ -194,6 +194,31 @@ public sealed class IdleActionManagerTests
     }
 
     [Fact]
+    public void UnappraisedKeyringOnlyRequestsAnIdOncePerObjectNotEveryTick()
+    {
+        // P6 re-review: the original's per-event wake triggers happened to
+        // re-request every tick the keyring stayed unidentified; that was
+        // never a deliberate design, and a plugin identify request costs a
+        // real appraisal-queue slot, so this port dedupes to one request per
+        // object id until it comes back appraised.
+        (FakeHost host, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        settings.KeyRinger.Value = true;
+        host.Automation.Items.Owned.Add(Item(1u, "Burning Sands Keyring", PluginObjectClass.Misc));
+        host.Automation.Objects.Objects.Add(new PluginWorldObject(1u, 0u, "Burning Sands Keyring", PluginObjectClass.Misc, 0u, 500u, 0u)
+        {
+            HasAppraisalData = false,
+        });
+
+        var manager = new IdleActionManager(host, settings);
+        manager.Start(scheduler);
+        scheduler.Tick(2.0);
+        scheduler.Tick(2.0);
+        scheduler.Tick(2.0);
+
+        Assert.Single(host.Automation.Objects.IdentifyRequests, static id => id == 1u);
+    }
+
+    [Fact]
     public void UnappraisedKeyringDoesNotRequestAnIdWhenNeitherRingingNorDeringingIsOn()
     {
         (FakeHost host, InventoryManagementSettings settings, TickScheduler scheduler) = Make();

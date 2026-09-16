@@ -146,7 +146,7 @@ public sealed class TinkeringToolsHostTests
         AddSalvage(host, 2u, "Iron");
         AddSalvage(host, 3u, "Steel"); // wrong material
 
-        toolsHost.StartScan("Iron");
+        toolsHost.StartScan(() => "Iron");
 
         Assert.Contains(1u, host.Automation.Objects.IdentifyRequests);
         Assert.Contains(2u, host.Automation.Objects.IdentifyRequests);
@@ -159,7 +159,7 @@ public sealed class TinkeringToolsHostTests
         (FakeHost host, TinkeringToolsHost toolsHost, TickScheduler scheduler) = Make();
         AddSalvage(host, 1u, "Iron");
 
-        toolsHost.StartScan("Iron");
+        toolsHost.StartScan(() => "Iron");
         host.Automation.Objects.IdentifyRequests.Clear(); // clear the initial burst request
 
         // The bag never actually becomes identified in this test, so a tick
@@ -181,7 +181,7 @@ public sealed class TinkeringToolsHostTests
     {
         (FakeHost host, TinkeringToolsHost toolsHost, TickScheduler scheduler) = Make();
         AddSalvage(host, 1u, "Iron");
-        toolsHost.StartScan("Iron");
+        toolsHost.StartScan(() => "Iron");
 
         host.Automation.Combat.Snapshot = new PluginCombatSnapshot(0u, PluginCombatMode.Melee, default, 0f, 0f, false, false, false, false);
         scheduler.Tick(1.0);
@@ -194,7 +194,7 @@ public sealed class TinkeringToolsHostTests
     {
         (FakeHost host, TinkeringToolsHost toolsHost, TickScheduler scheduler) = Make();
         AddSalvage(host, 1u, "Iron");
-        toolsHost.StartScan("Iron");
+        toolsHost.StartScan(() => "Iron");
         host.Automation.Items.IsBusy = true;
         host.Automation.Objects.IdentifyRequests.Clear();
 
@@ -209,7 +209,7 @@ public sealed class TinkeringToolsHostTests
     {
         (FakeHost host, TinkeringToolsHost toolsHost, TickScheduler scheduler) = Make();
         AddSalvage(host, 1u, "Iron");
-        toolsHost.StartScan("Iron");
+        toolsHost.StartScan(() => "Iron");
         host.Automation.Objects.IdentifyRequests.Clear();
 
         toolsHost.StopScan();
@@ -217,5 +217,48 @@ public sealed class TinkeringToolsHostTests
 
         Assert.Empty(host.Automation.Objects.IdentifyRequests);
         Assert.False(toolsHost.IsScanning);
+    }
+
+    [Fact]
+    public void ScanTickReReadsTheMaterialProviderRatherThanTheValueCapturedAtStart()
+    {
+        // The original re-reads the dropdown's CURRENT selection on every
+        // timer tick, not just once when Start was clicked -- a material
+        // switch mid-scan takes effect on the very next tick.
+        (FakeHost host, TinkeringToolsHost toolsHost, TickScheduler scheduler) = Make();
+        AddSalvage(host, 1u, "Iron");
+        AddSalvage(host, 2u, "Steel");
+
+        string selected = "Iron";
+        toolsHost.StartScan(() => selected);
+        host.Automation.Objects.IdentifyRequests.Clear();
+
+        // Switch the live selection AFTER Start captured the provider, not the value.
+        selected = "Steel";
+        scheduler.Tick(1.0);
+
+        Assert.Contains(2u, host.Automation.Objects.IdentifyRequests);
+        Assert.DoesNotContain(1u, host.Automation.Objects.IdentifyRequests);
+    }
+
+    [Fact]
+    public void IdentReceivedDefaultsWorkAndTinksToMinusOneWhenThePropertiesAreAbsent()
+    {
+        // -1 (not 0) matches the original's MyWorldObject property-lookup
+        // sentinel for "not present" -- 0 is a real, distinct value.
+        (FakeHost host, TinkeringToolsHost toolsHost, _) = Make();
+        host.Automation.Objects.Objects.Add(new PluginWorldObject(1u, 0u, "Sword", PluginObjectClass.MeleeWeapon, 0u, 500u, 0u));
+        host.Selection.Select(1u);
+        toolsHost.AddSelectedItem();
+
+        host.Automation.Objects.Properties[1u] = new PluginItemProperties(
+            new Dictionary<uint, int>(),
+            new Dictionary<uint, long>(), new Dictionary<uint, bool>(), new Dictionary<uint, double>(),
+            new Dictionary<uint, string>(), new Dictionary<uint, uint>(), new Dictionary<uint, uint>());
+        host.Events.RaiseObjectChanged(1u, PluginObjectChangeKind.IdentReceived);
+
+        var row = Assert.Single(toolsHost.Rows);
+        Assert.Equal("-1", row.Work);
+        Assert.Equal("-1", row.Tinks);
     }
 }

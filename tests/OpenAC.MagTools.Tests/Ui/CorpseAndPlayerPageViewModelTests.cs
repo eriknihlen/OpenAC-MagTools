@@ -141,6 +141,48 @@ public sealed class CorpseAndPlayerPageViewModelTests
     }
 
     [Fact]
+    public void PlayerPageCachesRowsUntilTheTrackerReportsAChange()
+    {
+        var host = new FakeHost();
+        var settings = new SettingsManager(new SettingsFile(host.Storage));
+        var playerHost = new PlayerTrackerHost(host, settings.PlayerTracker);
+        playerHost.Tracker.ProcessWorldObject(new PlayerObservation(1u, "Bob", 1, 0, 0, 0), "Acdream");
+
+        var vm = new PlayerPageViewModel(settings, playerHost, host);
+
+        IReadOnlyList<string> first = vm.Names;
+        IReadOnlyList<string> second = vm.Names;
+        Assert.Same(first, second); // no rebuild -- same cached list instance
+
+        playerHost.Tracker.ProcessWorldObject(new PlayerObservation(2u, "Alice", 1, 0, 0, 0), "Acdream");
+
+        IReadOnlyList<string> third = vm.Names;
+        Assert.NotSame(second, third);
+        Assert.Equal(2, third.Count);
+    }
+
+    [Fact]
+    public void PlayerPageRebuildsAfterTenSecondsEvenWithoutAChangeEvent()
+    {
+        var clock = new DateTime(2026, 9, 16, 12, 0, 0);
+        var host = new FakeHost();
+        var settings = new SettingsManager(new SettingsFile(host.Storage));
+        var playerHost = new PlayerTrackerHost(host, settings.PlayerTracker);
+        playerHost.Tracker.ProcessWorldObject(new PlayerObservation(1u, "Bob", 1, 0, 0, 0), "Acdream");
+
+        DateTime now = clock;
+        var vm = new PlayerPageViewModel(settings, playerHost, host, () => now);
+
+        IReadOnlyList<string> first = vm.Names;
+        IReadOnlyList<string> second = vm.Names;
+        Assert.Same(first, second); // still within the 10 s window -- cached
+
+        now = clock.AddSeconds(11);
+        IReadOnlyList<string> third = vm.Names;
+        Assert.NotSame(second, third); // stale past the fallback window -- rebuilt
+    }
+
+    [Fact]
     public void PageViewModelsWithNoHostProjectEmptyListsAndToleraSelection()
     {
         var settings = new SettingsManager(new SettingsFile(new FakeHost().Storage));

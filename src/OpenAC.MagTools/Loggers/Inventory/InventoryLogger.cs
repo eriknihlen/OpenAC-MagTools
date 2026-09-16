@@ -151,12 +151,21 @@ public sealed class InventoryLogger
 
             // Bounded give-up: the pack never populated within the wait
             // window. Nothing was ever captured, so Stop() will not write
-            // anything either (HIGH-2).
+            // anything either (HIGH-2). MEDIUM-B (P10 re-review): dispose
+            // the poll itself here too, not just latch a flag -- otherwise
+            // a LATER non-empty capture (the pack finally streams in after
+            // all, well past the give-up) would still fall through to the
+            // HIGH-1 refresh below and let Stop() dump a document with no
+            // id requests ever made and no "Requesting id information..."
+            // line, contradicting this very warning and the matching
+            // docs/deviations.md row ("nothing is dumped that session").
             _startupCaptureDone = true;
             _host.Log.Warn(
                 "InventoryLogger: the owned pack never populated within the "
                 + StartupGiveUpPolls + "-second startup wait window; nothing "
                 + "was captured this session.");
+            _snapshotPoll?.Dispose();
+            _snapshotPoll = null;
             return;
         }
 
@@ -172,12 +181,46 @@ public sealed class InventoryLogger
         // torn the owned objects down -- dumps what was actually
         // looted/bought/tinkered mid-session, not just the login-time
         // snapshot.
-        _lastOwnedSnapshot = items.ToArray();
+        //
+        // MEDIUM-A (P10 re-review): a poll must not replace a good
+        // snapshot with one taken mid logoff-teardown. Host ordering,
+        // checked under OpenAcRoot:
+        //   - Character-logoff-to-select-screen path
+        //     (LiveSessionController.CompleteCharacterLogOffCore,
+        //     src/AcDream.Runtime/Session/LiveSessionController.cs:1213)
+        //     calls host.ResetSessionState -> RuntimeGenerationReset.Reset,
+        //     whose Drain() loop (src/AcDream.Runtime/
+        //     RuntimeGenerationReset.cs:259) runs synchronously to
+        //     RuntimeGenerationResetStage.Complete with no yield point --
+        //     BEFORE _inWorld is set false two lines later, at
+        //     LiveSessionController.cs:1219. Teardown is atomic and fully
+        //     converged before the plugin's Logoff event can even fire.
+        //   - Full disconnect/quit path (LiveSessionController.StopCore,
+        //     same file, line 1751) sets _inWorld = false IMMEDIATELY and
+        //     performs NO entity/inventory reset in that call at all --
+        //     that reset is deferred to the NEXT session's StartCore
+        //     (ResetHostBeforeStart, line 1817), which runs long after
+        //     this plugin's Stop() (and its _snapshotPoll.Dispose()) has
+        //     already executed.
+        // So a PARTIAL capture is never actually observable in either
+        // path -- the reset is all-or-nothing. What CAN happen is a poll
+        // landing in the narrow gap where IsInWorld has already flipped
+        // false but this plugin's own Logoff handler has not yet run
+        // (both paths above set _inWorld before anything downstream
+        // reacts to it). AppAutomationSurface.IsAvailable
+        // (src/AcDream.App/Plugins/AppAutomationSurface.cs:145), which
+        // ICharacterInfo.IsInWorld is wired to, reads
+        // runtime.Lifecycle.State LIVE on every call rather than caching
+        // the Logoff event -- a truthful "still fully in-world right now"
+        // signal independent of whether Logoff has fired yet. Gating the
+        // refresh on it means this poll never captures that gap's data.
+        if (_host.Automation.Character.IsInWorld)
+            _lastOwnedSnapshot = items;
     }
 
     private void RunStartupCapture(IReadOnlyList<PluginInventoryItem> items)
     {
-        _lastOwnedSnapshot = items.ToArray();
+        _lastOwnedSnapshot = items;
 
         if (_host.Storage.ReadText(_storageKey) is null)
         {
@@ -189,6 +232,12 @@ public sealed class InventoryLogger
                 if (!HasIdData(item) && ObjectClassNeedsIdent(item.ObjectClass, item.Name))
                 {
                     _host.Automation.Objects.Identify(item.ObjectId);
+                    // LOW-D (P10 re-review): record the id here too, or a
+                    // later Created/IdentReceived delivery for this SAME
+                    // still-unappraised item falls into OnObjectChanged's
+                    // per-item path, finds it not yet in _requestedIds, and
+                    // issues a second, redundant Identify for it.
+                    _requestedIds.Add(item.ObjectId);
                     anyMissing = true;
                 }
             }
@@ -319,9 +368,13 @@ public sealed class InventoryLogger
         // actually has real items, so a later Stop() dump (which typically
         // runs after the host has already torn the owned objects down)
         // reflects the most recently captured inventory, not whatever was
-        // last captured at startup.
+        // last captured at startup. LOW-C (P10 re-review): assign directly
+        // rather than ToArray() -- IItemAutomation.CaptureOwnedItems
+        // already allocates and returns a fresh list on every call
+        // (AppAutomationSurface.cs:2573's `built`), so a defensive copy
+        // here was a second full allocation for no correctness benefit.
         if (items.Count > 0)
-            _lastOwnedSnapshot = items as PluginInventoryItem[] ?? items.ToArray();
+            _lastOwnedSnapshot = items;
 
         List<MyWorldObjectRecord> previous = [];
         if (_host.Storage.ReadText(_storageKey) is { } content)

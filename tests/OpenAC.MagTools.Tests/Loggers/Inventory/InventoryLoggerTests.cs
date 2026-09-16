@@ -30,6 +30,11 @@ public sealed class InventoryLoggerTests
         var settings = new InventoryManagementSettings(settingsFile);
         settings.InventoryLogger.Value = true;
         host.Automation.Character.ObjectId = 500u;
+        // MEDIUM-A (P10 re-review): OnSnapshotPoll's HIGH-1 refresh now
+        // gates on IsInWorld -- an ordinary active session is in-world by
+        // default; a test exercising the logoff-adjacent guard sets this
+        // to false explicitly.
+        host.Automation.Character.IsInWorld = true;
         var scheduler = new TickScheduler(host.Events, chat);
         return (host, chat, settings, scheduler);
     }
@@ -573,19 +578,113 @@ public sealed class InventoryLoggerTests
             ((RecordingLogger)host.Log).Messages,
             message => message.Contains("owned pack never populated", StringComparison.Ordinal));
 
+        // MEDIUM-B (P10 re-review): the give-up must dispose the poll
+        // itself, not just latch a flag. Prove it behaviorally -- the
+        // ORIGINAL weak asserts here (re-checking the warning count, which
+        // is already latched by _startupCaptureDone even without disposing
+        // the poll) could never fail. This can: if the poll were still
+        // running, a pack that streams in AFTER give-up would still run
+        // RunStartupCapture and issue an id request / start a dump.
+        host.Automation.Items.Owned.Add(new PluginInventoryItem(
+            9u, 0u, "Late Sword", 0u, 500u, 0u, 0u, 0u, 0u, 0u, 0u,
+            1, 0, 0, 0u, 0, 0, 0u, false, 0d, 0, 0, 0, 0, 0, 0, 0)
+        {
+            ObjectClass = PluginObjectClass.MeleeWeapon,
+        });
+        host.Automation.Objects.Objects.Add(new PluginWorldObject(
+            9u, 0u, "Late Sword", PluginObjectClass.MeleeWeapon, 0u, 500u, 0u) { HasAppraisalData = false });
+        AdvanceOneSecond(host);
+
+        Assert.Empty(host.Automation.Objects.IdentifyRequests);
+        Assert.DoesNotContain(
+            host.ChatLines,
+            line => line.Contains("Requesting id information", StringComparison.Ordinal));
+
         logger.Stop();
 
-        // Nothing was ever captured -- the pre-existing file must survive
-        // untouched (HIGH-2), and no further poll should still be running.
+        // Nothing was ever captured before give-up, and the post-give-up
+        // arrival must not have been picked up either -- the pre-existing
+        // file must survive completely untouched (HIGH-2).
         Assert.Equal(existing, host.Storage.ReadText("ACServer/Acdream.Inventory.xml"));
+    }
 
-        // The poll must actually have stopped (not still silently ticking
-        // forever) -- one more advance should produce no further warning.
-        int warningsBeforeExtraTick = ((RecordingLogger)host.Log).Messages
-            .Count(message => message.Contains("owned pack never populated", StringComparison.Ordinal));
-        AdvanceOneSecond(host);
-        int warningsAfterExtraTick = ((RecordingLogger)host.Log).Messages
-            .Count(message => message.Contains("owned pack never populated", StringComparison.Ordinal));
-        Assert.Equal(warningsBeforeExtraTick, warningsAfterExtraTick);
+    [Fact]
+    public void APollThatLandsAfterTheSessionLeftTheWorldDoesNotRefreshTheSnapshot()
+    {
+        // MEDIUM-A (P10 re-review): host ordering (checked under
+        // OpenAcRoot) shows the actual entity/inventory teardown is
+        // ATOMIC -- RuntimeGenerationReset.Reset's Drain loop
+        // (src/AcDream.Runtime/RuntimeGenerationReset.cs:259) never
+        // yields mid-stage, so a poll can never observe a genuinely
+        // PARTIAL owned set. What it CAN observe is the narrow gap where
+        // IsInWorld has already flipped false (both the character-logoff
+        // path, LiveSessionController.cs:1219, and the full-quit path,
+        // LiveSessionController.cs:1751, set it synchronously) before this
+        // plugin's own Logoff handler (Stop(), which disposes the poll)
+        // has run. A poll landing in that gap must not treat whatever
+        // CaptureOwnedItems() still returns as a fresh mid-session update.
+        (FakeHost host, ChatOutput chat, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        host.Automation.Items.Owned.Add(new PluginInventoryItem(
+            1u, 0u, "Sword", 0u, 500u, 0u, 0u, 0u, 0u, 0u, 0u,
+            1, 0, 0, 0u, 0, 0, 0u, false, 0d, 0, 0, 0, 0, 0, 0, 0)
+        {
+            ObjectClass = PluginObjectClass.MeleeWeapon,
+        });
+        host.Automation.Objects.Objects.Add(new PluginWorldObject(
+            1u, 0u, "Sword", PluginObjectClass.MeleeWeapon, 0u, 500u, 0u) { HasAppraisalData = true });
+
+        var logger = new InventoryLogger(host, chat, settings);
+        logger.Start("ACServer", "Acdream", scheduler); // synchronous startup capture: {Sword}
+
+        // The session leaves the world (IsInWorld flips false), but a
+        // poll still lands before this plugin's own Stop() runs -- and
+        // CaptureOwnedItems() still happens to return SOMETHING different
+        // from the last good snapshot (e.g. a stale/partial read).
+        host.Automation.Character.IsInWorld = false;
+        host.Automation.Items.Owned.Add(new PluginInventoryItem(
+            2u, 0u, "Should Not Appear", 0u, 500u, 0u, 0u, 0u, 0u, 0u, 0u,
+            1, 0, 0, 0u, 0, 0, 0u, false, 0d, 0, 0, 0, 0, 0, 0, 0)
+        {
+            ObjectClass = PluginObjectClass.Jewelry,
+        });
+        host.Automation.Objects.Objects.Add(new PluginWorldObject(
+            2u, 0u, "Should Not Appear", PluginObjectClass.Jewelry, 0u, 500u, 0u) { HasAppraisalData = true });
+
+        AdvanceOneSecond(host); // the poll fires while not in-world
+
+        logger.Stop();
+
+        string? xml = host.Storage.ReadText("ACServer/Acdream.Inventory.xml");
+        Assert.NotNull(xml);
+        Assert.True(InventoryLoggerXml.TryImport(xml!, out List<MyWorldObjectRecord> records));
+        Assert.Contains(records, r => r.Id == 1u);
+        Assert.DoesNotContain(records, r => r.Id == 2u);
+    }
+
+    [Fact]
+    public void AStartupIdentifyRequestIsNotDuplicatedByALaterCreatedEventForTheSameItem()
+    {
+        // LOW-D (P10 re-review): RunStartupCapture's identify loop called
+        // Objects.Identify without recording the id in _requestedIds, so a
+        // later Created/IdentReceived delivery for that SAME
+        // still-unappraised startup item fell into OnObjectChanged's
+        // per-item path, found it absent from _requestedIds, and issued a
+        // second, redundant Identify.
+        (FakeHost host, ChatOutput chat, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        var sword = new PluginInventoryItem(1u, 0u, "Sword", 0u, 500u, 0u, 0u, 0u, 0u, 0u, 0u,
+            1, 0, 0, 0u, 0, 0, 0u, false, 0d, 0, 0, 0, 0, 0, 0, 0) { ObjectClass = PluginObjectClass.MeleeWeapon };
+        host.Automation.Items.Owned.Add(sword);
+        host.Automation.Objects.Objects.Add(new PluginWorldObject(
+            1u, 0u, "Sword", PluginObjectClass.MeleeWeapon, 0u, 500u, 0u) { HasAppraisalData = false });
+
+        var logger = new InventoryLogger(host, chat, settings);
+        logger.Start("ACServer", "Acdream", scheduler); // no file -> startup loop requests the sword's id
+
+        Assert.Equal([1u], host.Automation.Objects.IdentifyRequests);
+
+        // A benign re-announce for the same, still-unappraised item.
+        host.Events.RaiseObjectChanged(1u, PluginObjectChangeKind.Created);
+
+        Assert.Equal([1u], host.Automation.Objects.IdentifyRequests);
     }
 }

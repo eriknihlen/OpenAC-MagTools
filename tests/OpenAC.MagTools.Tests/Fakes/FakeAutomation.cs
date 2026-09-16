@@ -561,7 +561,13 @@ public sealed class FakeItems : IItemAutomation
     public IReadOnlyList<PluginInventoryItem> CaptureOwnedItems()
     {
         CaptureCount++;
-        return Owned;
+        // LOW-C (P10 re-review): the real host's CaptureOwnedItems
+        // (AppAutomationSurface.cs:2573's `built`) allocates a fresh list
+        // every call rather than exposing a live view -- return a snapshot
+        // here too, so a caller that stores the result (InventoryLogger's
+        // _lastOwnedSnapshot) is not silently aliased to this mutable list
+        // and later corrupted by an unrelated Owned.Add/Clear.
+        return Owned.ToList();
     }
 
     public bool TryCaptureProperties(uint objectId, out PluginItemProperties properties)

@@ -68,6 +68,41 @@ public sealed class VendorTransactionReporterTests
         Assert.Empty(host.ChatLines);
     }
 
+    // LOW-D (P13 review): the host's own Notice already reads "Vendor
+    // transaction failed." or "Vendor transaction failed (weenie error
+    // N)." -- prefixing that with "Vendor buy failed: " produced a
+    // doubled, redundant line.
+    [Fact]
+    public void DoesNotDoublePrefixTheHostsOwnGenericFailureNotice()
+    {
+        (FakeHost host, _) = Build();
+
+        host.Automation.Vendor.RaiseTransactionCompleted(
+            PluginVendorTransactionKind.Buy,
+            success: false,
+            notice: "Vendor transaction failed (weenie error 48).");
+
+        Assert.Contains(host.ChatLines, line => line.Contains(
+            "Vendor transaction failed (weenie error 48).", StringComparison.Ordinal));
+        Assert.DoesNotContain(host.ChatLines, line => line.Contains(
+            "Vendor buy failed: Vendor transaction failed", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void StillPrefixesAnUnrelatedNotice()
+    {
+        (FakeHost host, _) = Build();
+
+        host.Automation.Vendor.RaiseTransactionCompleted(
+            PluginVendorTransactionKind.Sell,
+            success: false,
+            notice: "Merchandise type mismatch.");
+
+        Assert.Contains(
+            host.ChatLines,
+            line => line.Contains("Vendor sell failed: Merchandise type mismatch.", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void ReportsIndependentlyOfAutoBuySellsOwnEnabledSetting()
     {

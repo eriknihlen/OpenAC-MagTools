@@ -196,8 +196,8 @@ public sealed class FakeVendor : IVendorAutomation
         Closed?.Invoke();
     }
 
-    public void RaiseTransactionCompleted(PluginVendorTransactionKind kind, bool success = true)
-        => TransactionCompleted?.Invoke(new PluginVendorTransaction(kind, success, null));
+    public void RaiseTransactionCompleted(PluginVendorTransactionKind kind, bool success = true, string? notice = null)
+        => TransactionCompleted?.Invoke(new PluginVendorTransaction(kind, success, notice));
 
     public bool TryCaptureProperties(uint templateObjectId, out PluginItemProperties properties)
         => Properties.TryGetValue(templateObjectId, out properties);

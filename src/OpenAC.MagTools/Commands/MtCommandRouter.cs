@@ -608,16 +608,37 @@ public sealed class MtCommandRouter
             return VendorAddSell(Remainder(original, "addsell"), partial: false);
 
         if (argument == "buy")
-            return vendor.BuyAll().Status == PluginVendorCommandStatus.Sent;
+            return ReportVendor(vendor.BuyAll(), "Vendor buy");
         if (argument == "sell")
-            return vendor.SellAll().Status == PluginVendorCommandStatus.Sent;
+            return ReportVendor(vendor.SellAll(), "Vendor sell");
         if (argument == "clearbuy")
-            return vendor.ClearBuyList().Status == PluginVendorCommandStatus.Sent;
+            return ReportVendor(vendor.ClearBuyList(), "Vendor clearbuy");
         if (argument == "clearsell")
-            return vendor.ClearSellList().Status == PluginVendorCommandStatus.Sent;
+            return ReportVendor(vendor.ClearSellList(), "Vendor clearsell");
 
         _chat.Write(
             "Usage: /mt vendor addbuy|addbuyp <name> [count]|addsell|addsellp <name>|buy|sell|clearbuy|clearsell");
+        return false;
+    }
+
+    /// <summary>
+    /// Defect 14a (live-gate round 4): every <c>/mt vendor ...</c> verb
+    /// reported its own preconditions ("No vendor is open.", "No vendor
+    /// item found named: ...", "No inventory item found named: ...") but
+    /// then discarded the host's own <see cref="PluginVendorCommandResult"/>
+    /// down to a bare bool -- a refusal at the host itself (Busy,
+    /// InvalidItem, Unavailable, NotOpen) printed nothing at all, the exact
+    /// same "silent no-op" shape <see cref="ReportUse"/> already fixed for
+    /// <c>/mt use*</c> after defect #4. Sent stays silent, matching every
+    /// other command's success behaviour.
+    /// </summary>
+    private bool ReportVendor(PluginVendorCommandResult result, string action)
+    {
+        if (result.Status == PluginVendorCommandStatus.Sent)
+            return true;
+
+        _chat.Write(action + " refused: "
+            + (string.IsNullOrWhiteSpace(result.Notice) ? result.Status.ToString() : result.Notice));
         return false;
     }
 
@@ -639,8 +660,8 @@ public sealed class MtCommandRouter
             return false;
         }
 
-        return _host.Automation.Vendor.AddToBuyList(found.TemplateObjectId, count).Status
-            == PluginVendorCommandStatus.Sent;
+        return ReportVendor(
+            _host.Automation.Vendor.AddToBuyList(found.TemplateObjectId, count), "Vendor addbuy");
     }
 
     private bool VendorAddSell(string name, bool partial)
@@ -657,7 +678,7 @@ public sealed class MtCommandRouter
             return false;
         }
 
-        return _host.Automation.Vendor.AddToSellList(id).Status == PluginVendorCommandStatus.Sent;
+        return ReportVendor(_host.Automation.Vendor.AddToSellList(id), "Vendor addsell");
     }
 
     private PluginVendorItem? FindVendorItemByName(string name, bool partial)

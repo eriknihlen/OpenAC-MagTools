@@ -144,6 +144,59 @@ public sealed class MtCommandRouterTests
         Assert.Equal(["addsell:9"], _host.Automation.Vendor.Calls);
     }
 
+    // Defect 14a (live-gate round 4): a refused vendor command -- Busy,
+    // InvalidItem, Unavailable, NotOpen at the host itself -- used to
+    // discard the host's PluginVendorCommandResult down to a bare bool and
+    // print nothing at all, the same "silent no-op" shape ReportUse already
+    // fixed for /mt use* after defect #4. `/mt vendor addbuyp a`, `buy`,
+    // `addsellp taper`, `sell` all printed nothing in round 4 even though
+    // nothing was bought or sold.
+    [Theory]
+    [InlineData("vendor buy", "buyall", "Vendor buy refused: Busy")]
+    [InlineData("vendor sell", "sellall", "Vendor sell refused: Busy")]
+    [InlineData("vendor clearbuy", "clearbuy", "Vendor clearbuy refused: Busy")]
+    [InlineData("vendor clearsell", "clearsell", "Vendor clearsell refused: Busy")]
+    public void VendorVerbsReportARefusalInsteadOfSilentlyDoingNothing(
+        string command, string expectedCall, string expectedLine)
+    {
+        _host.Automation.Vendor.NextStatus = PluginVendorCommandStatus.Busy;
+
+        Assert.False(_router.Execute(command));
+        Assert.Equal([expectedCall], _host.Automation.Vendor.Calls);
+        Assert.Contains(Line(expectedLine), Chat);
+    }
+
+    [Fact]
+    public void VendorAddBuyReportsARefusalFromTheHostAfterFindingTheItem()
+    {
+        _host.Automation.Vendor.IsOpen = true;
+        _host.Automation.Vendor.Items.Add(
+            new PluginVendorItem(7u, 700u, "Peerless Mana Potion", PluginObjectClass.Food, 10, 1));
+        _host.Automation.Vendor.NextStatus = PluginVendorCommandStatus.InvalidItem;
+
+        Assert.False(_router.Execute("vendor addbuy peerless mana potion 5"));
+        Assert.Equal(["addbuy:7:5"], _host.Automation.Vendor.Calls);
+        Assert.Contains(Line("Vendor addbuy refused: InvalidItem"), Chat);
+    }
+
+    [Fact]
+    public void VendorAddSellReportsARefusalFromTheHostAfterFindingTheItem()
+    {
+        _host.Automation.Items.Owned.Add(FakeItems.Item(9u, "Rusty Shortsword"));
+        _host.Automation.Vendor.NextStatus = PluginVendorCommandStatus.Refused;
+
+        Assert.False(_router.Execute("vendor addsell Rusty Shortsword"));
+        Assert.Equal(["addsell:9"], _host.Automation.Vendor.Calls);
+        Assert.Contains(Line("Vendor addsell refused: Refused"), Chat);
+    }
+
+    [Fact]
+    public void VendorSuccessStillStaysSilentOnTheAcceptedStatus()
+    {
+        Assert.True(_router.Execute("vendor buy"));
+        Assert.DoesNotContain(Chat, line => line.Contains("refused", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void LogoutCallsLoginLogout()
     {

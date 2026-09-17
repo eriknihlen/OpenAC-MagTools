@@ -184,6 +184,65 @@ public sealed class AutoBuySellTests
         Assert.Contains("sellall", host.Automation.Vendor.Calls);
     }
 
+    // Defect 14a (live-gate round 4): a refused AddToBuyList/BuyAll used to
+    // be discarded outright. The macro still advanced its phase as if the
+    // wire command had gone out, then waited forever for a
+    // TransactionCompleted that could never arrive because none was ever
+    // sent -- wedging this vendor visit's automation silently for the rest
+    // of the session.
+    [Fact]
+    public void ARefusedBuyReportsAndStopsInsteadOfWedgingThePhase()
+    {
+        (FakeHost host, _, OpenAC.MagTools.TickScheduler scheduler) = Build();
+        host.Automation.Vendor.Items.Add(
+            new PluginVendorItem(1u, 100u, "Prismatic Taper", PluginObjectClass.Food, 10, 1));
+
+        host.LootClassifiers.ProfileClassifyHandler = (_, context)
+            => context.Item.Name == "Prismatic Taper" ? Keep() : null;
+
+        host.Automation.Objects.Objects.Add(FakeObjects.Landscape(9u, "Fred", PluginObjectClass.Vendor, 0));
+        host.Automation.Vendor.VendorName = "Fred";
+        host.Automation.Vendor.NextStatus = PluginVendorCommandStatus.Busy;
+        host.Automation.Vendor.RaiseOpened(9u);
+        scheduler.Tick(0.1);
+
+        Assert.Contains(
+            host.ChatLines,
+            line => line.Contains("AutoBuySell: AddToBuyList refused: Busy", StringComparison.Ordinal));
+
+        // The phase must not be left dangling in Buying with nothing ever
+        // sent to the wire -- a later TransactionCompleted (raised by
+        // something else entirely) must not be misread as this round's.
+        host.Automation.Vendor.RaiseTransactionCompleted(PluginVendorTransactionKind.Buy);
+        Assert.DoesNotContain("sellall", host.Automation.Vendor.Calls);
+    }
+
+    // Defect 14a: a failed (server-rejected) buy/sell transaction was
+    // treated identically to a real one -- the macro proceeded to the next
+    // step (selling after a "successful" buy) without ever reporting that
+    // the trade actually failed.
+    [Fact]
+    public void AFailedTransactionCompletionIsReported()
+    {
+        (FakeHost host, _, OpenAC.MagTools.TickScheduler scheduler) = Build();
+        host.Automation.Vendor.Items.Add(
+            new PluginVendorItem(1u, 100u, "Prismatic Taper", PluginObjectClass.Food, 10, 1));
+
+        host.LootClassifiers.ProfileClassifyHandler = (_, context)
+            => context.Item.Name == "Prismatic Taper" ? Keep() : null;
+
+        host.Automation.Objects.Objects.Add(FakeObjects.Landscape(9u, "Fred", PluginObjectClass.Vendor, 0));
+        host.Automation.Vendor.VendorName = "Fred";
+        host.Automation.Vendor.RaiseOpened(9u);
+        scheduler.Tick(0.1);
+
+        host.Automation.Vendor.RaiseTransactionCompleted(PluginVendorTransactionKind.Buy, success: false);
+
+        Assert.Contains(
+            host.ChatLines,
+            line => line.Contains("AutoBuySell: Buy failed", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void TestModeReportsWithoutTouchingTheWire()
     {

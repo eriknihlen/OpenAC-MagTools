@@ -150,13 +150,28 @@ public sealed class AutoBuySell
         if (!_active)
             return;
 
+        // Defect 14a: this previously ignored Success/Notice entirely and
+        // proceeded identically whether the server actually completed the
+        // trade or rejected it (insufficient funds, a stale price, an
+        // over-burden/no-pack-space refusal) -- a failed buy or sell was
+        // indistinguishable from a real one.
+        if (!result.Success)
+        {
+            _chat.Write("AutoBuySell: "
+                + (result.Kind == PluginVendorTransactionKind.Buy ? "Buy" : "Sell")
+                + " failed"
+                + (string.IsNullOrWhiteSpace(result.Notice) ? "." : ": " + result.Notice));
+        }
+
         if (result.Kind == PluginVendorTransactionKind.Buy && _phase == Phase.Buying)
         {
             SellPick? sell = GetSellItem();
             if (sell is { } picked)
             {
-                _host.Automation.Vendor.AddToSellList(picked.ObjectId);
-                _host.Automation.Vendor.SellAll();
+                if (!TryVendorCommand(_host.Automation.Vendor.AddToSellList(picked.ObjectId), "AddToSellList"))
+                    return;
+                if (!TryVendorCommand(_host.Automation.Vendor.SellAll(), "SellAll"))
+                    return;
                 _phase = Phase.Selling;
             }
             else
@@ -169,6 +184,30 @@ public sealed class AutoBuySell
         {
             _phase = Phase.Idle;
         }
+    }
+
+    /// <summary>
+    /// Defect 14a (live-gate round 4): <c>AddToBuyList</c>/<c>BuyAll</c>/
+    /// <c>AddToSellList</c>/<c>SellAll</c> results were discarded outright.
+    /// A refusal (Busy, InvalidItem, NotOpen, Unavailable) meant no wire
+    /// command was ever sent, yet the caller still advanced
+    /// <see cref="_phase"/> to Buying/Selling and then waited forever for a
+    /// <see cref="IVendorAutomation.TransactionCompleted"/> that would never
+    /// arrive -- wedging this vendor visit's automation silently for the
+    /// rest of the session. Reports the refusal and resets to
+    /// <see cref="Phase.Idle"/>/<c>_active = false</c> instead of pretending
+    /// the round is still in flight.
+    /// </summary>
+    private bool TryVendorCommand(PluginVendorCommandResult result, string action)
+    {
+        if (result.Status == PluginVendorCommandStatus.Sent)
+            return true;
+
+        _chat.Write("AutoBuySell: " + action + " refused: "
+            + (string.IsNullOrWhiteSpace(result.Notice) ? result.Status.ToString() : result.Notice));
+        _active = false;
+        _phase = Phase.Idle;
+        return false;
     }
 
     private void Think()
@@ -229,16 +268,20 @@ public sealed class AutoBuySell
 
         if (buy is { } picked)
         {
-            _host.Automation.Vendor.AddToBuyList(picked.TemplateObjectId, picked.Count);
-            _host.Automation.Vendor.BuyAll();
+            if (!TryVendorCommand(_host.Automation.Vendor.AddToBuyList(picked.TemplateObjectId, picked.Count), "AddToBuyList"))
+                return;
+            if (!TryVendorCommand(_host.Automation.Vendor.BuyAll(), "BuyAll"))
+                return;
             _phase = Phase.Buying;
             return;
         }
 
         if (sell is { } sellPicked)
         {
-            _host.Automation.Vendor.AddToSellList(sellPicked.ObjectId);
-            _host.Automation.Vendor.SellAll();
+            if (!TryVendorCommand(_host.Automation.Vendor.AddToSellList(sellPicked.ObjectId), "AddToSellList"))
+                return;
+            if (!TryVendorCommand(_host.Automation.Vendor.SellAll(), "SellAll"))
+                return;
             _phase = Phase.Selling;
         }
     }

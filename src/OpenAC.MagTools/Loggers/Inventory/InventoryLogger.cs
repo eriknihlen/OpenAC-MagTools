@@ -31,10 +31,51 @@ public sealed class InventoryLogger
     /// </summary>
     private const int StartupGiveUpPolls = 60;
 
+    /// <summary>
+    /// How many times a single id may come back non-accepted from
+    /// <see cref="IWorldObjectAutomation.Identify"/> (in practice almost
+    /// always <c>Busy</c> -- <c>AppAutomationSurface.Identify</c>'s
+    /// <c>CanBeginRequest</c> gate (<c>InventoryTransactionState.
+    /// CanBeginRequest =&gt; _busyCount == 0 &amp;&amp; ...</c>) refuses
+    /// EVERY identify attempt made while another inventory transaction of
+    /// ANY kind is already in flight, without ever reaching the underlying
+    /// appraisal request) before <see cref="PumpIdentifyQueue"/> gives up on
+    /// that one id and moves on to the next queued one (HIGH-1, P12
+    /// review). Mirrors <c>InventoryExporter</c>'s own bounded
+    /// retry-then-give-up cadence (defect 10) -- the original relied on
+    /// Decal's own queued <c>RequestId</c>; OpenAC has no equivalent queue,
+    /// so this class provides its own.
+    /// </summary>
+    private const int MaxIdentifyAttemptsPerItem = 10;
+
     private readonly IPluginHost _host;
     private readonly ChatOutput _chat;
     private readonly InventoryManagementSettings _settings;
+
+    /// <summary>
+    /// Ids for which <see cref="IWorldObjectAutomation.Identify"/> was
+    /// actually ACCEPTED (HIGH-1, P12 review: never populated merely because
+    /// a request was attempted -- only once the host's own result confirms
+    /// it was sent). Also used by <see cref="EnqueueIdentify"/> as a dedup
+    /// guard so an already-sent id is never re-queued.
+    /// </summary>
     private readonly HashSet<uint> _requestedIds = [];
+
+    /// <summary>
+    /// Ids still waiting for a paced <see cref="IWorldObjectAutomation.Identify"/>
+    /// attempt (HIGH-1, P12 review). The host allows exactly one inventory
+    /// transaction in flight at a time for ANY plugin/UI caller, so this
+    /// class must issue identify requests one at a time rather than in a
+    /// burst -- see <see cref="PumpIdentifyQueue"/>.
+    /// </summary>
+    private readonly Queue<uint> _pendingIdentifyIds = new();
+
+    /// <summary>Membership mirror of <see cref="_pendingIdentifyIds"/> for O(1) dedup in <see cref="EnqueueIdentify"/>.</summary>
+    private readonly HashSet<uint> _queuedIdentifyIds = [];
+
+    /// <summary>Per-id non-accepted attempt count, bounded by <see cref="MaxIdentifyAttemptsPerItem"/>.</summary>
+    private readonly Dictionary<uint, int> _identifyAttempts = [];
+
     private Action<PluginObjectChange>? _onObjectChanged;
     private string _storageKey = string.Empty;
     private bool _waitingForIdData;
@@ -44,13 +85,20 @@ public sealed class InventoryLogger
     private int _startupPollCount;
 
     /// <summary>
-    /// The ident-worthy-and-identified count as of the last partial dump
-    /// taken while <see cref="_waitingForIdData"/> is set (defect 8b). -1
-    /// means no partial dump has run yet this wait. Guards
-    /// <see cref="OnSnapshotPoll"/>'s per-second re-dump so it only touches
-    /// storage when real progress happened, not on every tick.
+    /// The set of ident-worthy-and-identified item ids as of the last
+    /// partial dump taken while <see cref="_waitingForIdData"/> is set
+    /// (defect 8b). <see langword="null"/> means no partial dump has run
+    /// yet this wait. Guards <see cref="OnSnapshotPoll"/>'s per-second
+    /// re-dump so it only touches storage when the identified SET actually
+    /// changed, not merely its count -- LOW-1 (P12 review): a count alone
+    /// misses the case where one item leaves the owned set (sold, given
+    /// away) in the same tick another gets identified, netting no count
+    /// change even though the dump content did change. Reset to
+    /// <see langword="null"/> whenever the wait ends (both in
+    /// <see cref="Start"/> and once <see cref="OnObjectChanged"/>'s
+    /// completion latch trips).
     /// </summary>
-    private int _lastPartialDumpIdentifiedCount = -1;
+    private HashSet<uint>? _lastPartialDumpIdentifiedIds;
 
     /// <summary>
     /// The last non-empty owned-item snapshot this instance has actually
@@ -109,12 +157,15 @@ public sealed class InventoryLogger
             return;
         _running = true;
         _requestedIds.Clear();
+        _pendingIdentifyIds.Clear();
+        _queuedIdentifyIds.Clear();
+        _identifyAttempts.Clear();
         _waitingForIdData = false;
         _storageKey = server + "/" + character + ".Inventory.xml";
         _lastOwnedSnapshot = [];
         _startupCaptureDone = false;
         _startupPollCount = 0;
-        _lastPartialDumpIdentifiedCount = -1;
+        _lastPartialDumpIdentifiedIds = null;
 
         if (!_settings.InventoryLogger.Value)
         {
@@ -229,42 +280,136 @@ public sealed class InventoryLogger
 
         _lastOwnedSnapshot = items;
 
+        // HIGH-1 (P12 review): pace the identify queue -- see
+        // PumpIdentifyQueue's own remarks for the corrected root-cause
+        // explanation (the host's single-in-flight-request Busy gate, not a
+        // "displaced awaiting slot"). Runs regardless of _waitingForIdData:
+        // Dump's own requestIdsIfMissing path can also enqueue ids (an
+        // existing-file session's re-identify pass) without setting that
+        // flag.
+        if (_pendingIdentifyIds.Count > 0)
+            PumpIdentifyQueue();
+
         // Defect 8b: the only other real-data dump this class ever wrote
         // was OnObjectChanged's "every ident-worthy item now has id data"
         // completion branch -- an all-or-nothing latch that needs literally
         // every item to appraise successfully. Live evidence (round 4)
         // showed 40 of 191 items never got id data in a session (out of
-        // range, sold, tinkered away, or simply lost to the host's
-        // single-in-flight-appraisal slot when this class's own startup
-        // pass fires many Identify calls back to back -- see
-        // RuntimeInteractionTransactionState.TryRequestAppraisal under
-        // OpenAcRoot, which lets a later Automation-origin request
-        // silently displace an earlier one still awaiting its response).
-        // With that latch never tripping, NOTHING real ever reached
-        // Storage before logoff, so Stop()'s dump -- running after the
-        // host has torn down the owned objects -- found every item
-        // unresolved and wrote HasIdData=false for all of them, even
-        // though CaptureOwnedItems()/TryGet had shown real appraisal data
-        // for most items earlier in the very same session.
+        // range, sold, or tinkered away -- not, as an earlier version of
+        // this comment claimed, a "displaced awaiting slot": the actual
+        // mechanism, corrected at P12 review, is the host's single
+        // in-flight-request Busy gate documented on
+        // MaxIdentifyAttemptsPerItem/PumpIdentifyQueue). With that latch
+        // never tripping, NOTHING real ever reached Storage before logoff,
+        // so Stop()'s dump -- running after the host has torn down the
+        // owned objects -- found every item unresolved and wrote
+        // HasIdData=false for all of them, even though CaptureOwnedItems()/
+        // TryGet had shown real appraisal data for most items earlier in
+        // the very same session.
         //
         // The fix: while waiting, persist partial progress here too, once
         // per second, independent of whether the all-or-nothing latch ever
         // trips. This does not print the completion line or clear
         // _waitingForIdData -- it just gives Stop()'s post-teardown Combine
         // a real `previous` (read back from Storage) to merge against
-        // instead of an empty one. Guarded on the ident-worthy/identified
-        // count actually changing so an unmet wait does not rewrite the
-        // file every tick for the rest of the session.
+        // instead of an empty one. Guarded on the identified-id SET
+        // actually changing (LOW-1, P12 review: a count alone misses an
+        // item leaving the owned set the same tick another gets identified)
+        // so an unmet wait does not rewrite the file every tick for the
+        // rest of the session.
         if (_waitingForIdData)
         {
-            int identifiedCount = items.Count(item =>
-                ObjectClassNeedsIdent(item.ObjectClass, item.Name) && HasIdData(item));
-            if (identifiedCount != _lastPartialDumpIdentifiedCount)
+            var identifiedIds = new HashSet<uint>(items
+                .Where(item => ObjectClassNeedsIdent(item.ObjectClass, item.Name) && HasIdData(item))
+                .Select(item => item.ObjectId));
+            if (_lastPartialDumpIdentifiedIds is null || !identifiedIds.SetEquals(_lastPartialDumpIdentifiedIds))
             {
-                _lastPartialDumpIdentifiedCount = identifiedCount;
+                _lastPartialDumpIdentifiedIds = identifiedIds;
                 Dump(requestIdsIfMissing: false, items);
             }
         }
+    }
+
+    /// <summary>
+    /// HIGH-1 (P12 review, defect 8b root cause corrected): the host's
+    /// <see cref="IWorldObjectAutomation.Identify"/>
+    /// (<c>AppAutomationSurface.Identify</c>) refuses -- <c>Busy</c>, with
+    /// NO call to the underlying appraisal request at all -- every identify
+    /// attempt made while ANY inventory transaction is already in flight
+    /// (<c>InventoryTransactionState.CanBeginRequest =&gt; _busyCount == 0
+    /// &amp;&amp; ...</c>, a client-wide gate shared with Use/Move/etc, not
+    /// specific to appraisal). A burst <c>foreach</c> over many items
+    /// previously called <c>Identify</c> for every one of them in the same
+    /// tick; only the FIRST could ever be accepted, and the remaining N-1
+    /// were silently refused -- while the old code still added every one of
+    /// them to <see cref="_requestedIds"/> regardless, poisoning
+    /// <see cref="OnObjectChanged"/>'s own per-item dedup guard so they
+    /// could never be retried either.
+    /// <para>
+    /// This pumps exactly the FRONT of <see cref="_pendingIdentifyIds"/>,
+    /// once, per call: on an accepted result it is popped and (only now)
+    /// recorded into <see cref="_requestedIds"/>; on anything else it is
+    /// left at the front to retry on the next pump -- the 1 Hz
+    /// <see cref="OnSnapshotPoll"/> tick, or an opportunistic call from
+    /// <see cref="OnObjectChanged"/> whenever a Created/IdentReceived event
+    /// fires (either is a reasonable signal the host's single in-flight
+    /// slot may have cleared) -- bounded by
+    /// <see cref="MaxIdentifyAttemptsPerItem"/> before this class gives up
+    /// on that one id and moves on to the next queued one.
+    /// </para>
+    /// </summary>
+    private void PumpIdentifyQueue()
+    {
+        if (_pendingIdentifyIds.Count == 0)
+            return;
+
+        uint id = _pendingIdentifyIds.Peek();
+
+        // Already has id data by some other path (a manual assess, a
+        // Combine from a previous session's file, ...) -- nothing left to
+        // request.
+        if (_host.Automation.Objects.TryGet(id, out PluginWorldObject wo) && wo.HasAppraisalData)
+        {
+            DequeueIdentify(id);
+            return;
+        }
+
+        PluginItemCommandResult result = _host.Automation.Objects.Identify(id);
+        if (result.Accepted)
+        {
+            DequeueIdentify(id);
+            _requestedIds.Add(id);
+            return;
+        }
+
+        int attempts = _identifyAttempts.GetValueOrDefault(id) + 1;
+        if (attempts >= MaxIdentifyAttemptsPerItem)
+        {
+            DequeueIdentify(id);
+            _host.Log.Warn(
+                "InventoryLogger: gave up requesting id data for object 0x"
+                + id.ToString("X8") + " after " + MaxIdentifyAttemptsPerItem
+                + " refused attempts.");
+            return;
+        }
+
+        _identifyAttempts[id] = attempts;
+    }
+
+    /// <summary>Enqueues <paramref name="objectId"/> for a paced identify attempt, unless it is already queued or already sent.</summary>
+    private void EnqueueIdentify(uint objectId)
+    {
+        if (_requestedIds.Contains(objectId) || _queuedIdentifyIds.Contains(objectId))
+            return;
+        _queuedIdentifyIds.Add(objectId);
+        _pendingIdentifyIds.Enqueue(objectId);
+    }
+
+    private void DequeueIdentify(uint objectId)
+    {
+        _pendingIdentifyIds.Dequeue();
+        _queuedIdentifyIds.Remove(objectId);
+        _identifyAttempts.Remove(objectId);
     }
 
     private void RunStartupCapture(IReadOnlyList<PluginInventoryItem> items)
@@ -275,18 +420,20 @@ public sealed class InventoryLogger
         {
             _chat.Write("Requesting id information for all armor/weapon inventory. This will take a few minutes...");
 
+            // HIGH-1 (P12 review): enqueue every missing id rather than
+            // calling Identify for all of them in one burst -- see
+            // PumpIdentifyQueue's remarks for why a burst only ever sends
+            // the first one. EnqueueIdentify itself is the dedup guard a
+            // later Created/IdentReceived delivery for this SAME
+            // still-unappraised item needs (LOW-D, P10 re-review) --
+            // _requestedIds only gains the id once PumpIdentifyQueue's own
+            // Identify call is actually accepted.
             bool anyMissing = false;
             foreach (PluginInventoryItem item in items)
             {
                 if (!HasIdData(item) && ObjectClassNeedsIdent(item.ObjectClass, item.Name))
                 {
-                    _host.Automation.Objects.Identify(item.ObjectId);
-                    // LOW-D (P10 re-review): record the id here too, or a
-                    // later Created/IdentReceived delivery for this SAME
-                    // still-unappraised item falls into OnObjectChanged's
-                    // per-item path, finds it not yet in _requestedIds, and
-                    // issues a second, redundant Identify for it.
-                    _requestedIds.Add(item.ObjectId);
+                    EnqueueIdentify(item.ObjectId);
                     anyMissing = true;
                 }
             }
@@ -294,6 +441,9 @@ public sealed class InventoryLogger
             if (anyMissing)
             {
                 _waitingForIdData = true;
+                // Kick off the first paced attempt immediately instead of
+                // waiting up to a full second for the next poll tick.
+                PumpIdentifyQueue();
             }
             else
             {
@@ -329,7 +479,11 @@ public sealed class InventoryLogger
             _host.Events.ObjectChanged -= _onObjectChanged;
         _onObjectChanged = null;
         _requestedIds.Clear();
+        _pendingIdentifyIds.Clear();
+        _queuedIdentifyIds.Clear();
+        _identifyAttempts.Clear();
         _waitingForIdData = false;
+        _lastPartialDumpIdentifiedIds = null;
     }
 
     private void OnObjectChanged(PluginObjectChange change)
@@ -346,6 +500,14 @@ public sealed class InventoryLogger
         if (change.Kind != PluginObjectChangeKind.Created && change.Kind != PluginObjectChangeKind.IdentReceived)
             return;
 
+        // HIGH-1 (P12 review): a Created/IdentReceived delivery is a
+        // reasonable signal the host's single in-flight identify slot may
+        // have just cleared (see PumpIdentifyQueue's remarks) -- pump
+        // opportunistically here rather than waiting for the next 1 Hz
+        // OnSnapshotPoll tick.
+        if (_pendingIdentifyIds.Count > 0)
+            PumpIdentifyQueue();
+
         if (_waitingForIdData)
         {
             IReadOnlyList<PluginInventoryItem> currentItems = _host.Automation.Items.CaptureOwnedItems();
@@ -356,6 +518,7 @@ public sealed class InventoryLogger
             if (allIdentified)
             {
                 _waitingForIdData = false;
+                _lastPartialDumpIdentifiedIds = null;
                 Dump(requestIdsIfMissing: false, currentItems);
                 _chat.Write("Requesting id information for all armor/weapon inventory completed. Log file written.");
                 return;
@@ -395,10 +558,16 @@ public sealed class InventoryLogger
         uint myId = _host.Automation.Character.ObjectId;
         if (wo.ContainerObjectId != myId && wo.WielderObjectId != myId)
             return;
-        if (!_requestedIds.Add(change.ObjectId))
-            return;
 
-        _host.Automation.Objects.Identify(change.ObjectId);
+        // HIGH-1 (P12 review): route through the paced queue instead of
+        // calling Identify directly -- a burst of Created events (a stack
+        // splitting into a full pack, several items looted in the same
+        // delivery batch) hits the exact same host single-in-flight-Busy
+        // gate PumpIdentifyQueue documents. EnqueueIdentify is the dedup
+        // guard the old direct `_requestedIds.Add` check used to be (H7
+        // above still applies: the ownership check runs before this).
+        EnqueueIdentify(change.ObjectId);
+        PumpIdentifyQueue();
     }
 
     /// <summary>
@@ -478,8 +647,12 @@ public sealed class InventoryLogger
 
             if (matched is null)
             {
+                // HIGH-1 (P12 review): route through the paced queue -- this
+                // loop runs once per Dump() call over every current item, so
+                // calling Identify directly here is the exact same burst
+                // shape RunStartupCapture's fresh-file loop had.
                 if (requestIdsIfMissing && !snapshot.HasIdData && ObjectClassNeedsIdent(wo.ObjectClass, wo.Name))
-                    _host.Automation.Objects.Identify(snapshot.Id);
+                    EnqueueIdentify(snapshot.Id);
                 current.Add(snapshot);
                 continue;
             }
@@ -487,7 +660,7 @@ public sealed class InventoryLogger
             if (requestIdsIfMissing && !matched.HasIdData && !snapshot.HasIdData
                 && ObjectClassNeedsIdent(wo.ObjectClass, wo.Name))
             {
-                _host.Automation.Objects.Identify(snapshot.Id);
+                EnqueueIdentify(snapshot.Id);
                 current.Add(snapshot);
             }
             else
@@ -495,6 +668,13 @@ public sealed class InventoryLogger
                 current.Add(MyWorldObjectRecord.Combine(matched, snapshot));
             }
         }
+
+        // Only one attempt is paced out per Dump() call (matching every
+        // other pump call site) -- the rest of anything queued here rides
+        // the same 1 Hz OnSnapshotPoll/opportunistic OnObjectChanged pumps
+        // as the fresh-file startup queue.
+        if (requestIdsIfMissing)
+            PumpIdentifyQueue();
 
         _host.Storage.WriteText(_storageKey, InventoryLoggerXml.Export(current));
     }

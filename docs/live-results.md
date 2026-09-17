@@ -216,23 +216,40 @@ screenshots in the session scratchpad under `live-r4/`.
 Re-gate verdicts for the round-3 defects, plus what is new.
 
 - **Defect 8 (inventory logger writes an empty document) -- FIXED (8a), and
-  8b (every record `HasIdData=false`) FIXED plugin-side, P11.** The file is
-  written non-empty (195 records, 91 KB) and the fresh-file branch prints its
-  `Requesting id information...` line (8a). Round 4's remaining symptom --
-  every record `HasIdData=false` in every session, even after a full id
-  sweep and even though the same session's clipboard exporter saw real
-  appraisal data for 151/191 items via its own live `TryGet` poll -- was
-  root-caused to `InventoryLogger`'s only real-data dump being gated on an
-  all-or-nothing "every ident-worthy item now has id data" completion latch
-  driven by the host's `IdentReceived` `ObjectChanged` event. That event can
-  legitimately never fire for many items in one startup batch (the host's
-  `RuntimeInteractionTransactionState.TryRequestAppraisal` lets a later
-  Automation-origin appraisal request silently displace an earlier one still
-  awaiting its response), so the latch never trips, nothing real ever
-  reaches Storage before logoff, and `Stop()`'s post-teardown dump falls back
-  to the empty "unresolved" shape for every item. Fixed by persisting
-  partial progress once per second while waiting, independent of that latch
-  (`OnSnapshotPoll`). Row 4.
+  8b (every record `HasIdData=false`) FIXED plugin-side, P11, root cause
+  corrected P12.** The file is written non-empty (195 records, 91 KB) and
+  the fresh-file branch prints its `Requesting id information...` line
+  (8a). Round 4's remaining symptom -- every record `HasIdData=false` in
+  every session, even after a full id sweep and even though the same
+  session's clipboard exporter saw real appraisal data for 151/191 items
+  via its own live `TryGet` poll -- was root-caused to `InventoryLogger`'s
+  only real-data dump being gated on an all-or-nothing "every ident-worthy
+  item now has id data" completion latch driven by the host's
+  `IdentReceived` `ObjectChanged` event, combined with a SEPARATE bug the
+  P11 round missed: the fresh-file startup pass called `Identify` for every
+  missing item in one tight `foreach`, but `AppAutomationSurface.Identify`'s
+  `CanBeginRequest` gate (`InventoryTransactionState.CanBeginRequest =>
+  _busyCount == 0 && ...`, a client-wide single-in-flight gate shared with
+  every other inventory transaction) refuses -- `Busy`, with no call to the
+  underlying appraisal request at all -- every attempt after the first, so
+  only ONE of N items in a startup batch could ever be identified at all;
+  the other N-1 were silently refused, yet the old code still recorded all
+  of them into `_requestedIds`, permanently poisoning them against retry.
+  (P11's own explanation -- that a later Automation-origin request
+  "displaces" an earlier one still awaiting its response in
+  `RuntimeInteractionTransactionState.TryRequestAppraisal` -- was wrong;
+  that guard exists but only fires for a User-vs-Automation origin
+  conflict, and `CanBeginRequest` refuses the call before that guard is
+  ever reached.) With almost every item's identify request never actually
+  sent, the completion latch could not trip, nothing real ever reached
+  Storage before logoff, and `Stop()`'s post-teardown dump fell back to the
+  empty "unresolved" shape for every item. Fixed at P12 by pacing every
+  identify call site (`RunStartupCapture`, `OnObjectChanged`'s per-item
+  path, `Dump`'s own re-identify pass) through a bounded one-at-a-time
+  queue (`EnqueueIdentify`/`PumpIdentifyQueue`), recording an id into
+  `_requestedIds` only once the host confirms it was actually accepted, and
+  retaining P11's partial-progress persistence (now gated on the
+  identified-id SET rather than a count, LOW-1). Row 4.
 - **Defect 9 (Worn Equipment export selects nothing) -- FIXED, verified live.**
   566 chars, five equipped items, via `WielderObjectId`.
 - **Defect 10 (Inventory export can hang forever) -- FIXED, verified live.**
@@ -269,8 +286,13 @@ Re-gate verdicts for the round-3 defects, plus what is new.
   `HeadlessAutomationSurface` (the same way `Trade`/`Vendor` already got
   one). A characterization test
   (`AutoTradeAcceptTests.DoesNotAcceptWhenThePartnerCannotBeResolved`) locks
-  in that this fails safely (no exception, no accept) rather than crashing.
-  Out of scope for this plugin repo to fix; needs an OpenAC-side change to
+  in that this fails safely (no exception, no accept) rather than crashing --
+  this is UNCHANGED, already-correct behavior being pinned down, not a
+  fail-first fix: it never failed against the pre-existing code (MEDIUM-1,
+  P12 review corrects an earlier overly-broad claim that every new test in
+  this round was red on the base commit; this one specifically was not, by
+  design, since there was nothing to fix on the plugin side). Out of scope
+  for this plugin repo to fix; needs an OpenAC-side change to
   `HeadlessAutomationSurface`.
 - **Defect 14 (NEW, cosmetic/honesty) -- a vendor buy/sell that does nothing is
   silent. 14a (honesty) FIXED plugin-side, P11.** `/mt vendor addbuyp a` +

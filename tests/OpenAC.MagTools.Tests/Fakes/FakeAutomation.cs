@@ -699,6 +699,17 @@ public sealed class FakeObjects : IWorldObjectAutomation
     /// <summary>Per-object-id override for <see cref="Identify"/>'s returned status, checked before <see cref="IdentifyResult"/>.</summary>
     public Dictionary<uint, PluginItemCommandStatus> IdentifyResultOverrides { get; } = [];
 
+    /// <summary>
+    /// Per-object-id remaining count of consecutive <c>Busy</c> responses
+    /// <see cref="Identify"/> should return before falling through to
+    /// <see cref="IdentifyResultOverrides"/>/<see cref="IdentifyResult"/> --
+    /// simulates the host's single-in-flight-request gate
+    /// (<c>InventoryTransactionState.CanBeginRequest</c>) staying busy for a
+    /// bounded number of retries. Checked before, and decremented ahead of,
+    /// <see cref="IdentifyResultOverrides"/>.
+    /// </summary>
+    public Dictionary<uint, int> IdentifyBusyForCalls { get; } = [];
+
     public IReadOnlyList<PluginWorldObject> CaptureObjects() => Objects;
 
     public bool TryGet(uint objectId, out PluginWorldObject value)
@@ -721,6 +732,13 @@ public sealed class FakeObjects : IWorldObjectAutomation
     public PluginItemCommandResult Identify(uint objectId)
     {
         IdentifyRequests.Add(objectId);
+
+        if (IdentifyBusyForCalls.TryGetValue(objectId, out int remaining) && remaining > 0)
+        {
+            IdentifyBusyForCalls[objectId] = remaining - 1;
+            return new PluginItemCommandResult(PluginItemCommandStatus.Busy);
+        }
+
         PluginItemCommandStatus status = IdentifyResultOverrides.TryGetValue(objectId, out PluginItemCommandStatus overridden)
             ? overridden
             : IdentifyResult;

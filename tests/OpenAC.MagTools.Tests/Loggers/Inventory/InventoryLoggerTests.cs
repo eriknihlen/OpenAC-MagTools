@@ -84,6 +84,122 @@ public sealed class InventoryLoggerTests
         Assert.NotNull(host.Storage.ReadText("ACServer/Acdream.Inventory.xml"));
     }
 
+    // HIGH-1 (P12 review, defect 8b root cause corrected): the host's
+    // Identify refuses (Busy, with no underlying request sent at all) every
+    // call made while ANY inventory transaction is already in flight
+    // (InventoryTransactionState.CanBeginRequest), a client-wide gate, not
+    // "a later Automation-origin request displacing an earlier one" as an
+    // earlier version of this fix claimed. A burst foreach that calls
+    // Identify for every missing item in one tick can therefore only ever
+    // get the FIRST one accepted -- the rest must be paced one at a time.
+    private static PluginInventoryItem ArmorItem(uint id, string name)
+        => new(id, 0u, name, 0u, 500u, 0u, 0u, 0u, 0u, 0u, 0u, 1, 0, 0, 0u, 0, 0, 0u, false, 0d, 0, 0, 0, 0, 0, 0, 0)
+        { ObjectClass = PluginObjectClass.Armor };
+
+    private static PluginWorldObject UnidentifiedArmor(uint id, string name)
+        => new(id, 0u, name, PluginObjectClass.Armor, 0u, 500u, 0u) { HasAppraisalData = false };
+
+    [Fact]
+    public void StartupBurstOnlySendsTheFirstIdentifyImmediatelyThenPacesTheRestOnePerTick()
+    {
+        (FakeHost host, ChatOutput chat, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        host.Automation.Items.Owned.Add(ArmorItem(1u, "Helm"));
+        host.Automation.Items.Owned.Add(ArmorItem(2u, "Gauntlets"));
+        host.Automation.Items.Owned.Add(ArmorItem(3u, "Greaves"));
+        host.Automation.Objects.Objects.Add(UnidentifiedArmor(1u, "Helm"));
+        host.Automation.Objects.Objects.Add(UnidentifiedArmor(2u, "Gauntlets"));
+        host.Automation.Objects.Objects.Add(UnidentifiedArmor(3u, "Greaves"));
+
+        var logger = new InventoryLogger(host, chat, settings);
+        logger.Start("ACServer", "Acdream", scheduler);
+
+        // Only the FIRST item's Identify call goes out at Start() -- no
+        // burst, unlike the pre-fix code which called Identify for all
+        // three in the same tight loop.
+        Assert.Equal([1u], host.Automation.Objects.IdentifyRequests);
+
+        AdvanceOneSecond(host);
+        Assert.Equal([1u, 2u], host.Automation.Objects.IdentifyRequests);
+
+        AdvanceOneSecond(host);
+        Assert.Equal([1u, 2u, 3u], host.Automation.Objects.IdentifyRequests);
+    }
+
+    [Fact]
+    public void ABusyResponseRetriesTheSameItemInsteadOfPoisoningItAndEventuallySucceeds()
+    {
+        (FakeHost host, ChatOutput chat, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        host.Automation.Items.Owned.Add(ArmorItem(1u, "Helm"));
+        host.Automation.Items.Owned.Add(ArmorItem(2u, "Gauntlets"));
+        host.Automation.Objects.Objects.Add(UnidentifiedArmor(1u, "Helm"));
+        host.Automation.Objects.Objects.Add(UnidentifiedArmor(2u, "Gauntlets"));
+        // Item 2 answers Busy (the host's single-in-flight-request gate)
+        // for its first two attempts, then accepts.
+        host.Automation.Objects.IdentifyBusyForCalls[2u] = 2;
+
+        var logger = new InventoryLogger(host, chat, settings);
+        logger.Start("ACServer", "Acdream", scheduler);
+
+        // Item 1 (front of queue) is accepted immediately; item 2 is not
+        // even attempted yet.
+        Assert.Equal([1u], host.Automation.Objects.IdentifyRequests);
+
+        AdvanceOneSecond(host); // item 2, attempt 1 -> Busy
+        AdvanceOneSecond(host); // item 2, attempt 2 -> Busy
+        Assert.Equal([1u, 2u, 2u], host.Automation.Objects.IdentifyRequests);
+
+        AdvanceOneSecond(host); // item 2, attempt 3 -> accepted
+        Assert.Equal([1u, 2u, 2u, 2u], host.Automation.Objects.IdentifyRequests);
+
+        // Not poisoned: item 2's id data arriving now still reaches
+        // completion, proving _requestedIds only ever gained item 2 on the
+        // accepted (3rd) call, not the two refused ones.
+        host.Automation.Objects.Objects[0] = host.Automation.Objects.Objects[0] with { HasAppraisalData = true };
+        host.Automation.Objects.Objects[1] = host.Automation.Objects.Objects[1] with { HasAppraisalData = true };
+        host.Events.RaiseObjectChanged(2u, PluginObjectChangeKind.IdentReceived);
+
+        Assert.Contains(host.ChatLines, line => line.Contains("completed. Log file written.", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AnItemThatNeverAcceptsIsRetriedABoundedNumberOfTimesThenGivesUpWithoutBlockingLaterItems()
+    {
+        (FakeHost host, ChatOutput chat, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        host.Automation.Items.Owned.Add(ArmorItem(1u, "Cursed Helm"));
+        host.Automation.Items.Owned.Add(ArmorItem(2u, "Gauntlets"));
+        host.Automation.Objects.Objects.Add(UnidentifiedArmor(1u, "Cursed Helm"));
+        host.Automation.Objects.Objects.Add(UnidentifiedArmor(2u, "Gauntlets"));
+        // Item 1 never accepts -- always Busy.
+        host.Automation.Objects.IdentifyResultOverrides[1u] = PluginItemCommandStatus.Busy;
+
+        var logger = new InventoryLogger(host, chat, settings);
+        logger.Start("ACServer", "Acdream", scheduler);
+
+        // Start() itself is attempt 1; 8 more ticks make 9 total -- item 1
+        // must not be retried forever, and item 2 must not be touched while
+        // item 1 is still being retried.
+        for (int tick = 0; tick < 8; tick++)
+            AdvanceOneSecond(host);
+
+        Assert.Equal(9, host.Automation.Objects.IdentifyRequests.Count(id => id == 1u));
+        Assert.DoesNotContain(2u, host.Automation.Objects.IdentifyRequests);
+
+        // The 10th attempt (bound) gives up on item 1 and moves on -- item 1
+        // is not retried an 11th time on further ticks.
+        AdvanceOneSecond(host);
+        Assert.Equal(10, host.Automation.Objects.IdentifyRequests.Count(id => id == 1u));
+
+        // Item 2 is no longer blocked once item 1 is given up.
+        AdvanceOneSecond(host);
+        Assert.Contains(2u, host.Automation.Objects.IdentifyRequests);
+
+        // Bounded, not blocked forever: further ticks never re-attempt the
+        // given-up item.
+        AdvanceOneSecond(host);
+        AdvanceOneSecond(host);
+        Assert.Equal(10, host.Automation.Objects.IdentifyRequests.Count(id => id == 1u));
+    }
+
     [Fact]
     public void ExistingFileDumpsImmediatelyWithoutTheWaitMessage()
     {

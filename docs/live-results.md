@@ -697,3 +697,19 @@ one test-only finding). Fixed at `33b9c69`:
   a behavioral check that a post-give-up arrival is never picked up.
 
 Still owed: the same live re-gate noted after the P10 round.
+
+### P12 review notes
+
+- The defect 15 live proof (three sessions at 2/2/2 `HasIdData=true`) shows no
+  drop but never re-reproduces the 15-record shape of round 5 (those 13 records
+  were already gone); read the PASS as "no loss across sessions", proven by the
+  fail-first test for the transient-class case.
+- The match now keeps the class check when the live class is known (a recycled
+  id must not inherit another object's appraisal); only a live `Unknown` class
+  bypasses it. See `docs/deviations.md`.
+- Defect 16, most likely host-side cause: the graphical host's keyboard source
+  polls the modifier keys at dispatch time rather than reading the event's own
+  modifier state (`SilkKeyboardSource` `ReadModifiers`), so a synthetic
+  Ctrl+P whose Ctrl is released before the queued callback runs arrives with
+  no modifier and fails the chord match; a physical press should not. Also any
+  open dialog or focused edit field drops every plugin hotkey by design.

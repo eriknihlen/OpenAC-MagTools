@@ -1241,4 +1241,43 @@ public sealed class InventoryLoggerTests
         Assert.Equal("Amulet", record.StringValues[1]);
         Assert.Equal(42, record.IntValues[1]);
     }
+
+    [Fact]
+    public void APersistedRecordWhoseIdWasRecycledToADifferentClassIsNotMergedIntoTheNewObject()
+    {
+        // P12 review: the id-only match repaired defect 15 but dropped the
+        // guard against a recycled dynamic guid. When the LIVE class is
+        // known and differs from the persisted one, the persisted record
+        // belongs to another object and must not lend it its appraisal.
+        (FakeHost host, ChatOutput chat, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        var previouslyAppraised = new MyWorldObjectRecord
+        {
+            HasIdData = true,
+            Id = 7u,
+            LastIdTime = 12345,
+            ObjectClass = (int)PluginObjectClass.Jewelry,
+            StringValues = new Dictionary<int, string> { [1] = "Amulet" },
+            IntValues = new Dictionary<int, int> { [1] = 42 },
+        };
+        host.Storage.WriteText(
+            "ACServer/Acdream.Inventory.xml", InventoryLoggerXml.Export([previouslyAppraised]));
+
+        host.Automation.Items.Owned.Add(new PluginInventoryItem(
+            7u, 0u, "Leather Cap", 0u, 500u, 0u, 0u, 0u, 0u, 0u, 0u,
+            1, 0, 0, 0u, 0, 0, 0u, false, 0d, 0, 0, 0, 0, 0, 0, 0)
+        {
+            ObjectClass = PluginObjectClass.Armor,
+        });
+
+        var logger = new InventoryLogger(host, chat, settings);
+        logger.Start("ACServer", "Acdream", scheduler);
+
+        string? xml = host.Storage.ReadText("ACServer/Acdream.Inventory.xml");
+        Assert.NotNull(xml);
+        Assert.True(InventoryLoggerXml.TryImport(xml!, out List<MyWorldObjectRecord> records));
+        MyWorldObjectRecord record = Assert.Single(records);
+        Assert.Equal(7u, record.Id);
+        Assert.False(record.HasIdData);
+        Assert.Equal((int)PluginObjectClass.Armor, record.ObjectClass);
+    }
 }

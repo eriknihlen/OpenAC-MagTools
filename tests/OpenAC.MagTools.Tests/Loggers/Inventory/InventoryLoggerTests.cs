@@ -100,7 +100,7 @@ public sealed class InventoryLoggerTests
         => new(id, 0u, name, PluginObjectClass.Armor, 0u, 500u, 0u) { HasAppraisalData = false };
 
     /// <summary>Flips <paramref name="id"/>'s appraisal data on and delivers its IdentReceived, as if its response just arrived.</summary>
-    private static void CompleteIdentify(FakeHost host, uint id, string name)
+    private static void CompleteIdentify(FakeHost host, uint id)
     {
         PluginWorldObject wo = host.Automation.Objects.Objects.First(o => o.ObjectId == id);
         host.Automation.Objects.Replace(wo with { HasAppraisalData = true });
@@ -143,10 +143,10 @@ public sealed class InventoryLoggerTests
         // Item 1's response arrives -- the queue advances to item 2
         // immediately (an opportunistic pump on IdentReceived), not on the
         // next poll tick.
-        CompleteIdentify(host, 1u, "Helm");
+        CompleteIdentify(host, 1u);
         Assert.Equal([1u, 2u], host.Automation.Objects.IdentifyRequests);
 
-        CompleteIdentify(host, 2u, "Gauntlets");
+        CompleteIdentify(host, 2u);
         Assert.Equal([1u, 2u, 3u], host.Automation.Objects.IdentifyRequests);
     }
 
@@ -160,9 +160,19 @@ public sealed class InventoryLoggerTests
         // frame; none of them are owned by this character, so they must
         // not re-attempt (or give up on) this class's own still-
         // outstanding identify.
+        //
+        // MEDIUM-3 (P14 review): a SECOND owned-but-not-yet-attempted item
+        // is required to make this test meaningful -- with only item 1
+        // queued (accepted immediately, nothing else left to attempt), the
+        // pre-P13 code passed this assertion too since there was nothing
+        // for the burst to hit. Item 2 sitting behind item 1 is what the
+        // pre-P13 code's per-Created pump would have re-attempted (and
+        // eventually given up on) 30 times over.
         (FakeHost host, ChatOutput chat, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
         host.Automation.Items.Owned.Add(ArmorItem(1u, "Helm"));
+        host.Automation.Items.Owned.Add(ArmorItem(2u, "Gauntlets"));
         host.Automation.Objects.Objects.Add(UnidentifiedArmor(1u, "Helm"));
+        host.Automation.Objects.Objects.Add(UnidentifiedArmor(2u, "Gauntlets"));
 
         var logger = new InventoryLogger(host, chat, settings);
         logger.Start("ACServer", "Acdream", scheduler);
@@ -180,7 +190,46 @@ public sealed class InventoryLoggerTests
             host.Events.RaiseObjectChanged(strangerId, PluginObjectChangeKind.Created);
         }
 
+        // Item 2 must still be untouched -- item 1's own identify is still
+        // outstanding, and none of the 30 unowned Created events may
+        // attempt or give up on it.
         Assert.Equal([1u], host.Automation.Objects.IdentifyRequests);
+    }
+
+    // MEDIUM-4 (P14 review): reinstated -- this was the only coverage for
+    // "a transient Busy response retries the SAME item instead of
+    // poisoning it," and dropping it in the P13 round also left
+    // FakeObjects.IdentifyBusyForCalls dead.
+    [Fact]
+    public void ABusyResponseRetriesTheSameItemInsteadOfPoisoningItAndEventuallySucceeds()
+    {
+        (FakeHost host, ChatOutput chat, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        host.Automation.Items.Owned.Add(ArmorItem(1u, "Helm"));
+        host.Automation.Items.Owned.Add(ArmorItem(2u, "Gauntlets"));
+        host.Automation.Objects.Objects.Add(UnidentifiedArmor(1u, "Helm"));
+        host.Automation.Objects.Objects.Add(UnidentifiedArmor(2u, "Gauntlets"));
+        // Item 2 answers Busy for its first two attempts, then accepts.
+        host.Automation.Objects.IdentifyBusyForCalls[2u] = 2;
+
+        var logger = new InventoryLogger(host, chat, settings);
+        logger.Start("ACServer", "Acdream", scheduler);
+
+        Assert.Equal([1u], host.Automation.Objects.IdentifyRequests);
+
+        // Item 1 completes -- item 2 becomes the front and starts its own
+        // paced attempts, answering Busy twice before accepting.
+        CompleteIdentify(host, 1u);
+        Assert.Equal([1u, 2u], host.Automation.Objects.IdentifyRequests); // attempt 1 -> Busy
+
+        AdvanceOneSecond(host); // attempt 2 -> Busy
+        AdvanceOneSecond(host); // attempt 3 -> accepted
+        Assert.Equal([1u, 2u, 2u, 2u], host.Automation.Objects.IdentifyRequests);
+
+        // Not poisoned: item 2's id data arriving now still reaches
+        // completion, proving _requestedIds only ever gained item 2 on the
+        // accepted (3rd) call, not the two refused ones.
+        CompleteIdentify(host, 2u);
+        Assert.Contains(host.ChatLines, line => line.Contains("completed. Log file written.", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -257,10 +306,154 @@ public sealed class InventoryLoggerTests
 
         // Item 1 completes -- the pump must recognise item 2 already has
         // its data and skip straight to item 3 in this SAME call.
-        CompleteIdentify(host, 1u, "Helm");
+        CompleteIdentify(host, 1u);
 
         Assert.DoesNotContain(2u, host.Automation.Objects.IdentifyRequests);
         Assert.Contains(3u, host.Automation.Objects.IdentifyRequests);
+    }
+
+    [Fact]
+    public void AnInvalidItemResponseGivesUpImmediatelyAndTheNextIdIsAttemptedInTheSamePump()
+    {
+        // MEDIUM-1 (P14 review): InvalidItem means the host's own Identify
+        // path found the object no longer in the table (sold, dropped, out
+        // of range) -- a PERMANENT condition, not contention for the
+        // shared slot. Live evidence: 40 of 191 items in one session never
+        // got id data this way, and treating InvalidItem like ordinary
+        // contention meant each one held the queue head for the full 30 s
+        // safety valve, serialised -- roughly 20 minutes of no progress
+        // for a batch that size.
+        (FakeHost host, ChatOutput chat, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        host.Automation.Items.Owned.Add(ArmorItem(1u, "Helm"));
+        host.Automation.Items.Owned.Add(ArmorItem(2u, "Sold Ring"));
+        host.Automation.Items.Owned.Add(ArmorItem(3u, "Greaves"));
+        host.Automation.Objects.Objects.Add(UnidentifiedArmor(1u, "Helm"));
+        host.Automation.Objects.Objects.Add(UnidentifiedArmor(2u, "Sold Ring"));
+        host.Automation.Objects.Objects.Add(UnidentifiedArmor(3u, "Greaves"));
+        host.Automation.Objects.IdentifyResultOverrides[2u] = PluginItemCommandStatus.InvalidItem;
+
+        var logger = new InventoryLogger(host, chat, settings);
+        logger.Start("ACServer", "Acdream", scheduler);
+        Assert.Equal([1u], host.Automation.Objects.IdentifyRequests);
+
+        // Item 1 completes -- item 2's turn comes up, answers InvalidItem,
+        // and the SAME pump call must give up on it immediately and move
+        // straight to item 3, instead of holding the queue head for 30 s.
+        CompleteIdentify(host, 1u);
+
+        Assert.Equal([1u, 2u, 3u], host.Automation.Objects.IdentifyRequests);
+        Assert.Contains(
+            ((RecordingLogger)host.Log).Messages,
+            m => m.Contains("gave up requesting id data", StringComparison.Ordinal)
+                && m.Contains("invalid item", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AnIdNoLongerResolvableAtAllAlsoGivesUpImmediately()
+    {
+        // MEDIUM-1 (P14 review): the SAME permanent "gone" condition can
+        // also surface as a straight TryGet miss (the object left the
+        // table entirely) rather than a returned InvalidItem status --
+        // both must give up immediately, not after 30 s.
+        (FakeHost host, ChatOutput chat, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        host.Automation.Items.Owned.Add(ArmorItem(1u, "Helm"));
+        host.Automation.Items.Owned.Add(ArmorItem(2u, "Despawned Ring"));
+        host.Automation.Items.Owned.Add(ArmorItem(3u, "Greaves"));
+        host.Automation.Objects.Objects.Add(UnidentifiedArmor(1u, "Helm"));
+        host.Automation.Objects.Objects.Add(UnidentifiedArmor(2u, "Despawned Ring"));
+        host.Automation.Objects.Objects.Add(UnidentifiedArmor(3u, "Greaves"));
+
+        var logger = new InventoryLogger(host, chat, settings);
+        logger.Start("ACServer", "Acdream", scheduler);
+        Assert.Equal([1u], host.Automation.Objects.IdentifyRequests);
+
+        // Item 2 leaves the object table entirely before its own turn --
+        // TryGet now fails for it outright.
+        host.Automation.Objects.Objects.RemoveAll(o => o.ObjectId == 2u);
+
+        CompleteIdentify(host, 1u);
+
+        Assert.DoesNotContain(2u, host.Automation.Objects.IdentifyRequests);
+        Assert.Contains(3u, host.Automation.Objects.IdentifyRequests);
+    }
+
+    [Fact]
+    public void ADisplacedIdentifyIsDetectedAndReenqueuedInsteadOfWaitingOutTheSafetyValve()
+    {
+        // MEDIUM-2 (P14 review): the host documents that a plugin's own
+        // accepted Identify can be displaced by a LATER one (of either
+        // origin), silently dropping its response. On accept, item 1's id
+        // is already in _requestedIds, so without detecting this via the
+        // shared appraisal slot, item 1 would never be re-enqueued and the
+        // queue would simply idle for the full 30 s safety valve.
+        (FakeHost host, ChatOutput chat, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        host.Automation.Items.Owned.Add(ArmorItem(1u, "Helm"));
+        host.Automation.Objects.Objects.Add(UnidentifiedArmor(1u, "Helm"));
+
+        var logger = new InventoryLogger(host, chat, settings);
+        logger.Start("ACServer", "Acdream", scheduler);
+
+        // Item 1 was accepted and is this class's own in-flight id --
+        // simulate a LATER identify (someone else's assess, another
+        // MagTools feature) displacing it: the shared appraisal slot is
+        // now awaiting a completely different object.
+        Assert.Equal([1u], host.Automation.Objects.IdentifyRequests);
+        host.Automation.Loot.Appraisal = new PluginAppraisalState(1, 999u, 0u);
+
+        // The next poll tick detects the displacement and re-enqueues
+        // item 1 for a fresh attempt, all within ordinary pacing.
+        AdvanceOneSecond(host);
+
+        Assert.Equal([1u, 1u], host.Automation.Objects.IdentifyRequests);
+
+        // Not lost: item 1's id data arriving now (for the re-sent
+        // request) still reaches completion.
+        CompleteIdentify(host, 1u);
+        Assert.Contains(host.ChatLines, line => line.Contains("completed. Log file written.", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void TheGiveUpTimerStillFiresAfterTheStartupPollIsDisposedSoADisplacedLateArrivalIsNotStranded()
+    {
+        // LOW-1 (P14 review): MaxIdentifyRefusalSeconds is only ever
+        // evaluated INSIDE a pump call. If the owned pack never populates
+        // within the startup wait window, OnSnapshotPoll disposes
+        // _snapshotPoll outright (HIGH-2/MEDIUM-B, P10 review) -- if
+        // something is looted much later and its identify then gets
+        // displaced, nothing would otherwise ever pump it again. The
+        // one-shot timer armed when an identify is accepted must still
+        // fire and recover it.
+        (FakeHost host, ChatOutput chat, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        // Nothing owned at all -- the pack never populates.
+        var logger = new InventoryLogger(host, chat, settings);
+        logger.Start("ACServer", "Acdream", scheduler);
+
+        for (int i = 0; i < 60; i++)
+            AdvanceOneSecond(host);
+
+        Assert.Contains(
+            ((RecordingLogger)host.Log).Messages,
+            m => m.Contains("never populated", StringComparison.Ordinal));
+
+        // Something is looted well after the give-up -- still id-requested
+        // via the ordinary Created/ownership path (unaffected by the
+        // disposed poll, which was only ever the startup-capture/refresh
+        // clock, not the identify queue's own event handling).
+        host.Automation.Items.Owned.Add(ArmorItem(1u, "Helm"));
+        host.Automation.Objects.Objects.Add(UnidentifiedArmor(1u, "Helm"));
+        host.Events.RaiseObjectChanged(1u, PluginObjectChangeKind.Created);
+        Assert.Equal([1u], host.Automation.Objects.IdentifyRequests);
+
+        // Its identify gets displaced by a later one.
+        host.Automation.Loot.Appraisal = new PluginAppraisalState(1, 999u, 0u);
+
+        // No periodic poll is running any more -- only the one-shot
+        // give-up timer armed when item 1's identify was accepted can
+        // detect the displacement now.
+        for (int i = 0; i < 30; i++)
+            AdvanceOneSecond(host);
+
+        Assert.Equal([1u, 1u], host.Automation.Objects.IdentifyRequests);
     }
 
     [Fact]

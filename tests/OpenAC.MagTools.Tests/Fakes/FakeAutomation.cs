@@ -647,6 +647,14 @@ public sealed class FakeLoot : ILootAutomation
 
     public bool IsBusy { get; set; }
 
+    /// <summary>
+    /// The shared appraisal slot's state (MEDIUM-2, P14 review) -- a test
+    /// sets <c>AwaitingObjectId</c> to a DIFFERENT nonzero id than what it
+    /// asked <see cref="AcDream.Plugin.Abstractions.IWorldObjectAutomation.Identify"/>
+    /// for to simulate that request having been displaced by a later one.
+    /// </summary>
+    public PluginAppraisalState Appraisal { get; set; }
+
     public List<PluginInventoryItem> Contents { get; } = [];
 
     public List<uint> PickedUp { get; } = [];

@@ -326,8 +326,12 @@ public sealed class InventoryLogger
         // "displaced awaiting slot"). Runs regardless of _waitingForIdData:
         // Dump's own requestIdsIfMissing path can also enqueue ids (an
         // existing-file session's re-identify pass) without setting that
-        // flag.
-        if (_pendingIdentifyIds.Count > 0)
+        // flag. MEDIUM-2 (P14 review): also pump when the queue is empty
+        // but an identify is latched in flight -- that is exactly the
+        // shape a displaced-and-not-yet-detected identify has (nothing
+        // else queued, but PumpIdentifyQueue still needs to notice the
+        // shared appraisal slot moved on to someone else).
+        if (_pendingIdentifyIds.Count > 0 || _inFlightIdentifyId != 0u)
             PumpIdentifyQueue();
 
         // Defect 8b: the only other real-data dump this class ever wrote
@@ -407,79 +411,174 @@ public sealed class InventoryLogger
     /// ownership check).
     /// </para>
     /// <para>
-    /// This pumps exactly the front of <see cref="_pendingIdentifyIds"/>
-    /// once per call (skipping past any front id(s) already appraised by
-    /// some other path first -- LOW-C, P13 review): on an accepted result it
-    /// is popped and (only now) recorded into <see cref="_requestedIds"/>
-    /// and latched as <see cref="_inFlightIdentifyId"/>; on anything else it
-    /// is left at the front to retry on the next pump once
+    /// This processes <see cref="_pendingIdentifyIds"/> front-to-back in one
+    /// call: an id already appraised by some other path (LOW-C, P13 review)
+    /// or no longer resolvable at all (MEDIUM-1, P14 review) is skipped
+    /// immediately and the loop moves straight to the next one; an accepted
+    /// result is popped and (only now) recorded into
+    /// <see cref="_requestedIds"/> and latched as
+    /// <see cref="_inFlightIdentifyId"/>, which stops the loop for this
+    /// call; any other refusal (contention -- <c>Busy</c>, <c>Refused</c>,
+    /// <c>Unavailable</c>) is left at the front to retry once
     /// <see cref="MaxIdentifyRefusalSeconds"/> has not yet elapsed since the
-    /// first refusal seen for it.
+    /// first refusal seen for it, which also stops the loop.
+    /// </para>
+    /// <para>
+    /// MEDIUM-1 (P14 review): <c>InvalidItem</c> means
+    /// <c>AppAutomationSurface.Identify</c> found the object no longer in
+    /// the table -- the SAME permanent "gone" condition <c>TryGet</c>
+    /// failing up front already models, not transient contention for the
+    /// shared slot. Live evidence: 40 of 191 items in one session never got
+    /// id data (sold, dropped, out of range); the P13 fix's temporal bound
+    /// still made each one hold the queue head for the full 30 s, serially
+    /// -- roughly 20 minutes of no progress for a batch that size. Both
+    /// give up immediately instead.
+    /// </para>
+    /// <para>
+    /// MEDIUM-2 (P14 review): the host documents that a plugin's own
+    /// accepted Identify can be DISPLACED by a later one (of either
+    /// origin), silently dropping its response
+    /// (<c>AcDream.Plugin.Abstractions.LootAutomation.cs</c>'s
+    /// <c>PluginAppraisalState.AwaitingObjectId</c> remarks) -- on accept
+    /// the id is already in <see cref="_requestedIds"/>, so without this
+    /// check a displaced id would never be re-enqueued or warned about,
+    /// and the queue would simply idle until the
+    /// <see cref="MaxIdentifyRefusalSeconds"/> safety valve expired.
+    /// Detected here via the shared appraisal slot
+    /// (<c>ILootAutomation.Appraisal</c>): if the slot is awaiting a
+    /// DIFFERENT nonzero id than <see cref="_inFlightIdentifyId"/>, this
+    /// class's own request was displaced -- clear the latch and
+    /// re-enqueue immediately (a fresh <see cref="MaxIdentifyRefusalSeconds"/>
+    /// clock, exactly like any other newly queued id).
     /// </para>
     /// </summary>
     private void PumpIdentifyQueue()
     {
         double now = _scheduler?.ElapsedSeconds ?? 0d;
 
-        // HIGH-A part 1: never attempt anything while our own identify is
-        // still outstanding -- the host's single-in-flight-request gate
-        // guarantees every such attempt is refused, for reasons that have
-        // nothing to do with the front queued id's own retry budget. A
-        // temporal safety valve (the same bound as the give-up below)
-        // covers a lost/never-arriving IdentReceived so this cannot wedge
-        // the whole queue forever.
         if (_inFlightIdentifyId != 0u)
         {
-            if (now - _inFlightIdentifySentAtSeconds < MaxIdentifyRefusalSeconds)
+            PluginAppraisalState appraisal = _host.Automation.Loot.Appraisal;
+            if (appraisal.AwaitingObjectId != 0u && appraisal.AwaitingObjectId != _inFlightIdentifyId)
+            {
+                // MEDIUM-2: displaced -- re-queue for a fresh attempt
+                // rather than waiting out the safety valve.
+                uint displacedId = _inFlightIdentifyId;
+                _inFlightIdentifyId = 0u;
+                _requestedIds.Remove(displacedId);
+                EnqueueIdentify(displacedId);
+            }
+            else if (now - _inFlightIdentifySentAtSeconds < MaxIdentifyRefusalSeconds)
+            {
+                // HIGH-A part 1 (P13 review): never attempt anything else
+                // while our own identify is still genuinely outstanding --
+                // the host's single-in-flight-request gate guarantees such
+                // an attempt would be refused for reasons that have
+                // nothing to do with the front queued id's own retry
+                // budget. The temporal safety valve below covers a
+                // lost/never-arriving IdentReceived so this cannot wedge
+                // the whole queue forever.
                 return;
-            _inFlightIdentifyId = 0u;
+            }
+            else
+            {
+                _inFlightIdentifyId = 0u;
+            }
         }
 
-        // LOW-C (P13 review): skip past every front id that already has id
-        // data by some other path (a manual assess, a Combine from a
-        // previous session's file, ...) to the first ACTIONABLE one, rather
-        // than handling only the very front slot and leaving satisfied ids
-        // sitting in the queue until their own turn.
         while (_pendingIdentifyIds.Count > 0)
         {
-            uint front = _pendingIdentifyIds.Peek();
-            if (!_host.Automation.Objects.TryGet(front, out PluginWorldObject wo) || !wo.HasAppraisalData)
-                break;
-            DequeueIdentify(front);
-        }
+            uint id = _pendingIdentifyIds.Peek();
 
-        if (_pendingIdentifyIds.Count == 0)
+            // MEDIUM-1: the object is gone entirely -- give up immediately
+            // and move on to the next queued id in this SAME call, rather
+            // than waiting out a temporal bound meant for transient
+            // contention.
+            if (!_host.Automation.Objects.TryGet(id, out PluginWorldObject wo))
+            {
+                GiveUp(id, "the object is no longer in the table");
+                continue;
+            }
+
+            // LOW-C (P13 review): already appraised by some other path (a
+            // manual assess, a Combine from a previous session's file,
+            // ...) -- nothing left to request; move straight to the next
+            // queued id.
+            if (wo.HasAppraisalData)
+            {
+                DequeueIdentify(id);
+                continue;
+            }
+
+            PluginItemCommandResult result = _host.Automation.Objects.Identify(id);
+            if (result.Accepted)
+            {
+                DequeueIdentify(id);
+                _requestedIds.Add(id);
+                _inFlightIdentifyId = id;
+                _inFlightIdentifySentAtSeconds = now;
+                ArmGiveUpTimer();
+                return;
+            }
+
+            // MEDIUM-1: InvalidItem is the same permanent "gone" condition
+            // as the TryGet miss above, just discovered one step later --
+            // give up immediately instead of holding the queue head for
+            // MaxIdentifyRefusalSeconds. Busy/Refused/Unavailable are
+            // genuine contention for the shared slot and keep the
+            // temporal bound.
+            if (result.Status == PluginItemCommandStatus.InvalidItem)
+            {
+                GiveUp(id, "the host reports it as an invalid item");
+                continue;
+            }
+
+            // HIGH-A part 2 (P13 review): give up on TIME elapsed since
+            // the FIRST refusal for this id, not on how many refusals
+            // were observed -- see MaxIdentifyRefusalSeconds' remarks.
+            if (!_identifyFirstRefusalSeconds.TryGetValue(id, out double firstRefusal))
+            {
+                _identifyFirstRefusalSeconds[id] = now;
+                ArmGiveUpTimer();
+                return;
+            }
+
+            if (now - firstRefusal >= MaxIdentifyRefusalSeconds)
+            {
+                GiveUp(id, MaxIdentifyRefusalSeconds + "s of continuous refusal");
+                continue;
+            }
+
             return;
-
-        uint id = _pendingIdentifyIds.Peek();
-        PluginItemCommandResult result = _host.Automation.Objects.Identify(id);
-        if (result.Accepted)
-        {
-            DequeueIdentify(id);
-            _requestedIds.Add(id);
-            _inFlightIdentifyId = id;
-            _inFlightIdentifySentAtSeconds = now;
-            return;
-        }
-
-        // HIGH-A part 2: give up on TIME elapsed since the FIRST refusal
-        // for this id, not on how many refusals were observed -- see
-        // MaxIdentifyRefusalSeconds' remarks.
-        if (!_identifyFirstRefusalSeconds.TryGetValue(id, out double firstRefusal))
-        {
-            _identifyFirstRefusalSeconds[id] = now;
-            return;
-        }
-
-        if (now - firstRefusal >= MaxIdentifyRefusalSeconds)
-        {
-            DequeueIdentify(id);
-            _host.Log.Warn(
-                "InventoryLogger: gave up requesting id data for object 0x"
-                + id.ToString("X8") + " after " + MaxIdentifyRefusalSeconds
-                + "s of continuous refusal.");
         }
     }
+
+    private void GiveUp(uint id, string reason)
+    {
+        DequeueIdentify(id);
+        _host.Log.Warn(
+            "InventoryLogger: gave up requesting id data for object 0x"
+            + id.ToString("X8") + " -- " + reason + ".");
+    }
+
+    /// <summary>
+    /// LOW-1 (P14 review): <see cref="MaxIdentifyRefusalSeconds"/> is only
+    /// ever evaluated INSIDE a pump call -- if nothing else ever triggers
+    /// one (the rare case where <see cref="StartupGiveUpPolls"/> disposes
+    /// <see cref="_snapshotPoll"/> because the owned pack never populated,
+    /// then something is looted much later and its identify gets displaced
+    /// -- MEDIUM-2's own re-enqueue has nothing left pumping it), the
+    /// temporal bound would never actually fire. Arms a one-shot timer on
+    /// the plugin's own <see cref="TickScheduler"/> whenever this class
+    /// starts a clock it needs checked (latching an in-flight id, or
+    /// starting a front id's first-refusal timestamp) so the bound is
+    /// guaranteed at least one more look regardless of ambient poll/event
+    /// traffic. A stray timer firing after the state has already moved on
+    /// is harmless -- <see cref="PumpIdentifyQueue"/> is safe to call at
+    /// any time.
+    /// </summary>
+    private void ArmGiveUpTimer()
+        => _scheduler?.Delay(TimeSpan.FromSeconds(MaxIdentifyRefusalSeconds), PumpIdentifyQueue);
 
     /// <summary>Enqueues <paramref name="objectId"/> for a paced identify attempt, unless it is already queued or already sent.</summary>
     private void EnqueueIdentify(uint objectId)
@@ -603,7 +702,12 @@ public sealed class InventoryLogger
         {
             if (change.ObjectId == _inFlightIdentifyId)
                 _inFlightIdentifyId = 0u;
-            if (_pendingIdentifyIds.Count > 0)
+            // MEDIUM-2 (P14 review): also pump on an UNRELATED
+            // IdentReceived when an identify is still latched in flight --
+            // a reasonable opportunity to notice the shared appraisal slot
+            // moved on to someone else (displacement) even with nothing
+            // else queued.
+            if (_pendingIdentifyIds.Count > 0 || _inFlightIdentifyId != 0u)
                 PumpIdentifyQueue();
         }
 

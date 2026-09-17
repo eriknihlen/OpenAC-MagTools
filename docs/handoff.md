@@ -9,11 +9,11 @@ for every place this port knowingly differs from the original.
 
 ## What shipped
 
-Plugin slices P1–P11 (P9–P11 were live-gate fix rounds): every user-facing
+Plugin slices P1–P12 (P9–P12 were live-gate fix rounds): every user-facing
 Mag-Tools feature in the design's inventory is implemented and tested against
 this repo's fake host, and 37 of the 45 checklist rows are Shipped; the other
 8 are Not applicable (Decal/Win32-only) with a one-line reason and the
-OpenAC-native equivalent in the README. 1,017 tests, 0 warnings.
+OpenAC-native equivalent in the README. 1,020 tests, 0 warnings. Head `d48a934`.
 
 Process: Fable wrote the design and slices; Sonnet implemented one slice at a
 time; a fresh Opus reviewed every slice (and every fix round) before the next
@@ -45,11 +45,12 @@ healing kits). The steps to close them are in the Pending table.
 ## OpenAC API changes awaiting the owner's push
 
 Branch `claude/magtools-plugin-api` in `OpenAC/.worktrees/magtools-api`
-(61 commits over `main`; 17 files in `AcDream.Plugin.Abstractions`, 120 files
-overall). Every slice was implemented with fail-first tests and reviewed by a
-fresh Opus; nothing is pushed and no PR exists. Frozen detached snapshots
-(`magtools-api-a8`, then `-a9`) are what `Directory.Build.props` builds
-against.
+(head `9c26778`, 63 commits over `main`; 17 files in
+`AcDream.Plugin.Abstractions`, 124 files overall, about 14,600 lines added of
+which more than half are tests). Every slice was implemented with fail-first tests and reviewed by a
+fresh Opus; nothing is pushed and no PR exists. The frozen detached snapshot `magtools-api-a9` (that head) is what
+`Directory.Build.props` builds against; once the branch merges, point
+`OpenAcRoot` back at the checkout.
 
 - **A1** chat (`Received`/`RegisterFilter`/`PostMessage`, structured
   `PluginChatMessage`), lifecycle (`LoginComplete`/`Logoff`/`LocalPlayerDied`,
@@ -100,3 +101,8 @@ crash in Vulkan device destruction at shutdown after a clean session (D7 in
   `enteredWorld`; gate partner tests inside that window and trust the status
   file's events, not the resource samples.
 - A hard-killed client or bot leaves its ACE session stuck for 3–8 minutes.
+- A client can linger as a process object with one stuck thread after a
+  confirmed graceful logout (host D7 class); while it does, it holds the
+  deployed plugin DLL, so `tools/deploy.ps1` to the default plugin folder
+  fails until a reboot. The deployed copy is then older than `main`: after
+  a reboot run `pwsh -File tools/deploy.ps1 -Configuration Release`.

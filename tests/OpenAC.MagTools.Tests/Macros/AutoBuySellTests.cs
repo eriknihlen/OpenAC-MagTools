@@ -220,9 +220,14 @@ public sealed class AutoBuySellTests
     // Defect 14a: a failed (server-rejected) buy/sell transaction was
     // treated identically to a real one -- the macro proceeded to the next
     // step (selling after a "successful" buy) without ever reporting that
-    // the trade actually failed.
+    // the trade actually failed. HIGH-3 (P12 review): reporting the failure
+    // is now the shared VendorTransactionReporter's job (tested separately,
+    // Commands/VendorTransactionReporterTests.cs) -- AutoBuySell's own
+    // responsibility on a failure is to STOP instead of falling through to
+    // Idle, where Think's 10 Hz cadence would re-pick the identical
+    // (still-failing) item and re-issue the same buy/sell forever.
     [Fact]
-    public void AFailedTransactionCompletionIsReported()
+    public void AFailedTransactionCompletionDeactivatesInsteadOfReIssuingTheSamePick()
     {
         (FakeHost host, _, OpenAC.MagTools.TickScheduler scheduler) = Build();
         host.Automation.Vendor.Items.Add(
@@ -236,9 +241,17 @@ public sealed class AutoBuySellTests
         host.Automation.Vendor.RaiseOpened(9u);
         scheduler.Tick(0.1);
 
+        int callsAfterInitialBuy = host.Automation.Vendor.Calls.Count;
         host.Automation.Vendor.RaiseTransactionCompleted(PluginVendorTransactionKind.Buy, success: false);
 
-        Assert.Contains(
+        // Several more Think() ticks (10 Hz cadence) must NOT re-issue
+        // AddToBuyList/BuyAll for the identical pick -- the macro
+        // deactivated instead of looping through Idle.
+        for (int tick = 0; tick < 10; tick++)
+            scheduler.Tick(0.1);
+
+        Assert.Equal(callsAfterInitialBuy, host.Automation.Vendor.Calls.Count);
+        Assert.DoesNotContain(
             host.ChatLines,
             line => line.Contains("AutoBuySell: Buy failed", StringComparison.Ordinal));
     }

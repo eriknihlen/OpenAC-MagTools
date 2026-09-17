@@ -53,6 +53,7 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
     private AutoBuySell? _autoBuySell;
     private AutoTradeAdd? _autoTradeAdd;
     private AutoTradeAccept? _autoTradeAccept;
+    private VendorTransactionReporter? _vendorTransactionReporter;
     private Looter? _looter;
     private InventoryPacker? _inventoryPacker;
     private OneTouchHeal? _oneTouchHeal;
@@ -109,6 +110,7 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _autoBuySell = new AutoBuySell(host, _chat, _settings.AutoBuySell, _lootRules);
         _autoTradeAdd = new AutoTradeAdd(host, _chat, _settings.AutoTradeAdd, _lootRules);
         _autoTradeAccept = new AutoTradeAccept(host, _settings.AutoTradeAccept);
+        _vendorTransactionReporter = new VendorTransactionReporter(host, _chat);
         _looter = new Looter(host, _chat, _settings.Looting, _lootRules);
         _inventoryPacker = new InventoryPacker(host, _chat, _lootRules);
         _oneTouchHeal = new OneTouchHeal(host);
@@ -189,6 +191,7 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _chatFilter?.Enable();
         _tinkeringAutoConfirm?.Start();
         _autoTradeAccept?.Start();
+        _vendorTransactionReporter?.Start();
         _inventoryPacker?.AttachChatTrigger();
         _logOutOnDeath?.Start();
 
@@ -260,6 +263,7 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _chatFilter?.Disable();
         _tinkeringAutoConfirm?.Stop();
         _autoTradeAccept?.Stop();
+        _vendorTransactionReporter?.Stop();
         _inventoryPacker?.DetachChatTrigger();
         _logOutOnDeath?.Stop();
 

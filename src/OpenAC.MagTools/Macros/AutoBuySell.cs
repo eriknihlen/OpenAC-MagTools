@@ -155,12 +155,23 @@ public sealed class AutoBuySell
         // trade or rejected it (insufficient funds, a stale price, an
         // over-burden/no-pack-space refusal) -- a failed buy or sell was
         // indistinguishable from a real one.
+        //
+        // HIGH-3 (P12 review): a failure must not fall through to Idle and
+        // let Think() re-pick the SAME item next tick -- with MaxBuyCount
+        // 5000 and no affordability check, a persistently-rejected pick
+        // (insufficient funds, a merchandise-type refusal) would otherwise
+        // re-issue AddToBuyList/BuyAll or AddToSellList/SellAll at Think's
+        // 10 Hz cadence forever. Deactivating (matching TryVendorCommand's
+        // own refusal handling) stops the loop outright instead. The
+        // failure itself is reported by the shared
+        // VendorTransactionReporter (always-on, independent of this
+        // class's own Enabled setting), not here -- so a manually-driven
+        // and an AutoBuySell-driven failure both get exactly one notice.
         if (!result.Success)
         {
-            _chat.Write("AutoBuySell: "
-                + (result.Kind == PluginVendorTransactionKind.Buy ? "Buy" : "Sell")
-                + " failed"
-                + (string.IsNullOrWhiteSpace(result.Notice) ? "." : ": " + result.Notice));
+            _active = false;
+            _phase = Phase.Idle;
+            return;
         }
 
         if (result.Kind == PluginVendorTransactionKind.Buy && _phase == Phase.Buying)

@@ -329,24 +329,121 @@ Re-gate verdicts for the round-3 defects, plus what is new.
 - [x] Headless `+Horan` bot stopped.
 - [x] `%LOCALAPPDATA%\acdream\vtank\+Horan.utl` left as found (keep-everything).
 
+## Round 5 (A9 host `9c26778` / plugin `7fc327a`) -- closing round
+
+Host: OpenAC snapshot worktree `magtools-api-a9`, head `9c26778`; Release
+`AcDream.App.exe` and `acdream-headless.exe` both built 2026-09-17 04:08.
+Plugin: `7fc327a`, deployed DLL written 2026-09-17 04:09 (the brief's "after
+07:30" is a timezone slip -- the deployed binary is from this session's build,
+two minutes before the first route). Both heads verified before the first
+launch; the plugin repo working tree was clean.
+
+Routes, logs, screenshots and crops live in the session scratchpad under
+`live-r5/` (`r1`..`r9`, `r7b`..`r7f`, `launch-r*.log`,
+`artifacts1..14/screenshots`).
+
+| # | Row | Steps | Observed | Verdict |
+|---|---|---|---|---|
+| 1 | Inventory logger id data | r1: backed up and deleted `sawato/+Acdream.Inventory.xml`, seeded `InventoryManagement/InventoryLogger=True`, logged in, stayed ~4.5 min, graceful close. r2/r3: two further sessions with the file present | Fresh-file branch printed `<{Mag-Tools}>: Requesting id information for all armor/weapon inventory. This will take a few minutes...` (a01-usei). The file was written with 198 records, of which **15 carry `<HasIdData>true</HasIdData>` with real data** -- `Acid Katar` (IntValues `19=159` value, `5=135` burden, `47=1`, `45=32`; DoubleValues `29=1.01`, `149=1.0149999856948853`; StringValues `16`/`1` = long description + name) and `Covenant Sollerets` (IntValues `28=215` AL, `19=10075` value, `5=268` burden, `160=205`, `106=316`, `107=1634`; BoolValues `100=true`; DoubleValues `5=-0.0555555559694767`). 60 of the 198 records are ident-worthy by the port's own `ObjectClassNeedsIdent` rule, so **15/60 (25%) were identified in one ~4.5-minute session** -- about one item per 20 s, not the "most identifiable armor/weapons" the fix aimed at. Round 4's "every record false" symptom is gone. **Second session: no re-identify storm** -- b00-login shows the login transcript with no `Requesting id information...` line at all (existing-file branch). **But retention FAILED:** the file after r2 holds only 2 `HasIdData=true` records, and every one of the 13 lost records is present in both files under the *same* `Id`+`ObjectClass` key (`Decapitator's Blade`, `Covenant Sollerets`, `Leather Helm`, `Leather Greaves`, `Greater Amuli Shadow Coat`, `Pathwarden Plate Hauberk`, `Pathwarden Robe`, `Amulet`, `Bracelet`, `Atlatl`, `Flaming Stick`, `Partizan`, `Acid Zombie Essence (50)`), each downgraded to `false` with an empty value block. No `Inventory file is corrupt.` message was printed, so the previous file parsed. Still 2 after r3 | **PARTIAL** -- id data is captured and persisted (8b closed), the request line and the no-storm second session are correct; **carry-over across sessions regresses (new defect 15)** and throughput is low |
+| 2 | Vendor buy / sell, an actual transaction | r3: `@telepoi Holtburg`, `/mt uselp door`, `/mt usel closestvendor`, `dump`, `/mt vendor addbuyp a`, `buy`, `/mt vendor addsellp taper`, `sell`. r9 (retry, MossTank loaded): the same open with a `Fispur Ansel the Grocer.utl` profile (KeepUpTo 5 on `Pack`, Sell on `Prismatic Taper`) so AutoBuySell has something to pick | Vendor opens from the plugin path: `Fispur Ansel the Grocer tells you, "Welcome! What's your pleasure today?"` (c05-buy). The grocer's stock is a single item, **`Pack`, `costs 88p (you have 21,678p)`** (c03-vendor crop). `addbuyp a` matched it and `buy` produced the new failure line **`<{Mag-Tools}>: Vendor transaction failed.`**; `addsellp taper` + `sell` produced a second identical line (c06-sell). Pyreals are **21,678p before and 21,678p after both** -- nothing moved. The host log records `[B-Drag] InventoryServerSaveFailed guid=0x5000000A err=0x0 rolledBack=False` immediately after each, so the commands reached the wire and ACE rejected them. r9 with the vendor profile: `<{Mag-Tools}>: AutoBuySell: Nothing to Buy` **and no "Nothing to Sell"** -- AutoBuySell picked a sell item from the profile unattended, issued `AddToSellList`+`SellAll`, and reported `Vendor transaction failed.`; it then went quiet for the remaining 30 s instead of re-issuing, i.e. the P12 deactivate-on-failed-completion behaviour holds | **PARTIAL** -- defect 14a (a silent no-op buy/sell) is CLOSED and verified live, AutoBuySell drives a profile-picked transaction and deactivates on failure; **14b (a completed purchase or sale) still unproven -- ACE rejects both** |
+| 3 | AutoTradeAccept on the closing builds | Five attempts (r7, r7c, r7d, r7e, r7f) against a freshly relaunched headless `+Horan` bot each time, `enteredWorld` confirmed in its status file before each launch, `AutoTradeAccept/Enabled=True` + whitelist `\+Acdream` seeded in the shared `Mag-Tools.xml`; `@teleto +Horan`, `/mt select +Horan`, `input press UseSelected`, `/mt trade addp <item>`, `/mt trade accept`, with the post-teleport wait stretched from 26 s to 120 s across attempts | The secure-trade window opens every time from the plugin path -- `+Horan  Total Items: 0` / `You  Total Items: 0` with the bot's avatar in front of the character and `Server population: 1` (g02, h04, k04, n05). **Nothing could ever be staged.** The blocker is the harness, not the feature: after `@teleto +Horan` the graphical client shows a flat white loading screen for **over 2.5 minutes** (still white at n03, 165 s after the teleport), while the probe's `wait world-visible` returns almost immediately and every subsequent `command` executes into that dead window. r7d proves the commands really do run there -- `/mt trade addp lockpick` answered `<{Mag-Tools}>: No inventory item found named: lockpick` (k04). With a name that does resolve (`taper`, r7e/r7f) the add is silent and the grid still reads `Total Items: 0`, and the accept then rides an empty trade. Because nothing was staged and `+Acdream` never had a real accept to answer, the bot's `AutoTradeAccept` was never given the chance to fire; its log shows the plugin loaded and nothing trade-related | **PENDING** -- five attempts, blocked on the harness/environment (post-`@teleto` load time), not on evidence against the feature. Needs a route that waits on the *destination* world being drawn (or a partner that comes to the character instead of the character teleporting) |
+| 4 | Tinkering auto-confirm | r8: `Tinkering/AutoClickYes=True` seeded, `@ci materialiron` (ACE weenie 20986 `Salvaged Iron`), then `/mt useip salvaged iron on acid katar` twice | The salvage is created (`"+Acdream has created Salvaged Iron (0x8002108C) in their inventory."`) and the plugin's `Items.Apply(source, target)` route reaches the server -- ACE answers **`The material is not complete!`** for both attempts (h03-tinker3). ACE's `@ci` mints a salvage item with no structure/units, so the server never gets as far as the crafting roll and **no type-5 `ConfirmationRequested` ("You determine that you have a N percent chance to succeed.") can be raised at all** | **PENDING** -- blocker: no complete salvage bag is creatable on this ACE build, so the confirmation the feature answers cannot be provoked. The Apply path itself is proven to reach the server |
+| 5 | Pack Inventory hotkey (Ctrl+P) | r2 and r3: `+Acdream.AutoPack.utl` (KeepUpTo 1 on `Prismatic Taper`, pack 1) in place, Ctrl+P delivered from a second PowerShell process via `AppActivate` + `SendKeys` -- first by window title, then (r3) by the client's process id, logged as `pid=4716 title='acdream 0.1.10 | 217 fps | ...'`, `AppActivate(pid)=True`, `sent ctrl+p`. r4/r5: `/mt autopack` as the non-hotkey control | **The hotkey never fired**: neither session printed `Auto Pack - Started.` and the host log has no hotkey activity (b02/b03, c01/c02). The chord itself is not obviously blocked -- the client's own `P` binding is `SelectionPreviousSelection` with no modifier and `AppHotkeyRegistry.CollidesWithClient` is modifier-aware. The `/mt autopack` control DOES work: `<{Mag-Tools}>: Auto Pack - Started.` then `Auto Pack - Completed.` (d01/d02, e01/e02). **No item moved**: the main-pack grid is pixel-identical before and after in both runs. r5 tried to remove the ambiguity by minting a fresh loose taper first, but `@ci prismatictaper` answers `prismatictaper is not a valid weenie`, so whether the profile-matched items were simply already in their assigned pack could not be settled | **PENDING** -- two SendKeys attempts, one of them process-id targeted and confirmed sent, produced no packer run, and whether the default chord never armed or the client swallowed the key is not separable from outside the process; the packer's own lifecycle still only proves Started/Completed |
+| 6 | Chest looting | r5: `@create chestthievesden 8` (all eight spawned in the player's own cell `0x0108020E`, 2 m away -- round 4's out-of-reach blocker is gone), `/mt uselp chest`. r6: the same spawn, then the plugin path AND the client's own path (`/mt selectp chest` + `input press UseSelected`) back to back | Neither path opens the chest. The plugin's `Use` prints no refusal (so the host returned `Started`) and nothing opens in 32 s (e04/e05); the client's own selection+use, with `Chest` shown as the live selection in the status bar, opens nothing either in 15 s (f01). Because **both** paths behave identically this is not the plugin-issued-Use class (defect 11, closed in round 4 and re-proven this round on corpses) -- the chest itself does not open on this server/content | **PENDING** -- blocker: `chestthievesden` does not open for this character by any path; needs a chest that is actually openable (unlocked, or with its key) |
+| 7 | Combat damage cells + combat filters + Log Out on Death | r6: `Misc/LogOutOnDeath=True` seeded, **`@cloak off`** (new this round -- the character had been cloaked all along), `@attackable on`, `@create tuskerguard 8`, three `/mt attack_melee closest`, then 85 s standing among the survivors; Trackers -> Combat | The server acknowledged both toggles: `You are no longer cloaked, can no longer pass through doors and will appear as an admin.` and `Monsters will attack you normally.` (f03). Kills still one-shot (`You cleave Drudge Prowler in twain!`, `You cleave Mosswart Feeder in twain!`, `You split Tusker Guard apart!`), and **nothing attacked the character in 85 s** -- not one damage, evade or resist line, health drifted upward on regen (f04/f05). Combat tab populates correctly: `All 3`, `Drudge Prowler 1`, `Mosswart Feeder 1`, `Tusker Guard 1`, `Attacks 3 (100%)`; `Dmg Rcvd` and `Dmg Givn` stay blank (f06). No death, so `IEvents.LocalPlayerDied` and the Log-Out-on-Death path were again unobservable | **PENDING** -- unchanged blocker, now with `@cloak off` ruled out as the cause. Two routes spent, as instructed |
+| 8 | Quick re-confirms | r1: `@ci manastone` + `/mt usei mana stone`; r1: Tools -> Inventory -> `Clipboard Worn Equipment`, clipboard read from a second process after a sentinel was planted; r6: `/mt uselp corpse` on a fresh corpse; `sawato/+Acdream.CorpseTracker.xml` | All four hold on the closing builds. `<{Mag-Tools}>: Use refused: This item requires a target; call Apply(objectId, targetObjectId) instead.` (a02). Corpse looting through the plugin's own Use: `+(KeepAll) Reliable Lockpick`, `+(KeepAll) Orb, (-200.0 )`, `+(KeepAll) Chainmail Girth` (f03). Corpse tracker persisted three rows including `Description="Corpse of Mosswart Feeder" Opened="True"`. Worn-equipment clipboard: 513 characters, four equipped items, weapon last -- `Leather Leather Helm, AL 223, Craft 5` / `Greater Amuli Shadow Coat, AL 190` / `Leather Leather Greaves, AL 276, Missile Defense 209 to Activate, Diff 174, Craft 8` / `Decapitator's Blade (Two Handed Combat), Heroic Destroyer Set, SlashRend, 60.75-75, +38%a, 38%md, (107.5/82 38.0/38.0), Epic Two Handed Combat Aptitude, ...`, preceded by `Copying all inventory item info to clipboard...` / `All inventory item info has been copied to the clipboard.` | **PASS** |
+
+### Defects and verdicts (round 5)
+
+- **Defect 14a (a vendor buy/sell that does nothing is silent) -- CLOSED,
+  verified live.** `Vendor transaction failed.` is printed for both the
+  manual `/mt vendor buy`/`sell` and the AutoBuySell-driven round, and
+  AutoBuySell stops instead of re-issuing.
+- **Defect 14b (an actual completed buy or sale) -- still open, now
+  attributed server-side.** The commands reach the wire; ACE rejects them and
+  the host logs `InventoryServerSaveFailed err=0x0 rolledBack=False`. The
+  pyreal count is unchanged across both. Not a plugin defect on this evidence.
+- **Defect 8b (inventory-logger records carry no id data) -- CLOSED.** 15
+  records with real int/double/bool/string appraisal values, quoted above.
+- **Defect 15 (NEW) -- id data captured in one session is lost on the next
+  session's dump.** After r1 the file held 15 `HasIdData=true` records; after
+  r2 it held 2, with all 13 lost records still present under the identical
+  `Id`+`ObjectClass` key and downgraded to an empty `false` record. The
+  logger has exactly one write path
+  (`src/OpenAC.MagTools/Loggers/Inventory/InventoryLogger.cs:882`), which
+  first reads the previous file and merges through
+  `MyWorldObjectRecord.Combine` (`Loggers/Inventory/MyWorldObjectRecord.cs:74`,
+  which correctly keeps the older id data when the new snapshot has none), so
+  the two candidates are (a) `_host.Storage.ReadText(_storageKey)` returning
+  nothing at the dump that produced this file, or (b) the merge branch at
+  `InventoryLogger.cs:846-873` not being reached. No `Inventory file is
+  corrupt.` was printed, so the import itself did not fail. Distinguishing
+  the two needs instrumentation; this round can only report the symptom,
+  reproduced once and stable across a third session.
+- **Defect 16 (NEW, low) -- the Pack Inventory hotkey does not fire.** Two
+  deliveries of Ctrl+P (the second targeted at the client's own process id and
+  confirmed sent by the sender log) produced no `Auto Pack - Started.`, while
+  `/mt autopack` in the same build does. The One Touch Heal hotkey was proven
+  in round 3 only after its chord was written into
+  `%APPDATA%\acdream\plugin-hotkeys.json`; no override exists for
+  `openac.magtools:pack-inventory`, so the registered default chord
+  (`PluginKeyChord(PluginKey.P, Ctrl: true)`) is the untested half. Whether
+  the default chord never arms or SendKeys' Ctrl+P is swallowed by the client
+  is not separable from outside.
+- **Environment: the client can hang after a confirmed graceful logout.** The
+  r6 process stayed alive (responding, 618 MB) for minutes after
+  `[session] graceful logout confirmed` and `Mag-Tools disabled`; it needed a
+  force kill, which was safe because ACE had already taken the logout. This is
+  the round-3 defect-7 host shutdown class, out of scope for this repository.
+- **Environment: the post-`@teleto` world load takes over two minutes** in
+  this graphical build, and the UI probe's `wait world-visible` returns long
+  before it finishes -- the screen is still a flat white at 137 s after the
+  teleport. Every command issued in that window executes but lands before the
+  destination UI is live. This is what cost the trade row all five
+  attempts.
+- **Environment: `@ci` gaps.** `prismatictaper` and `intricatecarvingtool` are
+  not valid weenies on this build; `materialiron` creates a salvage item the
+  server considers incomplete.
+
+### Restored checklist (round 5)
+
+- [x] `@attackable off` -- r10 confirmed `Monsters will only attack you if provoked by you first.`
+- [x] `@cloak on` (r6 had turned cloaking off) -- r10 confirmed `You are now cloaked.` and `You are now ethereal and can pass through doors.`
+- [x] Home position `@teleloc 0x0108020D 46.438545 -54.503498 0.004200 -0.128570 0 0 -0.991700` -- issued at the end of r3, r4, r7c/d/e/f and r10.
+- [x] `Mag-Tools.xml` restored byte-for-byte from `$S/Mag-Tools.backup.xml` (the round's own copy is kept as `live-r5/Mag-Tools.after-r5.xml`).
+- [x] Headless `+Horan` bot stopped (console Ctrl+C via `stopbot.ps1`, `EXITED`); no `acdream-headless.exe` left.
+- [x] Every route ended with `close-client` and a `[session] graceful logout confirmed`; no client was hard-killed while holding a session.
+- [ ] **One process object remains**: pid 9060, the r6 client. It logged
+      `graceful logout confirmed` and `Mag-Tools disabled` and then hung in
+      shutdown; .NET reports `HasExited`, `taskkill` answers "no running
+      instance of the task", but Windows still lists it with one stuck thread
+      (633 MB working set, 611 handles) -- the round-3 defect-7 Vulkan
+      teardown class. It holds no ACE session; it needs a reboot to clear.
+- [x] Server toggles used this round and left as found; `Fispur Ansel the
+      Grocer.utl` (new, written for the AutoBuySell gate) and the round-3/4
+      `.utl` profiles are left in `%LOCALAPPDATA%\acdream\vtank`.
+
 ## Pending (owed before the port can be called fully live-gated)
 
-Updated after round 4 (2026-09-17). Rows closed in round 4 are gone; every
-row below carries its current blocker.
+Updated after round 5 (2026-09-17). Rows closed in round 5 are gone; every row
+below carries its current blocker.
 
 | Feature | Blocker | Verdict |
 |---|---|---|
-| Chat filters: the 30 rules other than `MonsterDeaths` and `TradeBuffBotSpam` | still needs a character that can miss, be evaded, be hit, fizzle, resist, salvage and use comps, plus an NPC/vendor to talk. Round 4 added the decisive datum for the combat half: SIX hostile Tusker Guards standing on the character at 204/72999 health with `Monsters will attack you normally.` never attacked in 80 s, so no evade/resist/dirty-fighting line can be produced at all on this server, and the character one-shots everything it swings at | PENDING |
-| Auto buy/sell: an actual purchase or sale | the vendor now OPENS from the plugin path and AutoBuySell runs (round 4 closed that half). What is still unproven is a completed transaction: `/mt vendor addbuyp a`/`addbuyp e` + `buy` and `addsellp taper` + `sell` printed nothing, moved nothing and left the pyreal count unchanged at 21,629p. Needs a vendor whose stock and buy-list are known item by item (the Holtburg grocer's list has a single entry, and `addbuy Bread 1` answers `No vendor item found named: Bread`) | PENDING |
-| Auto trade accept | reproduced twice in round 4: with `+Horan` running this plugin, `AutoTradeAccept/Enabled=True` and a whitelist matching `+Acdream`, the partner never accepted after `+Acdream` did; the window stayed open with the partner at 0 items and the staged item never left the pack. The headless session exposes no trade-side chat or log, so whether its trade state ever opened cannot be seen from here -- needs host-side instrumentation or a second GRAPHICAL client as the partner. (AutoTradeAdd itself PASSED in round 4.) | PENDING |
-| Auto looting: a CHEST | the corpse half PASSED in round 4 (plugin-opened corpse, `+(KeepAll)` lines, items and pyreals into the pack). `@create chest` put the chest in a neighbouring cell (`0x010801F8` while the player was in `0x0108020E`), so `/mt uselp chest` had nothing in reach | PENDING |
-| Inventory packer: items land in their profile-assigned pack | not exercised in rounds 3 or 4; the Started/Completed lifecycle remains the only proven part | PENDING |
-| Inventory logger / exports: real id data | the logger file is non-empty now (195 records) and both clipboard exports work, but every logger record is `HasIdData=false` in every session -- including the session after a full id sweep -- and the Inventory Info export reported `40 item(s) never received identification data`. Needs appraisal data to actually arrive and persist for pack items | PENDING |
+| Chat filters: the 30 rules other than `MonsterDeaths` and `TradeBuffBotSpam` | still needs a character that can miss, be evaded, be hit, fizzle, resist, salvage and use comps, plus an NPC/vendor to talk. Round 5 removed the last suspected cause of the combat half: the character was CLOAKED all along, and with `@cloak off` + `@attackable on` acknowledged by the server (`Monsters will attack you normally.`) eight hostile Tusker Guards still did not land a single attack in 85 s | PENDING |
+| Auto buy/sell: an actual purchase or sale | round 5 narrowed this to the server. The commands now reach the wire and report honestly: `/mt vendor addbuyp a` + `buy` on the Holtburg grocer's one stock item (`Pack`, `costs 88p (you have 21,678p)`) and `addsellp taper` + `sell` each answer `<{Mag-Tools}>: Vendor transaction failed.`, the pyreal count is unchanged at 21,678p, and the host logs `InventoryServerSaveFailed err=0x0 rolledBack=False` after each. AutoBuySell with a `<vendor name>.utl` profile picks a sell item unattended, issues the pair and deactivates on the failure. Needs a vendor/item ACE will actually trade | PENDING |
+| Auto trade accept | the A9 host wires `Objects` into `HeadlessAutomationSurface`, so round 4's defect 13 no longer applies. Five round-5 attempts still could not stage an item: after `@teleto +Horan` the graphical client sits on a white loading screen for over 2.5 minutes while the probe's `wait world-visible` returns immediately, so `/mt trade addp` and `accept` execute into a dead window (proved by `No inventory item found named: lockpick` arriving from that window). The trade window itself opens every time. Needs a route that waits on the destination world being drawn, or a partner that comes to the character | PENDING |
+| Auto looting: a CHEST | round 5 got the chest in reach (`@create chestthievesden 8` spawned all eight in the player's own cell, 2 m away) and it still does not open -- by the plugin's `Use` (no refusal, nothing opens in 32 s) or by the client's own selection + `UseSelected` with `Chest` as the live selection. Because both paths behave identically this is not the plugin/host Use class; needs a chest that is openable for this character | PENDING |
+| Inventory packer: items land in their profile-assigned pack | `/mt autopack` runs (`Auto Pack - Started.` / `Completed.`) but the main-pack grid is pixel-identical before and after. Whether the profile-matched items were already in their assigned pack could not be settled -- `@ci prismatictaper` is not a valid weenie, so a fresh loose taper could not be minted | PENDING |
+| Hotkey: Pack Inventory (Ctrl+P) | two SendKeys deliveries, the second targeted at the client's own process id and confirmed sent, produced no packer run while `/mt autopack` in the same build does. No `plugin-hotkeys.json` override exists for `openac.magtools:pack-inventory`, so the registered default chord is the untested half | PENDING |
+| Inventory logger: id data that survives a session | round 5 closed the capture half -- 15 records with real int/double/bool/string appraisal values, and the second session correctly skips the request line. What is owed is carry-over: 13 of those 15 records came back `false` with an empty value block after the very next session (defect 15), and only 15 of the 60 ident-worthy items were identified in a 4.5-minute session (about one per 20 s) | PENDING |
+| Tinkering auto-confirm | the plugin's `Items.Apply(source, target)` reaches the server (ACE answers `The material is not complete!`), but `@ci materialiron` mints a salvage item with no structure, so the type-5 crafting confirmation the feature answers can never be raised. Needs a complete salvage bag | PENDING |
 | Idle automation: heart carver / shattered-key fixer / key deringer | `Intricate Carving Tool` still not creatable: `@ci intricatecarvingtool` is not a valid weenie and `@ci 42979` creates a `Core Plating Integrator` | PENDING |
 | Mana auto recharge | the trigger is ACE's `Your <item> is low on Mana.`, which `Player_Tick` only emits for an item that actively burns mana. The character's equipped items do not burn: drained to 2 of 294 with `@givemana`, the value was unchanged many minutes later, so the warning is never emitted | PENDING |
 | One-touch heal with a healing KIT | the hotkey itself is proven (bound via `plugin-hotkeys.json`, Ctrl+J applied a `Heal`-named food item four times). The kit branch needs a `HealingKit`-class item, and no healing-kit weenie name resolves on this ACE build | PENDING |
-| Log out on death | round 4 tried to provoke a REAL server-driven kill instead of `@setvital health 0`: `Misc.LogOutOnDeath` on, `@attackable on`, health dropped to 40 and then to 200 with six adjacent hostile Tusker Guards for 80 s. Nothing ever attacked, so the character never died and `IEvents.LocalPlayerDied` still has not been observed to fire. The P10 audit of `src/OpenAC.MagTools/Macros/LogOutOnDeath.cs` (subscribed at `Enable()`, handler calls `Automation.Login.Logout()`) still stands. Blocked on the same thing as the combat rows: monsters on this server do not attack this character | PENDING |
-| Combat tracker `Dmg Rcvd` / `Dmg Givn` cells | rows, KB's and the attack counter all populate; the two damage cells are still unprovoked for the reason above | PENDING |
+| Log out on death | blocked on the same thing as the combat rows, now with cloaking ruled out: nothing attacks this character, so it never dies and `IEvents.LocalPlayerDied` has still not been observed to fire. The P10 audit of `src/OpenAC.MagTools/Macros/LogOutOnDeath.cs` still stands | PENDING |
+| Combat tracker `Dmg Rcvd` / `Dmg Givn` cells | rows, KB's and the attack counter all populate (round 5: `All 3`, three named rows, `Attacks 3 (100%)`); the two damage cells are still unprovoked for the reason above | PENDING |
+
 ## Defects found in the 2026-09-16 gate round
 
 Status as of the P9 fix round (plugin repo): each item below says whether the

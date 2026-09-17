@@ -17,12 +17,14 @@ extended plugin contract added on OpenAC branch `claude/magtools-plugin-api`
 and by P7 also E-TRADE/E-VENDOR/E-SESSION/E-HOTKEYS), which has not merged to
 OpenAC `main` yet. Until it does,
 `Directory.Build.props` points `OpenAcRoot` at a frozen detached worktree
-snapshot of that branch's head -- currently `magtools-api-a8` (review-closed
-head `f868960` on `claude/magtools-plugin-api`, which adds the A7 fixes:
+snapshot of that branch's head -- currently `magtools-api-a9` (review-closed
+head `9c26778` on `claude/magtools-plugin-api`, which adds the A9 headless
+fixes: real character identity, `Objects`, storage and trade wiring on the
+headless host; the A7 fixes:
 character identity at login, walk-to-use for world objects, a truthful
 clipboard write; and the A8 fixes: the plugin's use of a world container
 or vendor arms the container request like a click, and a stalled approach
-gives up instead of holding the use gate. The earlier `a4`/`a5`/`a6`/`final`/`a7`
+gives up instead of holding the use gate. The earlier `a4`/`a5`/`a6`/`final`/`a7`/`a8`
 snapshots this pointed at are retired). Override it with `-p:OpenAcRoot=<path>` if yours lives
 elsewhere (and once the API branch merges, point the default back at
 `main`).

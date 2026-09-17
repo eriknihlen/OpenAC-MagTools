@@ -796,6 +796,19 @@ public sealed class MtCommandRouterTests
         Assert.False(_router.Execute("wibble"));
         Assert.Equal(Line("Unknown command: wibble"), Assert.Single(Chat));
     }
+
+    [Theory]
+    [InlineData("quitx")]
+    [InlineData("client maximize")]
+    public void NearMissesOfTheWindowVerbsAreUnknownNotSilentlyAccepted(string command)
+    {
+        // Removing quit/exit/client minimize from the not-applicable table
+        // opened a boundary: a near-miss must land on Unknown command, not
+        // on a window call.
+        Assert.False(_router.Execute(command));
+        Assert.Equal(Line("Unknown command: " + command), Assert.Single(Chat));
+        Assert.Equal(0, _host.Window.MinimizeCalls + _host.Window.RequestCloseCalls);
+    }
 }
 
 public sealed class MtOptionCommandTests

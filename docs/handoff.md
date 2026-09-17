@@ -13,8 +13,8 @@ Plugin slices P1–P13 (P9–P13 were live-gate fix/porting rounds): every
 user-facing Mag-Tools feature in the design's inventory is implemented and
 tested against this repo's fake host. P13 ported `/mt client minimize`,
 `/mt quit` and `/mt exit` onto the new `IHostWindow` host-window surface
-(OpenAC A10), moving them from Not applicable to Shipped: 40 of the 45
-checklist rows are Shipped; the other 5 remain Not applicable
+(OpenAC A10), moving them from Not applicable to Shipped: 40 of the 48
+checklist rows are Shipped; the other 8 remain Not applicable
 (Decal/Win32-only) with a one-line reason and the OpenAC-native equivalent in
 the README. 1,025 tests, 0 warnings.
 

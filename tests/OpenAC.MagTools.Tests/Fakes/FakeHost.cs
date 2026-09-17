@@ -85,12 +85,16 @@ public sealed class FakeHostWindow : IHostWindow
     public HostWindowResult Minimize()
     {
         MinimizeCalls++;
+        if (MinimizeResult.Succeeded)
+            IsMinimized = true;
         return MinimizeResult;
     }
 
     public HostWindowResult Restore()
     {
         RestoreCalls++;
+        if (RestoreResult.Succeeded)
+            IsMinimized = false;
         return RestoreResult;
     }
 

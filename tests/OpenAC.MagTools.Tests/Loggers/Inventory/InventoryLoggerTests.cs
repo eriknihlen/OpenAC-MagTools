@@ -450,6 +450,66 @@ public sealed class InventoryLoggerTests
     }
 
     [Fact]
+    public void AppraisalDataThatArrivesWithoutAnIdentReceivedEventStillSurvivesLogoffTeardown()
+    {
+        // Defect 8b (live-gate round 4): the host can merge real appraisal
+        // properties into the object table (CaptureOwnedItems/TryGet sees
+        // HasAppraisalData=true) WITHOUT ever raising the plugin's
+        // IdentReceived ObjectChanged event for that object -- observed
+        // live wherever RuntimeInteractionTransactionState's single
+        // awaiting-appraisal slot gets displaced by a later request before
+        // the earlier one's response comes back, which a startup pass over
+        // many ident-worthy items does routinely. Before the fix, the only
+        // dump that ever wrote real id data to Storage was gated on
+        // OnObjectChanged's "every item now has id data" completion latch
+        // -- which never fires here because that event never arrives -- so
+        // Stop()'s post-teardown dump (TryGet failing for a torn-down
+        // object table) fell back to the empty "unresolved" shape and
+        // wrote HasIdData=false even though the item was, in fact,
+        // identified this session.
+        (FakeHost host, ChatOutput chat, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        host.Automation.Items.Owned.Add(new PluginInventoryItem(
+            1u, 0u, "Sword", 0u, 500u, 0u, 0u, 0u, 0u, 0u, 0u,
+            1, 0, 0, 0u, 0, 0, 0u, false, 0d, 0, 0, 0, 0, 0, 0, 0)
+        {
+            ObjectClass = PluginObjectClass.MeleeWeapon,
+        });
+        host.Automation.Objects.Objects.Add(new PluginWorldObject(
+            1u, 0u, "Sword", PluginObjectClass.MeleeWeapon, 0u, 500u, 0u) { HasAppraisalData = false });
+
+        var logger = new InventoryLogger(host, chat, settings);
+        logger.Start("ACServer", "Acdream", scheduler);
+
+        Assert.Contains(1u, host.Automation.Objects.IdentifyRequests);
+        // Nothing dumped yet -- still waiting.
+        Assert.Null(host.Storage.ReadText("ACServer/Acdream.Inventory.xml"));
+
+        // The server's appraisal response lands and the host merges the
+        // properties into the object table, but -- unlike every other test
+        // in this file -- NO IdentReceived ObjectChanged event is raised
+        // for it, matching the live displaced-slot behaviour.
+        host.Automation.Objects.Objects[0] = host.Automation.Objects.Objects[0] with { HasAppraisalData = true };
+
+        // The post-startup snapshot poll (1 Hz) is the only other place
+        // this class looks at the object table.
+        AdvanceOneSecond(host);
+
+        // The host tears the owned objects down for logoff before Stop()
+        // runs, exactly like the existing teardown test above.
+        host.Automation.Items.Owned.Clear();
+        host.Automation.Objects.Objects.Clear();
+
+        logger.Stop();
+
+        string? xml = host.Storage.ReadText("ACServer/Acdream.Inventory.xml");
+        Assert.NotNull(xml);
+        Assert.True(InventoryLoggerXml.TryImport(xml!, out List<MyWorldObjectRecord> records));
+        MyWorldObjectRecord record = Assert.Single(records);
+        Assert.Equal(1u, record.Id);
+        Assert.True(record.HasIdData);
+    }
+
+    [Fact]
     public void ItemsAcquiredAfterTheStartupDumpAppearInTheStopDump()
     {
         // HIGH-1 (P10 review): _lastOwnedSnapshot was refreshed only at

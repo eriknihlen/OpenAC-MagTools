@@ -44,6 +44,15 @@ public sealed class InventoryLogger
     private int _startupPollCount;
 
     /// <summary>
+    /// The ident-worthy-and-identified count as of the last partial dump
+    /// taken while <see cref="_waitingForIdData"/> is set (defect 8b). -1
+    /// means no partial dump has run yet this wait. Guards
+    /// <see cref="OnSnapshotPoll"/>'s per-second re-dump so it only touches
+    /// storage when real progress happened, not on every tick.
+    /// </summary>
+    private int _lastPartialDumpIdentifiedCount = -1;
+
+    /// <summary>
     /// The last non-empty owned-item snapshot this instance has actually
     /// captured. <see cref="Stop"/> dumps from this rather than a fresh
     /// <see cref="IItemAutomation.CaptureOwnedItems"/> call, because by the
@@ -105,6 +114,7 @@ public sealed class InventoryLogger
         _lastOwnedSnapshot = [];
         _startupCaptureDone = false;
         _startupPollCount = 0;
+        _lastPartialDumpIdentifiedCount = -1;
 
         if (!_settings.InventoryLogger.Value)
         {
@@ -214,8 +224,47 @@ public sealed class InventoryLogger
         // the Logoff event -- a truthful "still fully in-world right now"
         // signal independent of whether Logoff has fired yet. Gating the
         // refresh on it means this poll never captures that gap's data.
-        if (_host.Automation.Character.IsInWorld)
-            _lastOwnedSnapshot = items;
+        if (!_host.Automation.Character.IsInWorld)
+            return;
+
+        _lastOwnedSnapshot = items;
+
+        // Defect 8b: the only other real-data dump this class ever wrote
+        // was OnObjectChanged's "every ident-worthy item now has id data"
+        // completion branch -- an all-or-nothing latch that needs literally
+        // every item to appraise successfully. Live evidence (round 4)
+        // showed 40 of 191 items never got id data in a session (out of
+        // range, sold, tinkered away, or simply lost to the host's
+        // single-in-flight-appraisal slot when this class's own startup
+        // pass fires many Identify calls back to back -- see
+        // RuntimeInteractionTransactionState.TryRequestAppraisal under
+        // OpenAcRoot, which lets a later Automation-origin request
+        // silently displace an earlier one still awaiting its response).
+        // With that latch never tripping, NOTHING real ever reached
+        // Storage before logoff, so Stop()'s dump -- running after the
+        // host has torn down the owned objects -- found every item
+        // unresolved and wrote HasIdData=false for all of them, even
+        // though CaptureOwnedItems()/TryGet had shown real appraisal data
+        // for most items earlier in the very same session.
+        //
+        // The fix: while waiting, persist partial progress here too, once
+        // per second, independent of whether the all-or-nothing latch ever
+        // trips. This does not print the completion line or clear
+        // _waitingForIdData -- it just gives Stop()'s post-teardown Combine
+        // a real `previous` (read back from Storage) to merge against
+        // instead of an empty one. Guarded on the ident-worthy/identified
+        // count actually changing so an unmet wait does not rewrite the
+        // file every tick for the rest of the session.
+        if (_waitingForIdData)
+        {
+            int identifiedCount = items.Count(item =>
+                ObjectClassNeedsIdent(item.ObjectClass, item.Name) && HasIdData(item));
+            if (identifiedCount != _lastPartialDumpIdentifiedCount)
+            {
+                _lastPartialDumpIdentifiedCount = identifiedCount;
+                Dump(requestIdsIfMissing: false, items);
+            }
+        }
     }
 
     private void RunStartupCapture(IReadOnlyList<PluginInventoryItem> items)

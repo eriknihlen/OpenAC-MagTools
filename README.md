@@ -77,8 +77,9 @@ real ACE server (the connected user-gate rounds are still in progress; see
 that file for which rows are proven live vs. code-complete).
 
 Of the parity checklist's 45 rows, 37 are Shipped and 8 are Not applicable. Of
-the 37 shipped rows, the live gate (rounds P1–P8, Round 3, Round 4 and the
-closing Round 5) has reached PASS on 23, PARTIAL on 9, and PENDING on 5 (see
+the 37 shipped rows, the live gate (rounds P1–P8, Round 3, Round 4, the
+closing Round 5, and the P12 fix round) has reached PASS on 24, PARTIAL on 8,
+and PENDING on 5 (see
 the checklist's `Live` column and
 [docs/live-results.md](docs/live-results.md) for the exact round and evidence
 per row). Every row has now been exercised live at least once. Almost every
@@ -131,7 +132,7 @@ A Pending row is never claimed Shipped.
 | Chat window size control (maximize/minimize) | Not applicable | N/A | see the not-applicable table |
 | Inventory export to clipboard | Shipped | PASS (r4) — both Worn Equipment and Inventory Info exports non-empty and readable back from the clipboard | Clipboard Worn Equipment / Clipboard Inventory Info |
 | Tools -> Inventory regex search | Shipped | PARTIAL (r1) — page renders with field + lists; live keystroke-filtering behavior not separately exercised | `InventoryToolsPageViewModel`; re-filters every owned item's formatted info line against the typed pattern on each keystroke (invalid pattern -> empty results, never throws); clicking a result opens its container (if not the main pack) and shows its full info line |
-| Inventory logger | Shipped | PARTIAL (r5) — real id data is captured and persisted (15 records with int/double/bool/string values) and a second session correctly skips the request pass, but 13 of those 15 are lost at the next session's dump (defect 15) | |
+| Inventory logger | Shipped | PASS (P12) — real id data is captured and persisted (15 records with int/double/bool/string values), a second session correctly skips the request pass, and the P12 fix closed defect 15 (previous-record match now keyed on Id alone): three consecutive sessions held `HasIdData=true` steady with no drop | |
 | Chat logger (2 groups + file) | Shipped | PASS (r3) — file written, non-empty, correctly character-prefixed | |
 | HUD (14-row status bar) | Shipped | PASS (r1) — all 14 rows render; the P5 fix corrected the fabricated login-time rates | 13 of 14 rows; `ID Queue` is not applicable — see below |
 | Combat tracker | Shipped | PARTIAL (r5) — monster rows, KB's and the attack counter populate live; `Dmg Rcvd`/`Dmg Givn` still unprovoked, with cloaking now ruled out as the reason nothing fights back | current-session + persistent, DPS snapshots, export/import |
@@ -148,7 +149,7 @@ A Pending row is never claimed Shipped.
 | Main window: Misc tab — Client | Not applicable | N/A | hosted exactly the window-frame/position/FPS controls above — see Dropped settings/tab below |
 | Main window: Misc tab — About | Shipped | PASS (r1) | |
 | Settings model (single XML file, account/server/character scoping) | Shipped | PASS (r1) — `Mag-Tools.xml` persistence proven across opt remember, chat logger and command-list rows | 5 settings and the Client tab dropped — see below |
-| Hotkey: Pack Inventory | Shipped | PENDING (r5) — two Ctrl+P deliveries (the second targeted at the client's process id and confirmed sent) produced no packer run, while `/mt autopack` in the same build does | default Ctrl+P |
+| Hotkey: Pack Inventory | Shipped | PENDING (P12) — two Ctrl+P deliveries (the second targeted at the client's process id and confirmed sent) produced no packer run, while `/mt autopack` in the same build does; P12 confirmed live that the default chord resolves and binds (`IsBound=True`) and every plugin-side code path (collision checks, dispatch, `InventoryPacker.Start()`) reads correctly, narrowing the defect to raw key delivery in the host, unverifiable without a live keyboard | default Ctrl+P |
 | Hotkey: One Touch Heal | Shipped | PASS (r3) | unbound by default |
 | Hotkey: Maximize Chat | Not applicable | N/A | see Maximize/Minimize Chat below |
 | Hotkey: Minimize Chat | Not applicable | N/A | see Maximize/Minimize Chat below |

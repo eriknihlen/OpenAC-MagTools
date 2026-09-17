@@ -831,8 +831,20 @@ public sealed class InventoryLogger
             if (!_host.Automation.Objects.TryGet(item.ObjectId, out PluginWorldObject wo))
             {
                 MyWorldObjectRecord unresolved = MyWorldObjectRecord.CreateUnresolved(item);
+                // Defect 15 (Round 5 live gate): match on Id alone. A
+                // requiring-both-Id-and-ObjectClass predicate silently
+                // dropped persisted id data whenever the live object's
+                // classification read transiently differently from the
+                // persisted value (observed live: the login burst had not
+                // finished delivering this item's weenie-type data at the
+                // instant Start()'s synchronous startup capture ran, so
+                // ObjectClass briefly read as Unknown). The server-assigned
+                // Id is the real identity; ObjectClass is a derived,
+                // mutable description field -- Combine's own contract
+                // already keeps `older`'s ObjectClass once matched, so
+                // gating the match on it too was never load-bearing.
                 MyWorldObjectRecord? previousMatch = previous.FirstOrDefault(
-                    prev => prev.Id == unresolved.Id && prev.ObjectClass == unresolved.ObjectClass);
+                    prev => prev.Id == unresolved.Id);
 
                 current.Add(previousMatch is null
                     ? unresolved
@@ -845,8 +857,10 @@ public sealed class InventoryLogger
 
             MyWorldObjectRecord snapshot = MyWorldObjectRecord.Create(wo, properties);
 
+            // Defect 15: same Id-only match as the unresolved branch above
+            // -- see that branch's remarks.
             MyWorldObjectRecord? matched = previous.FirstOrDefault(
-                prev => prev.Id == snapshot.Id && prev.ObjectClass == snapshot.ObjectClass);
+                prev => prev.Id == snapshot.Id);
 
             if (matched is null)
             {

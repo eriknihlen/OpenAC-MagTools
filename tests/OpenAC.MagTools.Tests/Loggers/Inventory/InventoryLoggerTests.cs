@@ -1129,4 +1129,116 @@ public sealed class InventoryLoggerTests
 
         Assert.Equal([1u], host.Automation.Objects.IdentifyRequests);
     }
+
+    [Fact]
+    public void APreviouslyAppraisedItemResolvedButNotYetReAppraisedThisSessionKeepsItsIdData()
+    {
+        // Defect 15 (Round 5 live gate): a fresh session's very first
+        // RunStartupCapture dump found the object table ALREADY resolved
+        // for a previously-identified item (TryGet succeeds -- unlike
+        // APreviouslyAppraisedItemMissingFromTheObjectTableKeepsItsIdData's
+        // unresolved case), but this session's ClientObject has not been
+        // re-appraised yet (HasAppraisalData=false, no properties). The
+        // matched branch's Combine call should still preserve the
+        // persisted id data exactly like the unresolved branch does.
+        (FakeHost host, ChatOutput chat, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        var previouslyAppraised = new MyWorldObjectRecord
+        {
+            HasIdData = true,
+            Id = 7u,
+            LastIdTime = 12345,
+            ObjectClass = (int)PluginObjectClass.Jewelry,
+            StringValues = new Dictionary<int, string> { [1] = "Ring of Fortitude" },
+            IntValues = new Dictionary<int, int> { [1] = 42 },
+        };
+        host.Storage.WriteText(
+            "ACServer/Acdream.Inventory.xml", InventoryLoggerXml.Export([previouslyAppraised]));
+
+        host.Automation.Items.Owned.Add(new PluginInventoryItem(
+            7u, 0u, "Ring of Fortitude", 0u, 500u, 0u, 0u, 0u, 0u, 0u, 0u,
+            1, 0, 0, 0u, 0, 0, 0u, false, 0d, 0, 0, 0, 0, 0, 0, 0)
+        {
+            ObjectClass = PluginObjectClass.Jewelry,
+        });
+        // Resolved this session, but not yet re-appraised.
+        host.Automation.Objects.Objects.Add(new PluginWorldObject(
+            7u, 0u, "Ring of Fortitude", PluginObjectClass.Jewelry, 0u, 500u, 0u)
+        {
+            HasAppraisalData = false,
+        });
+
+        var logger = new InventoryLogger(host, chat, settings);
+        logger.Start("ACServer", "Acdream", scheduler); // existing file -> dumps immediately
+
+        string? xml = host.Storage.ReadText("ACServer/Acdream.Inventory.xml");
+        Assert.NotNull(xml);
+        Assert.True(InventoryLoggerXml.TryImport(xml!, out List<MyWorldObjectRecord> records));
+        MyWorldObjectRecord record = Assert.Single(records);
+        Assert.Equal(7u, record.Id);
+        Assert.True(record.HasIdData);
+        Assert.Equal("Ring of Fortitude", record.StringValues[1]);
+        Assert.Equal(42, record.IntValues[1]);
+    }
+
+    [Fact]
+    public void APreviouslyAppraisedItemWithATransientlyDifferentLiveObjectClassKeepsItsIdData()
+    {
+        // Defect 15 (Round 5 live gate, root cause): live evidence
+        // (Inventory.after-r1.xml -> Inventory.after-r2.xml) showed 13 of
+        // 15 previously-appraised records replaced, on the VERY NEXT
+        // session's startup dump, by a bare CreateUnresolved stub
+        // (HasIdData=false, LastIdTime=0, empty IntValues) even though the
+        // final on-disk ObjectClass matched the persisted one -- proving
+        // the loss happened via the "no previous match" branch, not a
+        // permanently wrong classification. The object table is not fully
+        // populated the instant Start()'s synchronous CaptureOwnedItems()
+        // runs at login (a login burst still delivering CreateObject data
+        // for pack contents): the item's LIVE classification at that exact
+        // moment can transiently read as Unknown/0 before it settles to
+        // its real class a moment later. The previous match predicate
+        // required BOTH Id and ObjectClass to agree, so this transient
+        // mismatch silently discarded the persisted id data forever (the
+        // bad stub, once written, becomes the new `previous` for every
+        // later dump this session). The server-assigned Id alone is the
+        // real identity; ObjectClass is a derived/mutable description
+        // field, per Combine's own doc ("identity fields... stay older's
+        // own"), so the match must not require it too.
+        (FakeHost host, ChatOutput chat, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        var previouslyAppraised = new MyWorldObjectRecord
+        {
+            HasIdData = true,
+            Id = 7u,
+            LastIdTime = 12345,
+            ObjectClass = (int)PluginObjectClass.Jewelry,
+            StringValues = new Dictionary<int, string> { [1] = "Amulet" },
+            IntValues = new Dictionary<int, int> { [1] = 42 },
+        };
+        host.Storage.WriteText(
+            "ACServer/Acdream.Inventory.xml", InventoryLoggerXml.Export([previouslyAppraised]));
+
+        // The live capture at this exact instant reads back Unknown (0)
+        // for the same physical item -- the login burst has not finished
+        // delivering this item's weenie-type data yet. Deliberately no
+        // matching entry in host.Automation.Objects.Objects, matching the
+        // "unresolved" branch the live evidence's LastIdTime=0 pins down.
+        host.Automation.Items.Owned.Add(new PluginInventoryItem(
+            7u, 0u, "Amulet", 0u, 500u, 0u, 0u, 0u, 0u, 0u, 0u,
+            1, 0, 0, 0u, 0, 0, 0u, false, 0d, 0, 0, 0, 0, 0, 0, 0)
+        {
+            ObjectClass = PluginObjectClass.Unknown,
+        });
+
+        var logger = new InventoryLogger(host, chat, settings);
+        logger.Start("ACServer", "Acdream", scheduler); // existing file -> dumps immediately
+
+        string? xml = host.Storage.ReadText("ACServer/Acdream.Inventory.xml");
+        Assert.NotNull(xml);
+        Assert.True(InventoryLoggerXml.TryImport(xml!, out List<MyWorldObjectRecord> records));
+        MyWorldObjectRecord record = Assert.Single(records);
+        Assert.Equal(7u, record.Id);
+        Assert.True(record.HasIdData);
+        Assert.Equal(12345, record.LastIdTime);
+        Assert.Equal("Amulet", record.StringValues[1]);
+        Assert.Equal(42, record.IntValues[1]);
+    }
 }

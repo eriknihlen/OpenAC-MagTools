@@ -10,13 +10,10 @@
     <Deterministic>true</Deterministic>
     <Version>0.1.0</Version>
 
-    <!-- The OpenAC checkout this plugin compiles against. Slice P2 needs the
-         extended plugin contract from OpenAC slice A1 (IPluginChat.Received /
-         RegisterFilter / PostMessage, IEvents.LoginComplete/Logoff,
-         ISpellCatalog.All/TryFindByName, ICharacterInfo.ServerPopulation), which
-         has not merged to OpenAC main yet. Until it does, the default points at a
-         frozen detached worktree snapshot of that branch's head. Override with
-         -p:OpenAcRoot=<path> once the API branch merges and the worktree goes away. -->
-    <OpenAcRoot Condition="'$(OpenAcRoot)' == ''">C:\Users\erikn\source\repos\acdream\OpenAC\.worktrees\magtools-api-a10\</OpenAcRoot>
+    <!-- Where OpenAC's source lives: the plugin compiles against
+         src/AcDream.Plugin.Abstractions there. The plugin API this plugin uses
+         is on OpenAC main since 2026-09-17, so the default is a checkout of
+         main. Override with -p:OpenAcRoot=<path> if yours is elsewhere. -->
+    <OpenAcRoot Condition="'$(OpenAcRoot)' == ''">C:\Users\erikn\source\repos\acdream\OpenAC\</OpenAcRoot>
   </PropertyGroup>
 </Project>

@@ -104,5 +104,6 @@ crash in Vulkan device destruction at shutdown after a clean session (D7 in
 - A client can linger as a process object with one stuck thread after a
   confirmed graceful logout (host D7 class); while it does, it holds the
   deployed plugin DLL, so `tools/deploy.ps1` to the default plugin folder
-  fails until a reboot. The deployed copy is then older than `main`: after
-  a reboot run `pwsh -File tools/deploy.ps1 -Configuration Release`.
+  fails. No reboot is needed: rename the locked DLL aside (Windows allows
+  moving a mapped DLL), deploy, and delete the renamed copy after the next
+  reboot. Done once on 2026-09-17 (`OpenAC.MagTools.dll.locked-9060`).

@@ -99,9 +99,24 @@ public sealed class InventoryLoggerTests
     private static PluginWorldObject UnidentifiedArmor(uint id, string name)
         => new(id, 0u, name, PluginObjectClass.Armor, 0u, 500u, 0u) { HasAppraisalData = false };
 
-    [Fact]
-    public void StartupBurstOnlySendsTheFirstIdentifyImmediatelyThenPacesTheRestOnePerTick()
+    /// <summary>Flips <paramref name="id"/>'s appraisal data on and delivers its IdentReceived, as if its response just arrived.</summary>
+    private static void CompleteIdentify(FakeHost host, uint id, string name)
     {
+        PluginWorldObject wo = host.Automation.Objects.Objects.First(o => o.ObjectId == id);
+        host.Automation.Objects.Replace(wo with { HasAppraisalData = true });
+        host.Events.RaiseObjectChanged(id, PluginObjectChangeKind.IdentReceived);
+    }
+
+    [Fact]
+    public void ThePollNeverAdvancesPastAnIdentifyStillInFlightAndOnlyMovesOnAfterItCompletes()
+    {
+        // HIGH-A (P13 review): only one identify may be outstanding at a
+        // time -- PumpIdentifyQueue must not attempt the next queued id
+        // just because a 1 Hz poll tick passed; the host's single-in-
+        // flight-request gate guarantees such an attempt would be a
+        // pointless, guaranteed-Busy call against our OWN outstanding
+        // request. Fixed 8b's own P12 round still pumped unconditionally
+        // on every poll tick, effectively bursting again over time.
         (FakeHost host, ChatOutput chat, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
         host.Automation.Items.Owned.Add(ArmorItem(1u, "Helm"));
         host.Automation.Items.Owned.Add(ArmorItem(2u, "Gauntlets"));
@@ -118,86 +133,134 @@ public sealed class InventoryLoggerTests
         // three in the same tight loop.
         Assert.Equal([1u], host.Automation.Objects.IdentifyRequests);
 
+        // Several 1 Hz ticks pass with NO response for item 1 yet -- item 2
+        // must not be attempted while item 1 is still outstanding.
         AdvanceOneSecond(host);
+        AdvanceOneSecond(host);
+        AdvanceOneSecond(host);
+        Assert.Equal([1u], host.Automation.Objects.IdentifyRequests);
+
+        // Item 1's response arrives -- the queue advances to item 2
+        // immediately (an opportunistic pump on IdentReceived), not on the
+        // next poll tick.
+        CompleteIdentify(host, 1u, "Helm");
         Assert.Equal([1u, 2u], host.Automation.Objects.IdentifyRequests);
 
-        AdvanceOneSecond(host);
+        CompleteIdentify(host, 2u, "Gauntlets");
         Assert.Equal([1u, 2u, 3u], host.Automation.Objects.IdentifyRequests);
     }
 
     [Fact]
-    public void ABusyResponseRetriesTheSameItemInsteadOfPoisoningItAndEventuallySucceeds()
+    public void ABurstOfUnownedCreatedEventsWhileOurOwnIdentifyIsInFlightDoesNotReissueOrGiveUpOnIt()
     {
+        // HIGH-A (P13 review): the host raises Created for EVERY world
+        // entity, not just owned/ident-worthy ones
+        // (AppAutomationSurface.cs:1153-1168). A login stream/landblock
+        // crossing/crowded town can raise dozens of these in a single
+        // frame; none of them are owned by this character, so they must
+        // not re-attempt (or give up on) this class's own still-
+        // outstanding identify.
         (FakeHost host, ChatOutput chat, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
         host.Automation.Items.Owned.Add(ArmorItem(1u, "Helm"));
-        host.Automation.Items.Owned.Add(ArmorItem(2u, "Gauntlets"));
         host.Automation.Objects.Objects.Add(UnidentifiedArmor(1u, "Helm"));
-        host.Automation.Objects.Objects.Add(UnidentifiedArmor(2u, "Gauntlets"));
-        // Item 2 answers Busy (the host's single-in-flight-request gate)
-        // for its first two attempts, then accepts.
-        host.Automation.Objects.IdentifyBusyForCalls[2u] = 2;
 
         var logger = new InventoryLogger(host, chat, settings);
         logger.Start("ACServer", "Acdream", scheduler);
 
-        // Item 1 (front of queue) is accepted immediately; item 2 is not
-        // even attempted yet.
         Assert.Equal([1u], host.Automation.Objects.IdentifyRequests);
 
-        AdvanceOneSecond(host); // item 2, attempt 1 -> Busy
-        AdvanceOneSecond(host); // item 2, attempt 2 -> Busy
-        Assert.Equal([1u, 2u, 2u], host.Automation.Objects.IdentifyRequests);
+        for (uint i = 0; i < 30; i++)
+        {
+            uint strangerId = 2000u + i;
+            // Container 0 (not this character's 500u) -- an unowned
+            // passer-by, exactly the shape a login stream/landblock
+            // crossing produces.
+            host.Automation.Objects.Objects.Add(new PluginWorldObject(
+                strangerId, 0u, "Passerby " + i, PluginObjectClass.Player, 0u, 0u, 0u));
+            host.Events.RaiseObjectChanged(strangerId, PluginObjectChangeKind.Created);
+        }
 
-        AdvanceOneSecond(host); // item 2, attempt 3 -> accepted
-        Assert.Equal([1u, 2u, 2u, 2u], host.Automation.Objects.IdentifyRequests);
-
-        // Not poisoned: item 2's id data arriving now still reaches
-        // completion, proving _requestedIds only ever gained item 2 on the
-        // accepted (3rd) call, not the two refused ones.
-        host.Automation.Objects.Objects[0] = host.Automation.Objects.Objects[0] with { HasAppraisalData = true };
-        host.Automation.Objects.Objects[1] = host.Automation.Objects.Objects[1] with { HasAppraisalData = true };
-        host.Events.RaiseObjectChanged(2u, PluginObjectChangeKind.IdentReceived);
-
-        Assert.Contains(host.ChatLines, line => line.Contains("completed. Log file written.", StringComparison.Ordinal));
+        Assert.Equal([1u], host.Automation.Objects.IdentifyRequests);
     }
 
     [Fact]
-    public void AnItemThatNeverAcceptsIsRetriedABoundedNumberOfTimesThenGivesUpWithoutBlockingLaterItems()
+    public void AContinuousBusyItemGivesUpOnlyAfterTheTimeBoundNotAfterNEvents()
     {
+        // HIGH-A (P13 review), part 2: the give-up bound is now TIME
+        // elapsed since the first refusal for an id, not a count of
+        // refused attempts -- a burst of same-instant events (many
+        // IdentReceived deliveries unrelated to this id) must not exhaust
+        // it just by happening N times.
         (FakeHost host, ChatOutput chat, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
         host.Automation.Items.Owned.Add(ArmorItem(1u, "Cursed Helm"));
         host.Automation.Items.Owned.Add(ArmorItem(2u, "Gauntlets"));
         host.Automation.Objects.Objects.Add(UnidentifiedArmor(1u, "Cursed Helm"));
         host.Automation.Objects.Objects.Add(UnidentifiedArmor(2u, "Gauntlets"));
-        // Item 1 never accepts -- always Busy.
+        // Item 1 never accepts -- always Busy (never latched as this
+        // class's own in-flight id, so every pump keeps re-attempting it).
         host.Automation.Objects.IdentifyResultOverrides[1u] = PluginItemCommandStatus.Busy;
 
         var logger = new InventoryLogger(host, chat, settings);
         logger.Start("ACServer", "Acdream", scheduler);
 
-        // Start() itself is attempt 1; 8 more ticks make 9 total -- item 1
-        // must not be retried forever, and item 2 must not be touched while
-        // item 1 is still being retried.
-        for (int tick = 0; tick < 8; tick++)
-            AdvanceOneSecond(host);
+        // 20 unrelated IdentReceived deliveries, all at the same instant
+        // (no time has actually elapsed) -- none of these may count toward
+        // item 1's give-up on their own.
+        for (uint i = 0; i < 20; i++)
+            host.Events.RaiseObjectChanged(9000u + i, PluginObjectChangeKind.IdentReceived);
 
-        Assert.Equal(9, host.Automation.Objects.IdentifyRequests.Count(id => id == 1u));
         Assert.DoesNotContain(2u, host.Automation.Objects.IdentifyRequests);
 
-        // The 10th attempt (bound) gives up on item 1 and moves on -- item 1
-        // is not retried an 11th time on further ticks.
-        AdvanceOneSecond(host);
-        Assert.Equal(10, host.Automation.Objects.IdentifyRequests.Count(id => id == 1u));
+        for (int tick = 0; tick < 29; tick++)
+            AdvanceOneSecond(host);
+        Assert.DoesNotContain(2u, host.Automation.Objects.IdentifyRequests);
 
-        // Item 2 is no longer blocked once item 1 is given up.
+        // 30 real seconds have now elapsed since the first refusal --
+        // gives up on item 1 and the queue advances to item 2.
+        AdvanceOneSecond(host);
         AdvanceOneSecond(host);
         Assert.Contains(2u, host.Automation.Objects.IdentifyRequests);
 
         // Bounded, not blocked forever: further ticks never re-attempt the
         // given-up item.
+        int countAtGiveUp = host.Automation.Objects.IdentifyRequests.Count(id => id == 1u);
         AdvanceOneSecond(host);
         AdvanceOneSecond(host);
-        Assert.Equal(10, host.Automation.Objects.IdentifyRequests.Count(id => id == 1u));
+        Assert.Equal(countAtGiveUp, host.Automation.Objects.IdentifyRequests.Count(id => id == 1u));
+    }
+
+    [Fact]
+    public void APumpSkipsPastAlreadyAppraisedFrontIdsToTheFirstActionableOne()
+    {
+        // LOW-C (P13 review): a pump that finds the (new) front id already
+        // has appraisal data via some OTHER path -- another MagTools
+        // feature identifying it, a manual assess -- must skip past it to
+        // the first ACTIONABLE id in the SAME call, instead of issuing a
+        // pointless Identify for an already-satisfied id first.
+        (FakeHost host, ChatOutput chat, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        host.Automation.Items.Owned.Add(ArmorItem(1u, "Helm"));
+        host.Automation.Items.Owned.Add(ArmorItem(2u, "Gauntlets"));
+        host.Automation.Items.Owned.Add(ArmorItem(3u, "Greaves"));
+        host.Automation.Objects.Objects.Add(UnidentifiedArmor(1u, "Helm"));
+        host.Automation.Objects.Objects.Add(UnidentifiedArmor(2u, "Gauntlets"));
+        host.Automation.Objects.Objects.Add(UnidentifiedArmor(3u, "Greaves"));
+
+        var logger = new InventoryLogger(host, chat, settings);
+        logger.Start("ACServer", "Acdream", scheduler);
+        Assert.Equal([1u], host.Automation.Objects.IdentifyRequests);
+
+        // Item 2 (still queued behind item 1, never yet attempted by this
+        // class) gets its appraisal data from some OTHER path entirely
+        // while item 1's own identify is still outstanding.
+        host.Automation.Objects.Replace(
+            host.Automation.Objects.Objects.First(o => o.ObjectId == 2u) with { HasAppraisalData = true });
+
+        // Item 1 completes -- the pump must recognise item 2 already has
+        // its data and skip straight to item 3 in this SAME call.
+        CompleteIdentify(host, 1u, "Helm");
+
+        Assert.DoesNotContain(2u, host.Automation.Objects.IdentifyRequests);
+        Assert.Contains(3u, host.Automation.Objects.IdentifyRequests);
     }
 
     [Fact]
@@ -717,7 +780,8 @@ public sealed class InventoryLoggerTests
 
         Assert.Contains(1u, host.Automation.Objects.IdentifyRequests);
 
-        // A second item arrives mid-wait, never previously requested.
+        // A second item arrives mid-wait, never previously requested, while
+        // item 1's own identify is still outstanding.
         host.Automation.Items.Owned.Add(new PluginInventoryItem(
             2u, 0u, "Looted Ring", 0u, 500u, 0u, 0u, 0u, 0u, 0u, 0u,
             1, 0, 0, 0u, 0, 0, 0u, false, 0d, 0, 0, 0, 0, 0, 0, 0)
@@ -727,6 +791,15 @@ public sealed class InventoryLoggerTests
         host.Automation.Objects.Objects.Add(new PluginWorldObject(
             2u, 0u, "Looted Ring", PluginObjectClass.Jewelry, 0u, 500u, 0u) { HasAppraisalData = false });
         host.Events.RaiseObjectChanged(2u, PluginObjectChangeKind.Created);
+
+        // HIGH-A (P13 review): it must be ENQUEUED, but not attempted yet --
+        // only one identify may be outstanding at a time.
+        Assert.DoesNotContain(2u, host.Automation.Objects.IdentifyRequests);
+
+        // Item 1's response arrives -- the queue advances to item 2
+        // immediately.
+        host.Automation.Objects.Objects[0] = host.Automation.Objects.Objects[0] with { HasAppraisalData = true };
+        host.Events.RaiseObjectChanged(1u, PluginObjectChangeKind.IdentReceived);
 
         Assert.Contains(2u, host.Automation.Objects.IdentifyRequests);
     }

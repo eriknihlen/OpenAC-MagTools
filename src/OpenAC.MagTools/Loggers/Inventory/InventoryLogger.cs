@@ -32,21 +32,22 @@ public sealed class InventoryLogger
     private const int StartupGiveUpPolls = 60;
 
     /// <summary>
-    /// How many times a single id may come back non-accepted from
-    /// <see cref="IWorldObjectAutomation.Identify"/> (in practice almost
-    /// always <c>Busy</c> -- <c>AppAutomationSurface.Identify</c>'s
-    /// <c>CanBeginRequest</c> gate (<c>InventoryTransactionState.
-    /// CanBeginRequest =&gt; _busyCount == 0 &amp;&amp; ...</c>) refuses
-    /// EVERY identify attempt made while another inventory transaction of
-    /// ANY kind is already in flight, without ever reaching the underlying
-    /// appraisal request) before <see cref="PumpIdentifyQueue"/> gives up on
-    /// that one id and moves on to the next queued one (HIGH-1, P12
-    /// review). Mirrors <c>InventoryExporter</c>'s own bounded
-    /// retry-then-give-up cadence (defect 10) -- the original relied on
-    /// Decal's own queued <c>RequestId</c>; OpenAC has no equivalent queue,
-    /// so this class provides its own.
+    /// How long (in <see cref="TickScheduler.ElapsedSeconds"/>) a single id
+    /// may keep coming back non-accepted from
+    /// <see cref="IWorldObjectAutomation.Identify"/> before
+    /// <see cref="PumpIdentifyQueue"/> gives up on it and moves on to the
+    /// next queued one. HIGH-A (P13 review): this bound is TEMPORAL, not a
+    /// count of refused attempts -- an event-count budget was found live to
+    /// be exhausted by unrelated <c>Created</c>/<c>IdentReceived</c> traffic
+    /// (a login stream, a landblock crossing, a crowded town) within a
+    /// single frame, giving up on a perfectly good item after roughly 11
+    /// unrelated world registrations. Mirrors
+    /// <c>InventoryExporter</c>'s own bounded retry-then-give-up cadence
+    /// (defect 10, ~15 s there) -- the original relied on Decal's own
+    /// queued <c>RequestId</c>; OpenAC has no equivalent queue, so this
+    /// class provides its own.
     /// </summary>
-    private const int MaxIdentifyAttemptsPerItem = 10;
+    private const double MaxIdentifyRefusalSeconds = 30d;
 
     private readonly IPluginHost _host;
     private readonly ChatOutput _chat;
@@ -73,8 +74,44 @@ public sealed class InventoryLogger
     /// <summary>Membership mirror of <see cref="_pendingIdentifyIds"/> for O(1) dedup in <see cref="EnqueueIdentify"/>.</summary>
     private readonly HashSet<uint> _queuedIdentifyIds = [];
 
-    /// <summary>Per-id non-accepted attempt count, bounded by <see cref="MaxIdentifyAttemptsPerItem"/>.</summary>
-    private readonly Dictionary<uint, int> _identifyAttempts = [];
+    /// <summary>
+    /// Per-id timestamp (<see cref="TickScheduler.ElapsedSeconds"/>) of the
+    /// FIRST non-accepted <see cref="IWorldObjectAutomation.Identify"/>
+    /// response seen for that id, bounded by
+    /// <see cref="MaxIdentifyRefusalSeconds"/> (HIGH-A, P13 review: time,
+    /// not an event count -- see that constant's remarks).
+    /// </summary>
+    private readonly Dictionary<uint, double> _identifyFirstRefusalSeconds = [];
+
+    /// <summary>
+    /// The id this class most recently sent an ACCEPTED
+    /// <see cref="IWorldObjectAutomation.Identify"/> for and is still
+    /// awaiting a response for -- 0 means none. HIGH-A (P13 review, part 1):
+    /// <see cref="PumpIdentifyQueue"/> must not attempt ANYTHING while this
+    /// is set, because the host's single-in-flight-request gate
+    /// (<c>InventoryTransactionState.CanBeginRequest</c>) guarantees every
+    /// such attempt comes back <c>Busy</c> -- and the host raises
+    /// <c>Created</c> for EVERY world entity (not just owned/ident-worthy
+    /// ones), so a login stream/landblock crossing/crowded town previously
+    /// pumped dozens of times per frame while THIS class's own just-sent
+    /// identify was still outstanding, debiting the front queued id's
+    /// retry budget for events that had nothing to do with it. Cleared on
+    /// this same id's <see cref="PluginObjectChangeKind.IdentReceived"/>,
+    /// or after <see cref="MaxIdentifyRefusalSeconds"/> as a safety valve
+    /// in case that completion signal is ever lost.
+    /// </summary>
+    private uint _inFlightIdentifyId;
+
+    /// <summary><see cref="TickScheduler.ElapsedSeconds"/> when <see cref="_inFlightIdentifyId"/> was sent.</summary>
+    private double _inFlightIdentifySentAtSeconds;
+
+    /// <summary>
+    /// The plugin's one <see cref="TickScheduler"/> clock, stored (HIGH-A,
+    /// P13 review) so <see cref="PumpIdentifyQueue"/> can time-bound both
+    /// the in-flight safety valve and the per-id give-up against real
+    /// elapsed time rather than an event count.
+    /// </summary>
+    private TickScheduler? _scheduler;
 
     private Action<PluginObjectChange>? _onObjectChanged;
     private string _storageKey = string.Empty;
@@ -156,10 +193,13 @@ public sealed class InventoryLogger
         if (_running)
             return;
         _running = true;
+        _scheduler = scheduler;
         _requestedIds.Clear();
         _pendingIdentifyIds.Clear();
         _queuedIdentifyIds.Clear();
-        _identifyAttempts.Clear();
+        _identifyFirstRefusalSeconds.Clear();
+        _inFlightIdentifyId = 0u;
+        _inFlightIdentifySentAtSeconds = 0d;
         _waitingForIdData = false;
         _storageKey = server + "/" + character + ".Inventory.xml";
         _lastOwnedSnapshot = [];
@@ -346,54 +386,99 @@ public sealed class InventoryLogger
     /// <see cref="OnObjectChanged"/>'s own per-item dedup guard so they
     /// could never be retried either.
     /// <para>
-    /// This pumps exactly the FRONT of <see cref="_pendingIdentifyIds"/>,
-    /// once, per call: on an accepted result it is popped and (only now)
-    /// recorded into <see cref="_requestedIds"/>; on anything else it is
-    /// left at the front to retry on the next pump -- the 1 Hz
-    /// <see cref="OnSnapshotPoll"/> tick, or an opportunistic call from
-    /// <see cref="OnObjectChanged"/> whenever a Created/IdentReceived event
-    /// fires (either is a reasonable signal the host's single in-flight
-    /// slot may have cleared) -- bounded by
-    /// <see cref="MaxIdentifyAttemptsPerItem"/> before this class gives up
-    /// on that one id and moves on to the next queued one.
+    /// HIGH-A (P13 review): the P12 fix still pumped once per
+    /// <c>Created</c>/<c>IdentReceived</c> event, and the host raises
+    /// <c>Created</c> for EVERY world entity, not just owned/ident-worthy
+    /// ones (<c>AppAutomationSurface.cs:1153-1168</c>). During a login
+    /// stream/landblock crossing/crowded town this pumped many times per
+    /// frame while THIS class's own just-accepted identify was still
+    /// outstanding -- every one of those extra attempts came back
+    /// <c>Busy</c> purely because of that self-inflicted contention, and an
+    /// event-COUNT give-up (10 refusals) meant a real item was abandoned
+    /// after roughly 11 unrelated world registrations. Two fixes, both
+    /// required: (1) this method now refuses to attempt anything at all
+    /// while <see cref="_inFlightIdentifyId"/> is set -- see that field's
+    /// remarks; (2) the give-up bound is now temporal
+    /// (<see cref="MaxIdentifyRefusalSeconds"/>), not a count, so a burst of
+    /// same-instant events cannot exhaust it. <see cref="OnObjectChanged"/>
+    /// also no longer pumps on plain <c>Created</c> at all (only on
+    /// <c>IdentReceived</c>, plus the 1 Hz <see cref="OnSnapshotPoll"/> tick,
+    /// plus its own per-item path which only reaches a pump call AFTER the
+    /// ownership check).
+    /// </para>
+    /// <para>
+    /// This pumps exactly the front of <see cref="_pendingIdentifyIds"/>
+    /// once per call (skipping past any front id(s) already appraised by
+    /// some other path first -- LOW-C, P13 review): on an accepted result it
+    /// is popped and (only now) recorded into <see cref="_requestedIds"/>
+    /// and latched as <see cref="_inFlightIdentifyId"/>; on anything else it
+    /// is left at the front to retry on the next pump once
+    /// <see cref="MaxIdentifyRefusalSeconds"/> has not yet elapsed since the
+    /// first refusal seen for it.
     /// </para>
     /// </summary>
     private void PumpIdentifyQueue()
     {
+        double now = _scheduler?.ElapsedSeconds ?? 0d;
+
+        // HIGH-A part 1: never attempt anything while our own identify is
+        // still outstanding -- the host's single-in-flight-request gate
+        // guarantees every such attempt is refused, for reasons that have
+        // nothing to do with the front queued id's own retry budget. A
+        // temporal safety valve (the same bound as the give-up below)
+        // covers a lost/never-arriving IdentReceived so this cannot wedge
+        // the whole queue forever.
+        if (_inFlightIdentifyId != 0u)
+        {
+            if (now - _inFlightIdentifySentAtSeconds < MaxIdentifyRefusalSeconds)
+                return;
+            _inFlightIdentifyId = 0u;
+        }
+
+        // LOW-C (P13 review): skip past every front id that already has id
+        // data by some other path (a manual assess, a Combine from a
+        // previous session's file, ...) to the first ACTIONABLE one, rather
+        // than handling only the very front slot and leaving satisfied ids
+        // sitting in the queue until their own turn.
+        while (_pendingIdentifyIds.Count > 0)
+        {
+            uint front = _pendingIdentifyIds.Peek();
+            if (!_host.Automation.Objects.TryGet(front, out PluginWorldObject wo) || !wo.HasAppraisalData)
+                break;
+            DequeueIdentify(front);
+        }
+
         if (_pendingIdentifyIds.Count == 0)
             return;
 
         uint id = _pendingIdentifyIds.Peek();
-
-        // Already has id data by some other path (a manual assess, a
-        // Combine from a previous session's file, ...) -- nothing left to
-        // request.
-        if (_host.Automation.Objects.TryGet(id, out PluginWorldObject wo) && wo.HasAppraisalData)
-        {
-            DequeueIdentify(id);
-            return;
-        }
-
         PluginItemCommandResult result = _host.Automation.Objects.Identify(id);
         if (result.Accepted)
         {
             DequeueIdentify(id);
             _requestedIds.Add(id);
+            _inFlightIdentifyId = id;
+            _inFlightIdentifySentAtSeconds = now;
             return;
         }
 
-        int attempts = _identifyAttempts.GetValueOrDefault(id) + 1;
-        if (attempts >= MaxIdentifyAttemptsPerItem)
+        // HIGH-A part 2: give up on TIME elapsed since the FIRST refusal
+        // for this id, not on how many refusals were observed -- see
+        // MaxIdentifyRefusalSeconds' remarks.
+        if (!_identifyFirstRefusalSeconds.TryGetValue(id, out double firstRefusal))
+        {
+            _identifyFirstRefusalSeconds[id] = now;
+            return;
+        }
+
+        if (now - firstRefusal >= MaxIdentifyRefusalSeconds)
         {
             DequeueIdentify(id);
             _host.Log.Warn(
                 "InventoryLogger: gave up requesting id data for object 0x"
-                + id.ToString("X8") + " after " + MaxIdentifyAttemptsPerItem
-                + " refused attempts.");
-            return;
+                + id.ToString("X8") + " after " + MaxIdentifyRefusalSeconds
+                + "s of continuous refusal.");
         }
-
-        _identifyAttempts[id] = attempts;
     }
 
     /// <summary>Enqueues <paramref name="objectId"/> for a paced identify attempt, unless it is already queued or already sent.</summary>
@@ -409,7 +494,7 @@ public sealed class InventoryLogger
     {
         _pendingIdentifyIds.Dequeue();
         _queuedIdentifyIds.Remove(objectId);
-        _identifyAttempts.Remove(objectId);
+        _identifyFirstRefusalSeconds.Remove(objectId);
     }
 
     private void RunStartupCapture(IReadOnlyList<PluginInventoryItem> items)
@@ -481,7 +566,9 @@ public sealed class InventoryLogger
         _requestedIds.Clear();
         _pendingIdentifyIds.Clear();
         _queuedIdentifyIds.Clear();
-        _identifyAttempts.Clear();
+        _identifyFirstRefusalSeconds.Clear();
+        _inFlightIdentifyId = 0u;
+        _inFlightIdentifySentAtSeconds = 0d;
         _waitingForIdData = false;
         _lastPartialDumpIdentifiedIds = null;
     }
@@ -500,13 +587,25 @@ public sealed class InventoryLogger
         if (change.Kind != PluginObjectChangeKind.Created && change.Kind != PluginObjectChangeKind.IdentReceived)
             return;
 
-        // HIGH-1 (P12 review): a Created/IdentReceived delivery is a
-        // reasonable signal the host's single in-flight identify slot may
-        // have just cleared (see PumpIdentifyQueue's remarks) -- pump
-        // opportunistically here rather than waiting for the next 1 Hz
+        // HIGH-A (P13 review): opportunistic pumping now happens ONLY on
+        // IdentReceived, never on plain Created -- the host raises Created
+        // for EVERY world entity (AppAutomationSurface.cs:1153-1168), not
+        // just owned/ident-worthy ones, so pumping on it flooded the front
+        // queued id with pointless Busy attempts during a login stream/
+        // landblock crossing/crowded town. (The per-item path further down
+        // still enqueues-and-pumps for a Created OWNED item, but only after
+        // the ownership check below has already run.) An IdentReceived for
+        // THIS class's own in-flight id frees PumpIdentifyQueue to move on
+        // to the next queued id immediately, instead of waiting for the
+        // MaxIdentifyRefusalSeconds safety-valve or the next 1 Hz
         // OnSnapshotPoll tick.
-        if (_pendingIdentifyIds.Count > 0)
-            PumpIdentifyQueue();
+        if (change.Kind == PluginObjectChangeKind.IdentReceived)
+        {
+            if (change.ObjectId == _inFlightIdentifyId)
+                _inFlightIdentifyId = 0u;
+            if (_pendingIdentifyIds.Count > 0)
+                PumpIdentifyQueue();
+        }
 
         if (_waitingForIdData)
         {

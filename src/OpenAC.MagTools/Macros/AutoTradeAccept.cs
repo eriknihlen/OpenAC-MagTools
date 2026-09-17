@@ -20,6 +20,32 @@ namespace OpenAC.MagTools.Macros;
 /// rate limit ("avoid double spamming it from our own TradeAccept()") is
 /// preserved verbatim.
 /// </remarks>
+/// <remarks>
+/// Defect 13 root cause (live-gate round 4, headless <c>+Horan</c> bot never
+/// accepted): confirmed HOST-side, not this class. Every
+/// <see cref="IPluginHost.Automation"/> member this method depends on --
+/// <see cref="IAutomationSurface.Objects"/> in particular -- falls through
+/// to <c>IAutomationSurface</c>'s own interface default
+/// (<c>NoOpAutomationSurface.Instance</c>) on the headless host, because
+/// <c>AcDream.Headless.Plugins.HeadlessAutomationSurface</c> (under
+/// <c>OpenAcRoot</c>) only overrides <c>Chat</c>/<c>Login</c>/
+/// <c>Dialogs</c>/<c>Trade</c>/<c>Vendor</c> -- <c>Character</c>,
+/// <c>Items</c>, <c>Objects</c>, <c>Loot</c>, <c>Navigation</c>, etc. are all
+/// left at that shared no-op sink, whose <c>TryGet</c> unconditionally
+/// returns <see langword="false"/>. So <see cref="OnPartnerAccepted"/>'s
+/// <c>Objects.TryGet(partnerObjectId, ...)</c> call below can NEVER succeed
+/// on headless, regardless of whitelist content, rate-limit state, or
+/// timing -- it bails before ever reaching the whitelist match or
+/// <see cref="ITradeAutomation.Accept"/>. This is NOT the "empty
+/// <c>Character.Name</c> at <c>SessionReady</c>" pattern seen elsewhere in
+/// this port (this method never reads <c>Character</c> at all); it is a
+/// separate, broader gap -- headless has no working world-object lookup for
+/// ANY plugin at all yet. The whitelist match and the
+/// <see cref="ITradeAutomation.Accept"/> call below are otherwise correct
+/// and require no plugin-side change once the host wires a real
+/// <c>Objects</c> implementation into <c>HeadlessAutomationSurface</c> (the
+/// same way <c>Trade</c>/<c>Vendor</c> already got one).
+/// </remarks>
 public sealed class AutoTradeAccept
 {
     private static readonly TimeSpan RateLimit = TimeSpan.FromSeconds(2);

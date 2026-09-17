@@ -48,6 +48,30 @@ public sealed class AutoTradeAcceptTests
         Assert.Empty(host.Automation.Trade.Calls);
     }
 
+    // Defect 13 (live-gate round 4): confirmed root cause is the headless
+    // host's Automation.Objects falling through to the shared
+    // NoOpAutomationSurface (HeadlessAutomationSurface under OpenAcRoot only
+    // overrides Chat/Login/Dialogs/Trade/Vendor), whose TryGet always
+    // returns false -- so a headless bot's AutoTradeAccept can NEVER resolve
+    // the partner's name and NEVER reaches the whitelist match or Accept().
+    // This locks in that the method fails SAFELY (no exception, no accept)
+    // when the partner cannot be resolved, matching that host shape, rather
+    // than asserting a fix belongs here -- the gap is in
+    // AcDream.Headless.Plugins.HeadlessAutomationSurface, not this class.
+    [Fact]
+    public void DoesNotAcceptWhenThePartnerCannotBeResolved()
+    {
+        (FakeHost host, AutoTradeAcceptSettings settings, _) = Build();
+        settings.SetWhitelistPatterns([".*"]);
+        // No corresponding FakeObjects entry -- TryGet returns false, the
+        // same shape the headless host's NoOp Objects surface always
+        // produces for every plugin, not just this one.
+
+        host.Automation.Trade.RaisePartnerAccepted(2u);
+
+        Assert.Empty(host.Automation.Trade.Calls);
+    }
+
     [Fact]
     public void DisabledSettingNeverAccepts()
     {

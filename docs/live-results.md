@@ -215,11 +215,24 @@ screenshots in the session scratchpad under `live-r4/`.
 
 Re-gate verdicts for the round-3 defects, plus what is new.
 
-- **Defect 8 (inventory logger writes an empty document) -- HALF FIXED.** The
-  file is now written non-empty (195 records, 91 KB) and the fresh-file branch
-  prints its `Requesting id information...` line. What remains is a different
-  symptom: every record is `HasIdData=false` in every session, including the
-  session after a full id sweep, so the log carries names only. Row 4.
+- **Defect 8 (inventory logger writes an empty document) -- FIXED (8a), and
+  8b (every record `HasIdData=false`) FIXED plugin-side, P11.** The file is
+  written non-empty (195 records, 91 KB) and the fresh-file branch prints its
+  `Requesting id information...` line (8a). Round 4's remaining symptom --
+  every record `HasIdData=false` in every session, even after a full id
+  sweep and even though the same session's clipboard exporter saw real
+  appraisal data for 151/191 items via its own live `TryGet` poll -- was
+  root-caused to `InventoryLogger`'s only real-data dump being gated on an
+  all-or-nothing "every ident-worthy item now has id data" completion latch
+  driven by the host's `IdentReceived` `ObjectChanged` event. That event can
+  legitimately never fire for many items in one startup batch (the host's
+  `RuntimeInteractionTransactionState.TryRequestAppraisal` lets a later
+  Automation-origin appraisal request silently displace an earlier one still
+  awaiting its response), so the latch never trips, nothing real ever
+  reaches Storage before logoff, and `Stop()`'s post-teardown dump falls back
+  to the empty "unresolved" shape for every item. Fixed by persisting
+  partial progress once per second while waiting, independent of that latch
+  (`OnSnapshotPoll`). Row 4.
 - **Defect 9 (Worn Equipment export selects nothing) -- FIXED, verified live.**
   566 chars, five equipped items, via `WielderObjectId`.
 - **Defect 10 (Inventory export can hang forever) -- FIXED, verified live.**
@@ -231,24 +244,51 @@ Re-gate verdicts for the round-3 defects, plus what is new.
   the corpse it opened.
 - **Defect 12 (`/mt usei <owned item>` refused with a bare `Refused`) --
   FIXED, verified live.** The specific notice is printed.
-- **Defect 13 (NEW) -- the partner never accepts, so a trade never completes.**
+- **Defect 13 (NEW) -- the partner never accepts, so a trade never completes.
+  ROOT CAUSE CONFIRMED, HOST-SIDE, plugin-side re-review (P11).**
   `+Horan` running this plugin with `AutoTradeAccept/Enabled=True` and a
   whitelist matching `+Acdream` did not accept after `+Acdream` accepted; the
   trade stayed open with the partner at 0 items, twice (r5 and r7, the second
-  with a freshly relaunched bot). Attribution is unresolved
-  from the client side: the plugin's `AutoTradeAccept` subscribes to
-  `ITradeAutomation.PartnerTradeAccepted`
-  (`src/OpenAC.MagTools/Macros/AutoTradeAccept.cs:63`), and the host raises it
-  from the Runtime poll shared by both hosts
-  (`AcDream.Runtime/Gameplay/RuntimeTradeAutomation.cs:217`), but the headless
-  session produces no trade-side log or chat surface, so whether its trade
-  state opened at all could not be seen. Needs host-side instrumentation
-  (or a second GRAPHICAL client) to split.
+  with a freshly relaunched bot). Reading `AcDream.Headless.Plugins.
+  HeadlessAutomationSurface` under `OpenAcRoot` (magtools-api-a8 snapshot)
+  confirms the cause: that surface overrides only
+  `Chat`/`Login`/`Dialogs`/`Trade`/`Vendor` on `IAutomationSurface` --
+  `Character`, `Items`, `Objects`, `Loot`, `Navigation`, etc. all fall
+  through to the interface's own default, `NoOpAutomationSurface.Instance`,
+  whose `IWorldObjectAutomation.TryGet` unconditionally returns `false`.
+  `AutoTradeAccept.OnPartnerAccepted`'s `Objects.TryGet(partnerObjectId, ...)`
+  (`src/OpenAC.MagTools/Macros/AutoTradeAccept.cs`) therefore can NEVER
+  resolve the partner's name on a headless bot, so it always bails before
+  the whitelist match or `Trade.Accept()` -- independent of whitelist
+  content, rate-limit state, or timing. This is a DIFFERENT (broader) gap
+  than the "empty `Character.Name` at `SessionReady`" pattern seen elsewhere
+  in this port: `AutoTradeAccept` never reads `Character` at all, and no
+  headless plugin has a working world-object lookup yet, not just this one.
+  The plugin's own whitelist match and `Trade.Accept()` call are correct and
+  need no change once the host wires a real `Objects` implementation into
+  `HeadlessAutomationSurface` (the same way `Trade`/`Vendor` already got
+  one). A characterization test
+  (`AutoTradeAcceptTests.DoesNotAcceptWhenThePartnerCannotBeResolved`) locks
+  in that this fails safely (no exception, no accept) rather than crashing.
+  Out of scope for this plugin repo to fix; needs an OpenAC-side change to
+  `HeadlessAutomationSurface`.
 - **Defect 14 (NEW, cosmetic/honesty) -- a vendor buy/sell that does nothing is
-  silent.** `/mt vendor addbuyp a` + `buy` and `addsellp taper` + `sell`
-  printed nothing and changed nothing; only a name miss
-  (`No vendor item found named: Bread`) is ever reported, so a staged-but-
-  unfulfilled buy/sell is indistinguishable from success. Row 1.
+  silent. 14a (honesty) FIXED plugin-side, P11.** `/mt vendor addbuyp a` +
+  `buy` and `addsellp taper` + `sell` printed nothing and changed nothing;
+  only a name miss (`No vendor item found named: Bread`) was ever reported,
+  so a staged-but-unfulfilled buy/sell was indistinguishable from success.
+  Every `/mt vendor` verb and `AutoBuySell`'s own `AddToBuyList`/
+  `AddToSellList`/`BuyAll`/`SellAll` calls discarded the host's
+  `PluginVendorCommandResult` down to a bare bool -- a host-level refusal
+  (Busy, InvalidItem, NotOpen, Unavailable) printed nothing at all, and
+  `AutoBuySell` additionally kept advancing its Buying/Selling phase on a
+  refusal, wedging that vendor visit's automation while waiting forever for
+  a `TransactionCompleted` a refused command never sends; a server-rejected
+  (`Success == false`) completion was also treated identically to a real
+  one. All four now report through chat, matching `/mt use*`'s existing
+  refusal-reporting shape. 14b (an actual completed buy/sell) remains
+  UNPROVEN -- confirming that needs a live vendor with known stock and
+  buy-list items, out of scope for this repo's automated tests. Row 1.
 - **Environment note (not a plugin defect):** with MossTank in the session
   (r5) its own recharger destroyed a piece of gear --
   `The Mana Stone drains 882 points of mana from the Leather Gauntlets.` /

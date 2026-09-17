@@ -714,7 +714,7 @@ Still owed: the same live re-gate noted after the P10 round.
   no modifier and fails the chord match; a physical press should not. Also any
   open dialog or focused edit field drops every plugin hotkey by design.
 
-## Round 6 (A10 host eb91874 / plugin <PENDING-COMMIT>)
+## Round 6 (A10 host eb91874 / plugin `f6003c9`)
 
 Slice P13: `/mt client minimize`, `/mt quit` and `/mt exit` ported onto
 OpenAC A10's new `IPluginHost.Window` (`IHostWindow`) host-window surface.

@@ -1,138 +1,102 @@
 # Handoff
 
 Short status for anyone picking this port up next. See
-[docs/2026-09-16-port-design.md](docs/2026-09-16-port-design.md) for the full
-slice plan, [README.md](../README.md) for the parity checklist, and
-[docs/live-results.md](live-results.md) for what has and has not been proven
-against a live server.
+[docs/2026-09-16-port-design.md](2026-09-16-port-design.md) for the slice
+plan, [README.md](../README.md) for the parity checklist (with a live-gate
+verdict per row), [docs/live-results.md](live-results.md) for every live
+result and the exact steps behind it, and [docs/deviations.md](deviations.md)
+for every place this port knowingly differs from the original.
 
 ## What shipped
 
-Slices P1–P8: the whole Mag-Tools user-facing feature set in the port
-design's inventory is implemented and unit-tested against this repo's fake
-host — settings/XML schema, the `/mt` console, chat filters, item info on
-ident, the loot-rule bridge, auto buy/sell, auto trade add/accept, the
-looter, the inventory packer, idle inventory automation, tinkering
-auto-confirm, mana recharge, one-touch heal, the six trackers (combat,
-corpse, player, equipment, inventory/consumables, profit/loss), the chat
-logger, the inventory logger and clipboard export, the HUD, the whole
-`magtools.xml` tab tree including the P8 Character/Server command lists, and
-the P8 login conveniences (`LoginActions`, `PeriodicCommands`,
-`OpenMainPackOnLogin`, `LogOutOnDeath`). 926 tests pass, 0 warnings.
-`docs/deviations.md` is the index of every place this port knowingly differs
-from the original, with the reason and the file.
+Plugin slices P1–P11 (P9–P11 were live-gate fix rounds): every user-facing
+Mag-Tools feature in the design's inventory is implemented and tested against
+this repo's fake host, and 37 of the 45 checklist rows are Shipped; the other
+8 are Not applicable (Decal/Win32-only) with a one-line reason and the
+OpenAC-native equivalent in the README. 1,017 tests, 0 warnings.
 
-## What is pending live gating, and why
+Process: Fable wrote the design and slices; Sonnet implemented one slice at a
+time; a fresh Opus reviewed every slice (and every fix round) before the next
+started; findings were fixed before moving on.
 
-`docs/live-results.md`'s Pending table lists 18 rows, each with the exact
-steps to close it. In short:
+## Live gating
 
-- **P8's own new surface has never been exercised live**: the
-  Character/Server On-Login/On-Login-Complete/Periodic command lists (add,
-  move, delete, persistence, and the actual dispatch on a real
-  reconnect/minute boundary), and Log Out on Death (which needs an actual
-  in-world death). Both are unit-tested against the fake host but have not
-  run against ACE.
-- **Open Main Pack On Login's host gap (H1) is resolved**: `IItemAutomation.Use`
-  on the local player's own object id is still refused by the host
-  (`IsPlayerOwned` excludes the player object), but OpenAC slice A6 added a
-  direct client-window surface (`IUiRegistry.ShowClientWindow`), and the
-  macro now uses that instead -- same observable result (the pack opens),
-  different mechanism. It warns instead of swallowing a refusal, same as
-  before. Back to Shipped in the parity checklist; the NEW mechanism has not
-  been exercised against a live client yet (re-gate owed, see
-  `docs/live-results.md`).
-- **Everything that needs a scripted world event** (a real fight for the
-  combat tracker, a real vendor for auto buy/sell, a real corpse/chest for
-  the looter, a real low-mana item for auto recharge, real damage for
-  one-touch heal, provoked chat lines for all 32 filters) was out of scope
-  for the automated probe rounds run so far and needs a deliberate gate
-  session.
-- **Everything that needs a second party** (auto trade add/accept, the
-  corpse/player trackers' actual tracking, the full `/mt trade`/`/mt vendor`
-  transaction flows beyond the no-target messages already gated, `/mt fellow
-  create`) needs `testaccount2`/`+Horan` alongside the primary session, per
-  the design doc's §8 live-gate protocol.
-- **File-backed features on a timer** (the chat logger's 10-minute flush,
-  the inventory logger's fresh-character id-request pass, inventory export
-  to clipboard) need either a long-running session or a clipboard/file
-  inspection step that the automated probe rounds did not include.
+Five probe rounds against the local ACE server with `+Acdream` (and the
+headless `+Horan` bot on `testaccount2` as the partner), all recorded in
+`docs/live-results.md`: rounds P1–P8 during the slices, then rounds 3 and 4
+(and 5, see below) after the host fixes. Proven live, among others: the
+`/mt` console and option family, item info on ident with appraisal profiles,
+the loot-rule bridge through MossTank, the looter opening a corpse through the
+plugin's own `Use` and moving loot into the pack, the vendor panel opening
+through the plugin's `Use` with AutoBuySell running, trade open/add and the
+bot's AutoTradeAccept completing a trade, the combat/corpse/player/equipment/
+inventory/profit trackers, the chat logger and inventory logger files, both
+clipboard exports, the HUD and the whole tab tree, character- and
+server-scoped On-Login / On-Login-Complete / Periodic commands, the Add
+fields, the one-touch-heal hotkey, and per-account/server/character settings.
 
-None of these are known defects — they are simply unrun. The one item that
-WAS run and failed is recorded as FAIL/PARTIAL in the Gated table with the
-host fix that resolved it (see below); every host gap found during P1–P7 live
-gating has since landed and re-gated PASS.
+Rows that stay PENDING have a written reason each: server-side triggers this
+admin character cannot provoke on the local ACE (it one-shots everything and
+is never attacked, so no damage lines, no evade/resist/fizzle filters, no
+real death for Log Out on Death; a drained item never emits the low-mana
+line), and weenies this ACE build cannot create (Intricate Carving Tool,
+healing kits). The steps to close them are in the Pending table.
 
-## OpenAC API changes (branch `claude/magtools-plugin-api`, reviewed head `d5c37bb`; A6 at `669832d`)
+## OpenAC API changes awaiting the owner's push
 
-Six slices, each Sonnet-implemented and Opus dual-lens reviewed (contract
-hygiene + parity), landed on this branch (not `main` — push/merge waits for
-the owner):
+Branch `claude/magtools-plugin-api` in `OpenAC/.worktrees/magtools-api`
+(61 commits over `main`; 17 files in `AcDream.Plugin.Abstractions`, 120 files
+overall). Every slice was implemented with fail-first tests and reviewed by a
+fresh Opus; nothing is pushed and no PR exists. Frozen detached snapshots
+(`magtools-api-a8`, then `-a9`) are what `Directory.Build.props` builds
+against.
 
-- **A1** — `E-CHAT` (chat `Received`/`RegisterFilter`/`PostMessage`,
-  `LogTextType`/`CombatKind`/`Received` on `PluginChatMessage`),
-  `E-LIFECYCLE` (`IEvents.LoginComplete`/`Logoff`/`LocalPlayerDied`,
-  `ICharacterInfo.ServerPopulation`), `E-SPELLS` (`ISpellCatalog.All`/
-  `TryFindByName`), `E-STORAGE` (`IPluginStorage.RootPath`), `E-CLIPBOARD`
-  (`IPluginHost.Clipboard.TrySetText`).
-- **A2** — `E-OBJECTS` (`ObjectChanged`/`ContainerOpened`/`ContainerClosed`),
-  `E-CONFIRM` (`ConfirmationRequested` + `Dialogs.Answer`), `E-SESSION`
-  (`ILoginAutomation.Logout`), `E-LOOT` (`NeedsIdentification`/
-  `TryClassifyWithProfile` on `IPluginLootClassifier`).
-- **A3** — `E-TRADE` (`ITradeAutomation`), `E-VENDOR` (`IVendorAutomation`),
-  `E-HOTKEYS` (`IHotkeyRegistry`).
-- **A4** — appraisal profiles: retains `WeaponProfile`/`ArmorProfile` on
-  `ClientObject` and exposes them through the plugin surface, so item-info
-  formatting can fill the weapon/armor segments the original's assess window
-  shows (damage range, attack bonus, armor mods) instead of leaving them
-  blank.
-- **A5** — silent appraisals: tags plugin-initiated `Identify` requests so
-  they never pop the client's own examination window (splitting appraisal
-  *completion* from *presentation*, and refusing a plugin from evicting a
-  user's own in-flight assess).
-- **A6** — client-window control: `IUiRegistry.ToggleClientWindow`/
-  `ShowClientWindow`/`HideClientWindow`/`IsClientWindowVisible(PluginClientWindow)`,
-  letting a plugin show/hide/query one of the client's own retained windows
-  (Inventory, Character, Spellbook, Map, …) directly, without a synthetic
-  "use self" or click. First consumer: `OpenMainPackOnLogin`.
+- **A1** chat (`Received`/`RegisterFilter`/`PostMessage`, structured
+  `PluginChatMessage`), lifecycle (`LoginComplete`/`Logoff`/`LocalPlayerDied`,
+  `ServerPopulation`), spells (`ISpellCatalog.All`/`TryFindByName`), storage
+  root path, clipboard.
+- **A2** object events (`ObjectChanged`/`ContainerOpened`/`ContainerClosed`),
+  confirmations (`ConfirmationRequested` + `Dialogs.Answer`), logout, loot
+  classifier (`NeedsIdentification`/`TryClassifyWithProfile`).
+- **A3** `ITradeAutomation`, `IVendorAutomation`, `IHotkeyRegistry`; plus the
+  lifecycle-emission fix (in-world edge from the session tick) and
+  `Identify` for any known object.
+- **A4** appraisal weapon/armor profiles retained on the object and exposed
+  to plugins.
+- **A5** silent plugin appraisals (request origin; completion split from
+  presentation).
+- **A6** client-window control (`Show/Hide/Toggle/IsClientWindowVisible`).
+- **A7** character identity valid at `LoginComplete`; plugin `Use` on an
+  unowned world object takes the walk-then-use path with a truthful outcome;
+  clipboard writes marshalled to the main thread and verified.
+- **A8** the automation use route arms the container/vendor request exactly
+  as a click does (the plugin's `Use` now opens corpses, chests and vendors);
+  a stalled approach gives up on the move-to's own progress counter instead
+  of holding the use gate for the session (private register row AD-141);
+  targeted-use items get a specific refusal; automation outcomes logged.
+- **A9** the headless host: real `ICharacterInfo`, `Objects.TryGet`/
+  `CaptureObjects`, per-plugin storage, and the trade owner wired into its
+  inbound router (it dropped every trade message before). Shared
+  `FilePluginStorage`, `RuntimeCharacterIdentity` and
+  `RuntimeWorldObjectProjection` now serve both hosts.
 
-### Host bugs found by live gates (all fixed and re-gated PASS)
+Host defects found only by live gating and fixed on the branch: lifecycle
+deltas only at command boundaries; `Identify` limited to loot containers;
+appraisal profiles not retained; plugin appraisals opened the assess window;
+no client-window control; empty character name at login; `Use` no-op on
+unowned objects; clipboard write silently lost off-thread; the automation use
+route never armed the container request; an unreachable approach wedged the
+use gate; the headless host dropped trade messages and stubbed
+identity/objects/storage. One host bug is reported, not fixed: an occasional
+crash in Vulkan device destruction at shutdown after a clean session (D7 in
+`docs/live-results.md`).
 
-- **Lifecycle emission (A3)**: `LoginComplete` was only emitted at command
-  boundaries in the A2 host, so the plugin's online banner never appeared
-  during idle world time; fixed in A3 by emitting the real async in-world
-  edge from the session tick (`dcfa997`, `705de5c`, `94a296f`).
-- **Identify scope (A3)**: `IWorldObjectAutomation.Identify` refused anything
-  that was not a corpse or inside the open container, so a plugin could
-  never appraise an owned or landscape object; fixed to accept any known
-  object (`fa5e111`).
-- **Appraisal profiles (A4)**: the host parsed the appraisal
-  WeaponProfile/ArmorProfile off the wire but never retained them on the
-  object or exposed them to a plugin, so item-info's weapon/armor segments
-  (damage range, attack bonus, armor mods) stayed blank even after a
-  successful ident -- found live gating item info on ident, fixed by
-  retaining the profiles on `ClientObject` and surfacing them through
-  `TryCaptureProperties`/`PluginInventoryItem`.
-- **Silent appraisal (A5)**: any plugin-initiated `Identify` (the equipment
-  tracker's periodic re-identify, in particular) popped the client's own
-  examination window just like a user-initiated one -- found live gating
-  the equipment tracker, fixed by tagging request origin and splitting
-  appraisal completion from presentation so only a user-originated request
-  shows the window.
-- **Client window control (A6)**: no host surface let a plugin show, hide,
-  toggle, or query one of the client's own retained windows at all --
-  `Open Main Pack On Login`'s original mechanism (using the player's own
-  object) is refused outright (`IsPlayerOwned` excludes the player object
-  itself), and there was no alternative route; found during P8 review,
-  fixed by adding `IUiRegistry.ToggleClientWindow`/`ShowClientWindow`/
-  `HideClientWindow`/`IsClientWindowVisible(PluginClientWindow)`.
+## Test-environment notes
 
-## Known test-environment note
-
-A copy of this plugin deployed to the default `%LOCALAPPDATA%\acdream\plugins`
-during manual live-gate sessions was found to skew two OpenAC Headless tests
-that enumerate the real plugins directory without redirecting it. Both live
-sessions now set `ACDREAM_DATA_DIR` to a sandboxed directory before
-deploying, so the default plugins directory (and the Headless suite that
-reads it) stays clean regardless of what a developer has manually installed
-for live testing.
+- A plugin deployed to the default `%LOCALAPPDATA%\acdream\plugins` skews two
+  OpenAC Headless tests that enumerate the real plugins directory; run those
+  suites with `ACDREAM_DATA_DIR` at an empty directory.
+- The headless bot drops to character select about five minutes after
+  `enteredWorld`; gate partner tests inside that window and trust the status
+  file's events, not the resource samples.
+- A hard-killed client or bot leaves its ACE session stuck for 3–8 minutes.

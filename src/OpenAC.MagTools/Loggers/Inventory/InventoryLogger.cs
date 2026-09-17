@@ -162,6 +162,19 @@ public sealed class InventoryLogger
     }
 
     /// <summary><c>ObjectClassNeedsIdent</c>, verbatim rule set.</summary>
+
+    /// <summary>
+    /// Whether a persisted record describes the same object as a live
+    /// capture. The server-assigned id is the identity; the class is a
+    /// derived field that transiently reads Unknown while the login burst
+    /// is still delivering an item's type (defect 15), so an Unknown live
+    /// class must not break the match. A KNOWN class that differs means a
+    /// recycled id now names a different object, and the old record must
+    /// not lend it its appraisal (the original matched on id and class).
+    /// </summary>
+    private static bool IsSamePersistedObject(MyWorldObjectRecord prev, uint id, int liveObjectClass) =>
+        prev.Id == id
+        && (prev.ObjectClass == liveObjectClass || liveObjectClass == (int)PluginObjectClass.Unknown);
     public static bool ObjectClassNeedsIdent(PluginObjectClass objectClass, string name)
     {
         if (objectClass is PluginObjectClass.Armor or PluginObjectClass.Clothing
@@ -844,7 +857,7 @@ public sealed class InventoryLogger
                 // already keeps `older`'s ObjectClass once matched, so
                 // gating the match on it too was never load-bearing.
                 MyWorldObjectRecord? previousMatch = previous.FirstOrDefault(
-                    prev => prev.Id == unresolved.Id);
+                    prev => IsSamePersistedObject(prev, unresolved.Id, unresolved.ObjectClass));
 
                 current.Add(previousMatch is null
                     ? unresolved
@@ -860,7 +873,7 @@ public sealed class InventoryLogger
             // Defect 15: same Id-only match as the unresolved branch above
             // -- see that branch's remarks.
             MyWorldObjectRecord? matched = previous.FirstOrDefault(
-                prev => prev.Id == snapshot.Id);
+                prev => IsSamePersistedObject(prev, snapshot.Id, snapshot.ObjectClass));
 
             if (matched is null)
             {

@@ -32,6 +32,8 @@ public sealed class FakeHost : IPluginHost
 
     public FakeHotkeyRegistry Hotkeys { get; } = new();
 
+    public FakeHostWindow Window { get; } = new();
+
     IEvents IPluginHost.Events => Events;
 
     ISelectionService IPluginHost.Selection => Selection;
@@ -50,8 +52,53 @@ public sealed class FakeHost : IPluginHost
 
     IHotkeyRegistry IPluginHost.Hotkeys => Hotkeys;
 
+    IHostWindow IPluginHost.Window => Window;
+
     /// <summary>The chat lines the plugin posted, in order.</summary>
     public IReadOnlyList<string> ChatLines => Automation.Chat.Posted;
+}
+
+/// <summary>
+/// A settable <see cref="IHostWindow"/>: records every call, defaults to
+/// <see cref="HostWindowStatus.Done"/> like a graphical host with a
+/// responsive window, and a test can flip <see cref="MinimizeResult"/>/
+/// <see cref="RestoreResult"/>/<see cref="RequestCloseResult"/> to simulate a
+/// refusal (a headless host, or an unconfirmed platform outcome such as
+/// Wayland's always-Unavailable Minimize).
+/// </summary>
+public sealed class FakeHostWindow : IHostWindow
+{
+    public int MinimizeCalls { get; private set; }
+
+    public int RestoreCalls { get; private set; }
+
+    public int RequestCloseCalls { get; private set; }
+
+    public bool IsMinimized { get; set; }
+
+    public HostWindowResult MinimizeResult { get; set; } = new(HostWindowStatus.Done);
+
+    public HostWindowResult RestoreResult { get; set; } = new(HostWindowStatus.Done);
+
+    public HostWindowResult RequestCloseResult { get; set; } = new(HostWindowStatus.Done);
+
+    public HostWindowResult Minimize()
+    {
+        MinimizeCalls++;
+        return MinimizeResult;
+    }
+
+    public HostWindowResult Restore()
+    {
+        RestoreCalls++;
+        return RestoreResult;
+    }
+
+    public HostWindowResult RequestClose()
+    {
+        RequestCloseCalls++;
+        return RequestCloseResult;
+    }
 }
 
 /// <summary>A settable <see cref="IPluginClipboard"/>: records every write, can fail on demand.</summary>

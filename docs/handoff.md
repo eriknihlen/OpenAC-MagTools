@@ -9,11 +9,14 @@ for every place this port knowingly differs from the original.
 
 ## What shipped
 
-Plugin slices P1–P12 (P9–P12 were live-gate fix rounds): every user-facing
-Mag-Tools feature in the design's inventory is implemented and tested against
-this repo's fake host, and 37 of the 45 checklist rows are Shipped; the other
-8 are Not applicable (Decal/Win32-only) with a one-line reason and the
-OpenAC-native equivalent in the README. 1,020 tests, 0 warnings. Head `d48a934`.
+Plugin slices P1–P13 (P9–P13 were live-gate fix/porting rounds): every
+user-facing Mag-Tools feature in the design's inventory is implemented and
+tested against this repo's fake host. P13 ported `/mt client minimize`,
+`/mt quit` and `/mt exit` onto the new `IHostWindow` host-window surface
+(OpenAC A10), moving them from Not applicable to Shipped: 40 of the 45
+checklist rows are Shipped; the other 5 remain Not applicable
+(Decal/Win32-only) with a one-line reason and the OpenAC-native equivalent in
+the README. 1,025 tests, 0 warnings.
 
 Process: Fable wrote the design and slices; Sonnet implemented one slice at a
 time; a fresh Opus reviewed every slice (and every fix round) before the next
@@ -45,10 +48,9 @@ healing kits). The steps to close them are in the Pending table.
 ## OpenAC API changes awaiting the owner's push
 
 Branch `claude/magtools-plugin-api` in `OpenAC/.worktrees/magtools-api`
-(head `9c26778`, 63 commits over `main`; 17 files in
-`AcDream.Plugin.Abstractions`, 124 files overall, about 14,600 lines added of
-which more than half are tests). Every slice was implemented with fail-first tests and reviewed by a
-fresh Opus; nothing is pushed and no PR exists. The frozen detached snapshot `magtools-api-a9` (that head) is what
+(head `eb91874`; 17 files in
+`AcDream.Plugin.Abstractions`, 124+ files overall). Every slice was implemented with fail-first tests and reviewed by a
+fresh Opus; nothing is pushed and no PR exists. The frozen detached snapshot `magtools-api-a10` (that head) is what
 `Directory.Build.props` builds against; once the branch merges, point
 `OpenAcRoot` back at the checkout.
 
@@ -80,6 +82,13 @@ fresh Opus; nothing is pushed and no PR exists. The frozen detached snapshot `ma
   inbound router (it dropped every trade message before). Shared
   `FilePluginStorage`, `RuntimeCharacterIdentity` and
   `RuntimeWorldObjectProjection` now serve both hosts.
+- **A10** `IPluginHost.Window` (`IHostWindow`): minimize/restore/request-close
+  over the client's own OS window, the same three controls its title bar
+  already offers. Graphical host is real; headless answers Minimize/Restore
+  as Unavailable (no window) and RequestClose ends the plugin's own session
+  gracefully. Platform caveat: Wayland cannot report iconification back to
+  the client at all, so `Minimize` always reports Unavailable there even
+  when the window did minimize.
 
 Host defects found only by live gating and fixed on the branch: lifecycle
 deltas only at command boundaries; `Identify` limited to loot containers;

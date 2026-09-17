@@ -35,10 +35,7 @@ public sealed class MtCommandRouter
         "jumpx",
         "jumpc",
         "movement",
-        "quit",
-        "exit",
         "get xy",
-        "client minimize",
     ];
 
     private const string SpellDumpStorageKey = "mt spelldump.txt";
@@ -94,6 +91,12 @@ public sealed class MtCommandRouter
                 return true;
             }
         }
+
+        if (lower is "quit" or "exit")
+            return ReportWindow(_host.Window.RequestClose());
+
+        if (Matches(lower, "client minimize"))
+            return ReportWindow(_host.Window.Minimize());
 
         if (Matches(lower, "trade"))
             return Trade(Remainder(lower, "trade"));
@@ -392,6 +395,27 @@ public sealed class MtCommandRouter
             return true;
 
         _chat.Write("Use refused: "
+            + (string.IsNullOrWhiteSpace(result.Notice) ? result.Status.ToString() : result.Notice));
+        return false;
+    }
+
+    /// <summary>
+    /// <c>/mt client minimize</c>, <c>/mt quit</c> and <c>/mt exit</c> drive
+    /// <see cref="IHostWindow"/> directly. Matches the P9 refusal convention
+    /// used elsewhere in this router: silent on success, one line naming the
+    /// host's own <see cref="HostWindowResult.Notice"/> on refusal (falling
+    /// back to the bare status when the host didn't supply one). Unavailable
+    /// covers both a headless host (Minimize/Restore have nothing to act on
+    /// there) and an unconfirmed platform outcome (e.g. Wayland always
+    /// reports Minimize as Unavailable even when the window did minimize) --
+    /// see the deviations doc; this router does not retry on it.
+    /// </summary>
+    private bool ReportWindow(HostWindowResult result)
+    {
+        if (result.Succeeded)
+            return true;
+
+        _chat.Write("Window command refused: "
             + (string.IsNullOrWhiteSpace(result.Notice) ? result.Status.ToString() : result.Notice));
         return false;
     }

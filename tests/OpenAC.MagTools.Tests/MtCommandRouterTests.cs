@@ -34,9 +34,7 @@ public sealed class MtCommandRouterTests
     [InlineData("click ok")]
     [InlineData("jump 500")]
     [InlineData("movement w 200")]
-    [InlineData("quit")]
     [InlineData("get xy")]
-    [InlineData("client minimize")]
     public void TheWin32CommandsReportThatTheyDoNotApply(string command)
     {
         Assert.True(_router.Execute(command));
@@ -60,6 +58,64 @@ public sealed class MtCommandRouterTests
                 Line(command + " is not applicable in OpenAC"),
                 Assert.Single(host.ChatLines));
         }
+    }
+
+    [Fact]
+    public void ClientMinimizeCallsWindowMinimizeSilentlyOnSuccess()
+    {
+        Assert.True(_router.Execute("client minimize"));
+        Assert.Equal(1, _host.Window.MinimizeCalls);
+        Assert.Equal(0, _host.Window.RestoreCalls);
+        Assert.Equal(0, _host.Window.RequestCloseCalls);
+        Assert.Empty(Chat);
+    }
+
+    [Fact]
+    public void ClientMinimizePrintsTheHostNoticeWhenUnavailable()
+    {
+        _host.Window.MinimizeResult = new HostWindowResult(
+            HostWindowStatus.Unavailable, "no window to minimize.");
+
+        Assert.False(_router.Execute("client minimize"));
+        Assert.Equal(
+            Line("Window command refused: no window to minimize."),
+            Assert.Single(Chat));
+    }
+
+    [Fact]
+    public void ClientMinimizeFallsBackToTheStatusNameWithNoNotice()
+    {
+        _host.Window.MinimizeResult = new HostWindowResult(HostWindowStatus.Unavailable);
+
+        Assert.False(_router.Execute("client minimize"));
+        Assert.Equal(
+            Line("Window command refused: Unavailable"),
+            Assert.Single(Chat));
+    }
+
+    [Theory]
+    [InlineData("quit")]
+    [InlineData("exit")]
+    public void QuitAndExitCallWindowRequestCloseSilentlyOnSuccess(string command)
+    {
+        Assert.True(_router.Execute(command));
+        Assert.Equal(1, _host.Window.RequestCloseCalls);
+        Assert.Equal(0, _host.Window.MinimizeCalls);
+        Assert.Empty(Chat);
+    }
+
+    [Theory]
+    [InlineData("quit")]
+    [InlineData("exit")]
+    public void QuitAndExitPrintTheHostNoticeWhenRequestCloseIsRefused(string command)
+    {
+        _host.Window.RequestCloseResult = new HostWindowResult(
+            HostWindowStatus.Unavailable, "no session to close.");
+
+        Assert.False(_router.Execute(command));
+        Assert.Equal(
+            Line("Window command refused: no session to close."),
+            Assert.Single(Chat));
     }
 
     [Fact]

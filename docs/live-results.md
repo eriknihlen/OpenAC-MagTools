@@ -713,3 +713,56 @@ Still owed: the same live re-gate noted after the P10 round.
   Ctrl+P whose Ctrl is released before the queued callback runs arrives with
   no modifier and fails the chord match; a physical press should not. Also any
   open dialog or focused edit field drops every plugin hotkey by design.
+
+## Round 6 (A10 host eb91874 / plugin <PENDING-COMMIT>)
+
+Slice P13: `/mt client minimize`, `/mt quit` and `/mt exit` ported onto
+OpenAC A10's new `IPluginHost.Window` (`IHostWindow`) host-window surface.
+Three routes against the graphical host, `+Acdream` on the local ACE,
+plugin deployed via `tools/deploy.ps1`. Each route launched the client with
+`--session-config`, waited for `world-visible`, then drove the verb under
+test; steps and full logs are under the session's scratchpad
+`p13/route{A,B,C}.txt` and `p13/launch-r{A,B,C}.log`.
+
+### Route A -- `/mt client minimize`
+
+| Step | Observed | Verdict |
+|---|---|---|
+| Wait for world-visible, `/mt client minimize` | Client reached `[world-reveal] event=complete ... visible=True`; command sent | -- |
+| Window-state check from a second PowerShell process (`user32.dll` `IsIconic` on the client's `MainWindowHandle`, since `MainWindowTitle` stays populated with live FPS/hint text even while minimized on this host -- the title-empty heuristic in the task brief does not hold here) | `IsIconic=True` immediately after the command, confirming a real OS minimize (not merely `HostWindowResult.Done` with no visible effect) | PASS |
+| Restore from the same second process (`user32.dll` `ShowWindow(handle, 9)`) so the route could continue | `IsIconic=False` after restore; client resumed normally, screenshot + dump + `close-client` all completed, log ends with `graceful logout requested`/`confirmed` | PASS |
+
+**Verdict: PASS.** `Minimize()` reached `HostWindowStatus.Done` and the OS
+window actually iconified (confirmed externally, not just via the host's own
+report) on this Windows client -- the Wayland/X11/macOS confirmation caveats
+in `docs/plugin-api.md` do not apply to this run.
+
+### Route B -- `/mt quit`
+
+| Step | Observed | Verdict |
+|---|---|---|
+| Wait for world-visible, `/mt quit`, then a 20 s sleep with no `close-client` in the route | Log: `[session] graceful logout requested character=0x5000000A` -> `[session] graceful logout confirmed` -> `Mag-Tools disabled`, then the process exited on its own (background launch command completed, exit code 0) before the route's `dump` step ran | PASS |
+| Process check after the route's background task completed | `Get-Process AcDream.App` no longer lists the route's PID | PASS |
+
+**Verdict: PASS.** `RequestClose()` took the exact graceful-logout-then-
+teardown-then-exit route the window's own close button uses; the client
+ended itself with no `close-client` probe verb and no external kill.
+
+### Route C -- `/mt exit`
+
+| Step | Observed | Verdict |
+|---|---|---|
+| Wait for world-visible, `/mt exit`, then a 20 s sleep with no `close-client` | Log: `[session] graceful logout requested character=0x5000000A` -> `[session] graceful logout confirmed` -> `Mag-Tools disabled`; process exited on its own (exit code 0) | PASS |
+
+**Verdict: PASS.** `/mt exit` is a true alias of `/mt quit` -- same
+`IHostWindow.RequestClose()` route, same graceful outcome.
+
+All three P13 routes PASS. No refusal path (`Window command refused: ...`)
+was exercised live in this round -- the graphical host never returns
+`Unavailable` for these three calls under normal conditions; the headless
+`Unavailable`-on-Minimize/Restore behavior and the Wayland always-Unavailable
+caveat are covered by the unit tests in `MtCommandRouterTests.cs`
+(`ClientMinimizePrintsTheHostNoticeWhenUnavailable`,
+`ClientMinimizeFallsBackToTheStatusNameWithNoNotice`,
+`QuitAndExitPrintTheHostNoticeWhenRequestCloseIsRefused`) and the deviations
+row in `docs/deviations.md`, not by a live run.

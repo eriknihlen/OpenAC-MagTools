@@ -76,9 +76,16 @@ knowingly behaves differently from the original, and
 real ACE server (the connected user-gate rounds are still in progress; see
 that file for which rows are proven live vs. code-complete).
 
-Of the parity checklist's 45 rows, 37 are Shipped and 8 are Not applicable. Of
-the 37 shipped rows, the live gate (rounds P1–P8, Round 3, Round 4, the
-closing Round 5, and the P12 fix round) has reached PASS on 24, PARTIAL on 8,
+Of the parity checklist's 48 rows, 40 are Shipped and 8 are Not applicable
+(P13 moved `/mt client minimize`, `/mt quit` and `/mt exit` from the
+not-applicable `/mt` sub-command appendix into their own Shipped rows above,
+onto OpenAC's new `IHostWindow` host-window surface -- see
+`docs/deviations.md`; the top-level Not-applicable count is unchanged because
+those three were never counted there, only noted under the already-Shipped
+`/mt` console row). Of
+the 40 shipped rows, the live gate (rounds P1–P8, Round 3, Round 4, the
+closing Round 5, the P12 fix round, and the P13 host-window round) has
+reached PASS on 27, PARTIAL on 8,
 and PENDING on 5 (see
 the checklist's `Live` column and
 [docs/live-results.md](docs/live-results.md) for the exact round and evidence
@@ -109,6 +116,9 @@ A Pending row is never claimed Shipped.
 | Feature | Status | Live | Notes |
 |---|---|---|---|
 | `/mt` console (native subset + `opt` family) | Shipped | PASS (r1) | A handful of sub-commands are individually not applicable — see [Not-applicable `/mt` sub-commands](#not-applicable-mt-sub-commands) below |
+| `/mt client minimize` | Shipped | PASS (r6) — confirmed via `user32.dll` `IsIconic` from a second process; the window actually iconified, not just a reported `Done` | drives `IHostWindow.Minimize()` (OpenAC A10); see `docs/deviations.md` for the Wayland confirmation caveat |
+| `/mt quit` | Shipped | PASS (r6) — graceful logout confirmed, client exited on its own with no `close-client` probe | drives `IHostWindow.RequestClose()` (OpenAC A10) — graceful logout, then teardown, then process exit |
+| `/mt exit` | Shipped | PASS (r6) — same as `/mt quit` | alias of `/mt quit`, same `IHostWindow.RequestClose()` route |
 | Chat filters (32) | Shipped | PARTIAL (r1/r3) — 2 of 32 rules provoked (MonsterDeaths, TradeBuffBotSpam); the other 30 need misses/hits/fizzles/resists/comps/an NPC-vendor this character/server never produces. Round 5 ruled out cloaking as the cause: with `@cloak off` acknowledged, eight hostile monsters still never attacked | `src/OpenAC.MagTools/Chat/ChatFilter.cs` |
 | Item info on ident (user + container path) | Shipped | PASS (r1) — user path only; container path not exercised | Buffed-value model, weapon/armor appraisal profile segments (OpenAC slice A4) |
 | VTank loot-rule bridge | Shipped | PASS (r4) — `moss-tank` classifier registers and `LootRuleProcessor` reaches its profile during real looting | Maps to the registered `IPluginLootClassifierRegistry` (MossTank), not VTank/VTClassic — see `docs/deviations.md` |
@@ -154,7 +164,7 @@ A Pending row is never claimed Shipped.
 | Hotkey: Maximize Chat | Not applicable | N/A | see Maximize/Minimize Chat below |
 | Hotkey: Minimize Chat | Not applicable | N/A | see Maximize/Minimize Chat below |
 
-**Counts:** 37 shipped, 8 not applicable (45 checklist rows total; the
+**Counts:** 40 shipped, 8 not applicable (48 checklist rows total; the
 not-applicable rows point at the detail tables below, which break each one
 down further by individual command/hotkey).
 
@@ -181,7 +191,7 @@ architecture. Full detail and reasoning:
 
 | Sub-command | Why not applicable | OpenAC-native equivalent |
 |---|---|---|
-| `/mt send *`, `/mt click *`, `/mt jump*`, `/mt movement`, `/mt quit`, `/mt exit`, `/mt client minimize`, `/mt get xy` | synthetic `PostMessage`/Win32 input against the retail window | `/mt face`, movement via the navigation automation; jump has no automation surface (recorded, not a gap in the port itself) |
+| `/mt send *`, `/mt click *`, `/mt jump*`, `/mt movement`, `/mt get xy` | synthetic `PostMessage`/Win32 input against the retail window | `/mt face`, movement via the navigation automation; jump has no automation surface (recorded, not a gap in the port itself) |
 
 ### Dropped settings / Client tab
 

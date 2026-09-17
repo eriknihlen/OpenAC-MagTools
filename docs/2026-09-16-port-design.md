@@ -161,10 +161,17 @@ fix findings → review-closed. Plugin slices also get their live-results rows.
 | Window position (set/del) | `MoveWindow` on the retail HWND | client window placement persistence |
 | No-focus FPS / Max FPS | `Thread.Sleep` inside Decal's render hook | client frame limiter option (file an OpenAC issue if absent) |
 | Maximize/Minimize chat, maximize on login | blind pixel clicks on the retail chat glyph | chat window is a native retained window |
-| `/mt send *`, `/mt click *`, `/mt jump*`, `/mt movement`, `/mt quit`, `/mt client minimize`, `/mt get xy` | synthetic `PostMessage` input | `/mt face`, movement via the navigation automation; jump has no automation surface (recorded) |
+| `/mt send *`, `/mt click *`, `/mt jump*`, `/mt movement`, `/mt get xy` | synthetic `PostMessage` input | `/mt face`, movement via the navigation automation; jump has no automation surface (recorded) |
 | `/mt fellow create` by clicks | drove the retail fellowship panel by clicks | `Fellowship.Create(name, shareXp)` — ported natively |
 | VCS/VHS/VHUD connectors, Decal proxy | Virindi/Decal presence probes | plugin command bus, markup panels |
 | Tinkering "click yes" by pixel | dialog-button pixel offsets | E-CONFIRM answers the dialog on the wire |
+
+**P13 correction (OpenAC A10):** `/mt quit`, `/mt exit` and
+`/mt client minimize` are no longer not-applicable. OpenAC A10 added
+`IPluginHost.Window` (`IHostWindow`), a real host-window surface
+(minimize/restore/request-close); these three now drive it directly and
+ship as Shipped rows in the README. See `docs/deviations.md` for the
+headless and Wayland behaviour.
 
 ## 8. Live gate protocol
 

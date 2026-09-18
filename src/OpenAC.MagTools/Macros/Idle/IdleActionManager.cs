@@ -62,6 +62,7 @@ public sealed class IdleActionManager
     private IDisposable? _tickRegistration;
     private Action<PluginConfirmation>? _onConfirmation;
     private Action<PluginObjectChange>? _onObjectChanged;
+    private Action<ISetting>? _onToggleChanged;
     private TickScheduler? _scheduler;
     private double _lastActionElapsedSeconds = double.NegativeInfinity;
     private bool _confirmationArmed;
@@ -69,10 +70,16 @@ public sealed class IdleActionManager
 
     /// <summary>
     /// Set by <see cref="Start"/> (first think always rebuilds, including
-    /// after a reconnect) and by <see cref="OnObjectChanged"/> when a
-    /// relevant owned-item change arrives; cleared once
+    /// after a reconnect), by <see cref="OnObjectChanged"/> when a relevant
+    /// owned-item change arrives, and by <see cref="OnToggleChanged"/> when
+    /// one of the five idle-action toggles flips; cleared once
     /// <see cref="BuildSnapshot"/> re-walks <see cref="IItemAutomation.CaptureOwnedItems"/>
-    /// and refreshes <see cref="_cachedItems"/>. See the class remarks.
+    /// and refreshes <see cref="_cachedItems"/>. See the class remarks. Plain
+    /// <see langword="bool"/> rather than anything interlocked: the host
+    /// raises <see cref="IEvents.ObjectChanged"/> "on the same thread as
+    /// <see cref="IEvents.Tick"/>" (its own doc remark) and this plugin's
+    /// settings mutate on that same thread too, so there is never a
+    /// concurrent writer.
     /// </summary>
     private bool _itemSnapshotDirty = true;
 
@@ -131,6 +138,25 @@ public sealed class IdleActionManager
 
         _onObjectChanged = OnObjectChanged;
         _host.Events.ObjectChanged += _onObjectChanged;
+
+        // MEDIUM-2 (review round): the keyring Identify() request only
+        // happens inside CaptureItemIds's walk, gated on
+        // options.KeyRinger/KeyDeringer -- toggling either on after the
+        // first walk raises no ObjectChanged of its own, so without this
+        // subscription an already-present unappraised keyring would never
+        // get its id requested until some unrelated owned-item event
+        // happened to fire. All five idle-action toggles are covered
+        // (not just the two ring/dering ones) because ANY of them flipping
+        // changes what CaptureItemIds needs to have classified -- e.g.
+        // turning AetheriaRevealer off and HeartCarver on needs nothing new
+        // captured (the walk always captures everything), but re-running it
+        // is cheap and uniform beats special-casing which toggles matter.
+        _onToggleChanged = OnToggleChanged;
+        _settings.AetheriaRevealer.Changed += _onToggleChanged;
+        _settings.HeartCarver.Changed += _onToggleChanged;
+        _settings.ShatteredKeyFixer.Changed += _onToggleChanged;
+        _settings.KeyRinger.Changed += _onToggleChanged;
+        _settings.KeyDeringer.Changed += _onToggleChanged;
     }
 
     public void Stop()
@@ -151,9 +177,22 @@ public sealed class IdleActionManager
             _host.Events.ObjectChanged -= _onObjectChanged;
         _onObjectChanged = null;
 
+        if (_onToggleChanged is not null)
+        {
+            _settings.AetheriaRevealer.Changed -= _onToggleChanged;
+            _settings.HeartCarver.Changed -= _onToggleChanged;
+            _settings.ShatteredKeyFixer.Changed -= _onToggleChanged;
+            _settings.KeyRinger.Changed -= _onToggleChanged;
+            _settings.KeyDeringer.Changed -= _onToggleChanged;
+        }
+        _onToggleChanged = null;
+
         _confirmationArmed = false;
         _keyringIdRequested.Clear();
     }
+
+    /// <summary>MEDIUM-2: any idle-action toggle flipping invalidates the cached walk -- see the remark on the <see cref="Start"/> subscription.</summary>
+    private void OnToggleChanged(ISetting setting) => _itemSnapshotDirty = true;
 
     /// <summary>
     /// Marks the cached owned-item snapshot dirty for a change to an object
@@ -171,9 +210,21 @@ public sealed class IdleActionManager
     /// UsesRemaining/KeysHeld only become knowable once its appraisal data
     /// arrives, which is exactly what this event reports.
     /// </summary>
+    /// <remarks>
+    /// MEDIUM-1 (review round): the CURRENT-ownership check alone misses an
+    /// item moved OUT of ownership -- e.g. a keyring dragged into an open
+    /// chest reports <see cref="PluginObjectChangeKind.Moved"/> with its
+    /// <c>ContainerObjectId</c> now the chest and <c>IsOwned</c> already
+    /// false, so the IsOwned test below never fires and the cache would
+    /// keep pointing at an item the player no longer has (KeyDeringer could
+    /// keep targeting a keyring that already left the pack). Checking
+    /// membership in <see cref="_cachedItems"/> FIRST, unconditionally,
+    /// catches this: any change to an id this manager is currently relying
+    /// on invalidates the cache regardless of that id's current ownership.
+    /// </remarks>
     private void OnObjectChanged(PluginObjectChange change)
     {
-        if (change.Kind == PluginObjectChangeKind.Released)
+        if (change.Kind == PluginObjectChangeKind.Released || IsCachedItemId(change.ObjectId))
         {
             _itemSnapshotDirty = true;
             return;
@@ -182,6 +233,18 @@ public sealed class IdleActionManager
         if (_host.Automation.Objects.TryGet(change.ObjectId, out PluginWorldObject world) && world.IsOwned)
             _itemSnapshotDirty = true;
     }
+
+    /// <summary>Whether <paramref name="objectId"/> is one of the ids <see cref="_cachedItems"/> currently relies on -- see the MEDIUM-1 remark on <see cref="OnObjectChanged"/>.</summary>
+    private bool IsCachedItemId(uint objectId)
+        => objectId != 0u
+            && (objectId == _cachedItems.AetheriaManaStoneId
+                || objectId == _cachedItems.CoalescedAetheriaId
+                || objectId == _cachedItems.IntricateCarvingToolId
+                || objectId == _cachedItems.HeartItemId
+                || objectId == _cachedItems.ShatteredKeyItemId
+                || objectId == _cachedItems.BestKeyringForRingingId
+                || objectId == _cachedItems.KeyringWithKeysId
+                || objectId == _cachedItems.AgedLegendaryKeyId);
 
     private void Think()
     {

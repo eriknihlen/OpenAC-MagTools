@@ -368,6 +368,14 @@ public sealed class IdleActionManagerTests
         Assert.Equal(1, host.Automation.Items.CaptureOwnedItemsCalls);
     }
 
+    /// <summary>
+    /// Covers the "owned item created mid-run" rebuild path -- proving the
+    /// reveal fires once the companion item exists. It also happens to
+    /// double as the mutation-check test for the event subscription
+    /// (dropping it in <see cref="IdleActionManager.Start"/> leaves
+    /// <c>CaptureOwnedItemsCalls</c> at 1 instead of 2 here), but that is
+    /// incidental to what it verifies.
+    /// </summary>
     [Fact]
     public void AnOwnedItemCreatedMidRunRebuildsTheSnapshotAndTheActionFires()
     {
@@ -434,5 +442,73 @@ public sealed class IdleActionManagerTests
         scheduler.Tick(2.0); // first think after the new Start must rebuild anyway
 
         Assert.Equal(2, host.Automation.Items.CaptureOwnedItemsCalls);
+    }
+
+    [Fact]
+    public void ACachedItemMovedOutOfOwnershipTriggersARebuildThatDropsIt()
+    {
+        // MEDIUM-1 (review round): the CURRENT-ownership check alone misses
+        // an item moved OUT of ownership -- e.g. a keyring dragged into an
+        // open chest reports Moved with IsOwned already false, so the
+        // ownership test never fires and the cache would keep targeting an
+        // item the player no longer has.
+        (FakeHost host, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        settings.KeyDeringer.Value = true;
+        host.Automation.Items.Owned.Add(Item(1u, "Intricate Carving Tool", PluginObjectClass.Misc));
+        host.Automation.Items.Owned.Add(Item(2u, "Burning Sands Keyring", PluginObjectClass.Misc));
+        AddKeyring(host, 2u, usesRemaining: 1, keysHeld: 2);
+        host.Automation.Navigation.Snapshot = new PluginNavigationSnapshot(true, false, 1u, default, false, false);
+        host.Automation.Navigation.Objects.Add(new PluginNavigationObject(50u, "Iron Chest", default));
+
+        var manager = new IdleActionManager(host, settings);
+        manager.Start(scheduler);
+        scheduler.Tick(2.0); // first think: caches ring 2 as KeyringWithKeysId and derings it
+
+        Assert.Contains(("apply", 1u, 2u), host.Automation.Items.Calls);
+        host.Automation.Items.Calls.Clear();
+
+        // The keyring gets dragged into the open chest -- no longer owned,
+        // but still resolvable (present in Objects.Objects, IsOwned=false).
+        host.Automation.Items.Owned.RemoveAll(item => item.ObjectId == 2u);
+        int index = host.Automation.Objects.Objects.FindIndex(o => o.ObjectId == 2u);
+        host.Automation.Objects.Objects[index] = host.Automation.Objects.Objects[index] with
+        {
+            IsOwned = false,
+            ContainerObjectId = 999u,
+        };
+        host.Events.RaiseObjectChanged(2u, PluginObjectChangeKind.Moved);
+
+        scheduler.Tick(2.0); // must rebuild (the id is still in _cachedItems) and drop it
+
+        Assert.DoesNotContain(("apply", 1u, 2u), host.Automation.Items.Calls);
+    }
+
+    [Fact]
+    public void TogglingAnIdleActionSettingMidRunRebuildsAndRequestsAPendingIdentify()
+    {
+        // MEDIUM-2 (review round): the keyring Identify() request only
+        // happens inside the owned-item walk, gated on
+        // options.KeyRinger/KeyDeringer -- toggling either on after the
+        // first walk raises no ObjectChanged of its own, so without a
+        // settings-changed subscription an already-present unappraised
+        // keyring would never get its id requested.
+        (FakeHost host, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        host.Automation.Items.Owned.Add(Item(1u, "Burning Sands Keyring", PluginObjectClass.Misc));
+        host.Automation.Objects.Objects.Add(new PluginWorldObject(1u, 0u, "Burning Sands Keyring", PluginObjectClass.Misc, 0u, 500u, 0u)
+        {
+            HasAppraisalData = false,
+        });
+
+        var manager = new IdleActionManager(host, settings);
+        manager.Start(scheduler);
+        scheduler.Tick(2.0); // first think: both toggles off -- no identify requested
+
+        Assert.Empty(host.Automation.Objects.IdentifyRequests);
+
+        settings.KeyRinger.Value = true; // toggled on mid-run, no ObjectChanged of its own
+
+        scheduler.Tick(2.0); // must rebuild and now request the id
+
+        Assert.Contains(1u, host.Automation.Objects.IdentifyRequests);
     }
 }

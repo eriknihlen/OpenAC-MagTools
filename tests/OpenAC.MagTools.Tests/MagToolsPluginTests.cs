@@ -468,17 +468,25 @@ public sealed class MagToolsPluginTests
         Assert.Equal(0, host.Automation.Objects.CaptureObjectsCalls);
 
         // CaptureOwnedItemsCalls is NOT asserted at zero here: it legitimately
-        // stays nonzero on headless even with the fix. Measured at 32 for this
-        // exact 60-tick run, all from IdleActionManager.Think's 2 s Every --
-        // InventoryManagementSettings.AetheriaRevealer defaults to true
-        // (SettingsManager.cs), so IdleActionManager scans owned items on its
-        // own headless-legitimate cadence independent of HasUi (a gameplay
-        // macro, not a UI updater -- out of this gate's scope; whether that
-        // default-on scan belongs on headless at all is a separate finding,
-        // not fixed here). The bound below pins the exact count so a
-        // regression that makes some UI-only feature start capturing too is
-        // caught.
-        Assert.Equal(32, host.Automation.Items.CaptureOwnedItemsCalls);
+        // stays nonzero on headless even with the fix. Was 32 for this exact
+        // 60-tick run before IdleActionManager went event-driven (2026-09-18
+        // follow-up) -- 30 of those 32 came from IdleActionManager.Think's
+        // 2 s Every walking IItemAutomation.CaptureOwnedItems() on every
+        // single tick, even though nothing owned ever changed in this test
+        // (InventoryManagementSettings.AetheriaRevealer defaults to true, so
+        // the "all toggles off" early return never fired). IdleActionManager
+        // now only re-walks CaptureOwnedItems on the first think after Start
+        // and when IEvents.ObjectChanged reports a change to an object the
+        // player owns -- neither of which repeats across this test's 60
+        // event-free ticks, so only its first think's capture remains. The
+        // other two calls are the one-shot startup primes
+        // EquipmentTrackerHost.Start and InventoryTrackerHost's quiet-period
+        // prime always take regardless of HasUi (both are gameplay/logging
+        // trackers, not UI updaters -- out of this gate's scope). The bound
+        // below pins the exact count so a regression that makes some UI-only
+        // feature start capturing too, or makes IdleActionManager walk
+        // unconditionally again, is caught.
+        Assert.Equal(3, host.Automation.Items.CaptureOwnedItemsCalls);
     }
 
     [Fact]

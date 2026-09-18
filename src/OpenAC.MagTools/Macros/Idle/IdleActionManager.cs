@@ -22,6 +22,32 @@ namespace OpenAC.MagTools.Macros.Idle;
 /// existing — is the same; only the exact scheduling mechanics differ. See
 /// docs/deviations.md.
 /// </para>
+/// <para>
+/// Owner review (2026-09-18): every 2 s think tick walked
+/// <see cref="IItemAutomation.CaptureOwnedItems"/> unconditionally, even when
+/// none of the five toggles could possibly act (a live measurement found 30
+/// of 32 owned-item captures in a 60-tick headless run came from here, with
+/// <c>InventoryManagementSettings.AetheriaRevealer</c> defaulting to true so
+/// the "all toggles off" early return never fires). The owned-item-derived
+/// half of <see cref="BuildSnapshot"/> is now event-driven: <see cref="Start"/>
+/// subscribes to <see cref="IEvents.ObjectChanged"/> and marks
+/// <see cref="_itemSnapshotDirty"/> whenever a change is reported for an
+/// object the local player OWNS (the same <see cref="PluginWorldObject.IsOwned"/>
+/// filter <c>InventoryTrackerHost.IsInventoryRelevant</c> and
+/// <c>InventoryLogger</c>'s ownership check already use — <c>ObjectChanged</c>
+/// fires for every world entity, not just owned ones). <see cref="Think"/>
+/// only re-walks <see cref="IItemAutomation.CaptureOwnedItems"/> when that
+/// flag is set (or on the first think after <see cref="Start"/>/a
+/// reconnect), then clears it; the walk's results are cached in
+/// <see cref="_cachedItems"/> in between. The 2 s cadence itself is
+/// unchanged — an action still fires within 2 s of the change that enabled
+/// it, same as the original's timer-plus-wake-trigger design. The
+/// chest-proximity scan and the lockpick-training check are NOT part of this
+/// cache (they are cheap property/position reads, not an inventory walk, and
+/// have no owning <c>ObjectChanged</c> signal of their own — e.g. a skill
+/// change) so they still run fresh every think, same as before. See
+/// docs/deviations.md.
+/// </para>
 /// </remarks>
 public sealed class IdleActionManager
 {
@@ -35,10 +61,23 @@ public sealed class IdleActionManager
     private readonly InventoryManagementSettings _settings;
     private IDisposable? _tickRegistration;
     private Action<PluginConfirmation>? _onConfirmation;
+    private Action<PluginObjectChange>? _onObjectChanged;
     private TickScheduler? _scheduler;
     private double _lastActionElapsedSeconds = double.NegativeInfinity;
     private bool _confirmationArmed;
     private bool _running;
+
+    /// <summary>
+    /// Set by <see cref="Start"/> (first think always rebuilds, including
+    /// after a reconnect) and by <see cref="OnObjectChanged"/> when a
+    /// relevant owned-item change arrives; cleared once
+    /// <see cref="BuildSnapshot"/> re-walks <see cref="IItemAutomation.CaptureOwnedItems"/>
+    /// and refreshes <see cref="_cachedItems"/>. See the class remarks.
+    /// </summary>
+    private bool _itemSnapshotDirty = true;
+
+    /// <summary>The owned-item-derived half of the last <see cref="IdleActionSnapshot"/> built, reused while <see cref="_itemSnapshotDirty"/> is clear.</summary>
+    private CachedItemIds _cachedItems;
 
     /// <summary>
     /// Keyring object ids an id has already been requested for, this run --
@@ -52,6 +91,17 @@ public sealed class IdleActionManager
     /// per object id until <c>HasAppraisalData</c> flips true.
     /// </summary>
     private readonly HashSet<uint> _keyringIdRequested = [];
+
+    /// <summary>The owned-item ids <see cref="BuildSnapshot"/> derives from a <see cref="IItemAutomation.CaptureOwnedItems"/> walk, cached between walks.</summary>
+    private readonly record struct CachedItemIds(
+        uint AetheriaManaStoneId,
+        uint CoalescedAetheriaId,
+        uint IntricateCarvingToolId,
+        uint HeartItemId,
+        uint ShatteredKeyItemId,
+        uint BestKeyringForRingingId,
+        uint KeyringWithKeysId,
+        uint AgedLegendaryKeyId);
 
     public IdleActionManager(IPluginHost host, InventoryManagementSettings settings)
     {
@@ -68,11 +118,19 @@ public sealed class IdleActionManager
             return;
         _running = true;
         _scheduler = scheduler;
+        // A fresh Start (including a reconnect after Stop) must re-walk the
+        // owned pack on its first think rather than trust whatever was
+        // cached from a previous session.
+        _itemSnapshotDirty = true;
+        _cachedItems = default;
 
         _tickRegistration = scheduler.Every(ThinkInterval, Think);
 
         _onConfirmation = OnConfirmationRequested;
         _host.Events.ConfirmationRequested += _onConfirmation;
+
+        _onObjectChanged = OnObjectChanged;
+        _host.Events.ObjectChanged += _onObjectChanged;
     }
 
     public void Stop()
@@ -88,8 +146,41 @@ public sealed class IdleActionManager
         if (_onConfirmation is not null)
             _host.Events.ConfirmationRequested -= _onConfirmation;
         _onConfirmation = null;
+
+        if (_onObjectChanged is not null)
+            _host.Events.ObjectChanged -= _onObjectChanged;
+        _onObjectChanged = null;
+
         _confirmationArmed = false;
         _keyringIdRequested.Clear();
+    }
+
+    /// <summary>
+    /// Marks the cached owned-item snapshot dirty for a change to an object
+    /// the local player OWNS. Mirrors
+    /// <c>InventoryTrackerHost.IsInventoryRelevant</c>/<c>InventoryLogger</c>'s
+    /// ownership check: <see cref="IEvents.ObjectChanged"/> fires for every
+    /// world entity the client is tracking (a monster spawning, another
+    /// player crossing a cell boundary), not just owned ones, so an
+    /// unfiltered subscription would defeat the whole point of this cache. A
+    /// <see cref="PluginObjectChangeKind.Released"/> object can no longer be
+    /// resolved (it already left the object table by the time this handler
+    /// runs), so it counts as relevant unconditionally rather than risk
+    /// missing a real drop/consume/give-away. <see cref="PluginObjectChangeKind.IdentReceived"/>
+    /// is covered the same way -- an owned Burning Sands Keyring's
+    /// UsesRemaining/KeysHeld only become knowable once its appraisal data
+    /// arrives, which is exactly what this event reports.
+    /// </summary>
+    private void OnObjectChanged(PluginObjectChange change)
+    {
+        if (change.Kind == PluginObjectChangeKind.Released)
+        {
+            _itemSnapshotDirty = true;
+            return;
+        }
+
+        if (_host.Automation.Objects.TryGet(change.ObjectId, out PluginWorldObject world) && world.IsOwned)
+            _itemSnapshotDirty = true;
     }
 
     private void Think()
@@ -149,6 +240,54 @@ public sealed class IdleActionManager
     }
 
     private IdleActionSnapshot BuildSnapshot(IAutomationSurface automation, IdleActionOptions options)
+    {
+        if (_itemSnapshotDirty)
+        {
+            _cachedItems = CaptureItemIds(automation, options);
+            _itemSnapshotDirty = false;
+        }
+
+        bool chestNearby = false;
+        PluginNavigationSnapshot navSnapshot = automation.Navigation.Snapshot;
+        if (navSnapshot.IsAvailable)
+        {
+            foreach (PluginNavigationObject candidate in automation.Navigation.CaptureObjects())
+            {
+                if (!candidate.Name.Contains(" Chest", StringComparison.Ordinal))
+                    continue;
+                if (navSnapshot.Position.HorizontalDistanceMeters(candidate.Position) <= 10d)
+                {
+                    chestNearby = true;
+                    break;
+                }
+            }
+        }
+
+        bool lockpickTrained = automation.Character.TryGetSkill(LockpickSkillId, out PluginSkillInfo lockpick)
+            && lockpick.Training >= PluginSkillTraining.Trained;
+
+        return new IdleActionSnapshot(
+            _cachedItems.AetheriaManaStoneId,
+            _cachedItems.CoalescedAetheriaId,
+            _cachedItems.IntricateCarvingToolId,
+            _cachedItems.HeartItemId,
+            _cachedItems.ShatteredKeyItemId,
+            _cachedItems.BestKeyringForRingingId,
+            _cachedItems.KeyringWithKeysId,
+            _cachedItems.AgedLegendaryKeyId,
+            chestNearby,
+            automation.Objects.OpenContainerObjectId != 0u,
+            lockpickTrained);
+    }
+
+    /// <summary>
+    /// The owned-item walk itself (<see cref="IItemAutomation.CaptureOwnedItems"/>
+    /// plus the per-item classification loop) -- only called from
+    /// <see cref="BuildSnapshot"/> while <see cref="_itemSnapshotDirty"/> is
+    /// set. Unchanged from the original per-tick version except for being
+    /// split out of <see cref="BuildSnapshot"/> so it can be skipped.
+    /// </summary>
+    private CachedItemIds CaptureItemIds(IAutomationSurface automation, IdleActionOptions options)
     {
         uint aetheriaManaStone = 0u, coalescedAetheria = 0u, carvingTool = 0u, heartItem = 0u, shatteredKey = 0u;
         uint agedLegendaryKey = 0u;
@@ -241,26 +380,7 @@ public sealed class IdleActionManager
             }
         }
 
-        bool chestNearby = false;
-        PluginNavigationSnapshot navSnapshot = automation.Navigation.Snapshot;
-        if (navSnapshot.IsAvailable)
-        {
-            foreach (PluginNavigationObject candidate in automation.Navigation.CaptureObjects())
-            {
-                if (!candidate.Name.Contains(" Chest", StringComparison.Ordinal))
-                    continue;
-                if (navSnapshot.Position.HorizontalDistanceMeters(candidate.Position) <= 10d)
-                {
-                    chestNearby = true;
-                    break;
-                }
-            }
-        }
-
-        bool lockpickTrained = automation.Character.TryGetSkill(LockpickSkillId, out PluginSkillInfo lockpick)
-            && lockpick.Training >= PluginSkillTraining.Trained;
-
-        return new IdleActionSnapshot(
+        return new CachedItemIds(
             aetheriaManaStone,
             coalescedAetheria,
             carvingTool,
@@ -268,10 +388,7 @@ public sealed class IdleActionManager
             shatteredKey,
             bestRingingId,
             keyringWithKeys,
-            agedLegendaryKey,
-            chestNearby,
-            automation.Objects.OpenContainerObjectId != 0u,
-            lockpickTrained);
+            agedLegendaryKey);
     }
 
     /// <summary>

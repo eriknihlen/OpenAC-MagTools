@@ -338,4 +338,101 @@ public sealed class IdleActionManagerTests
         {
             ObjectClass = objectClass,
         };
+
+    /// <summary>A world object the local player owns -- resolves <see cref="PluginWorldObject.IsOwned"/> true for <see cref="IdleActionManager"/>'s ObjectChanged filter.</summary>
+    private static PluginWorldObject OwnedWorldObject(uint objectId, string name, PluginObjectClass objectClass)
+        => new(objectId, 0u, name, objectClass, 0u, 500u, 0u) { IsOwned = true };
+
+    /// <summary>A world object the local player does NOT own -- a monster spawning, another player crossing a cell boundary, etc.</summary>
+    private static PluginWorldObject UnownedWorldObject(uint objectId, string name, PluginObjectClass objectClass)
+        => new(objectId, 0u, name, objectClass, 0u, 0u, 0u) { IsOwned = false };
+
+    [Fact]
+    public void NoObjectChangesMeansTheOwnedPackIsWalkedOnlyOnTheFirstThink()
+    {
+        // The bug: BuildSnapshot walked IItemAutomation.CaptureOwnedItems()
+        // unconditionally on every 2 s think, even though
+        // InventoryManagementSettings.AetheriaRevealer defaults to true so
+        // the "all toggles off" early return never fires. 60 s / 2 s = 30
+        // think ticks; with nothing ever changing, only the first one may
+        // walk the owned pack.
+        (FakeHost host, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        host.Automation.Items.Owned.Add(Item(1u, "Aetheria Mana Stone", PluginObjectClass.Gem));
+
+        var manager = new IdleActionManager(host, settings);
+        manager.Start(scheduler);
+
+        for (int second = 0; second < 60; second++)
+            scheduler.Tick(1.0);
+
+        Assert.Equal(1, host.Automation.Items.CaptureOwnedItemsCalls);
+    }
+
+    [Fact]
+    public void AnOwnedItemCreatedMidRunRebuildsTheSnapshotAndTheActionFires()
+    {
+        (FakeHost host, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        settings.AetheriaRevealer.Value = true;
+        host.Automation.Items.Owned.Add(Item(1u, "Aetheria Mana Stone", PluginObjectClass.Gem));
+
+        var manager = new IdleActionManager(host, settings);
+        manager.Start(scheduler);
+        scheduler.Tick(2.0); // first think: walks the pack, only the stone is present -- no plan
+
+        Assert.Empty(host.Automation.Items.Calls);
+        Assert.Equal(1, host.Automation.Items.CaptureOwnedItemsCalls);
+
+        // The companion Coalesced Aetheria arrives mid-run (looted).
+        host.Automation.Items.Owned.Add(Item(2u, "Coalesced Aetheria", PluginObjectClass.Gem));
+        host.Automation.Objects.Objects.Add(OwnedWorldObject(2u, "Coalesced Aetheria", PluginObjectClass.Gem));
+        host.Events.RaiseObjectChanged(2u, PluginObjectChangeKind.Created);
+
+        scheduler.Tick(2.0); // next think rebuilds and plans/fires the reveal
+
+        Assert.Equal(2, host.Automation.Items.CaptureOwnedItemsCalls);
+        Assert.Equal(2u, host.Selection.SelectedObjectId);
+        Assert.Contains(("apply", 1u, 2u), host.Automation.Items.Calls);
+    }
+
+    [Fact]
+    public void AChangeToAnUnownedObjectDoesNotTriggerARebuild()
+    {
+        (FakeHost host, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        settings.AetheriaRevealer.Value = true;
+        host.Automation.Items.Owned.Add(Item(1u, "Aetheria Mana Stone", PluginObjectClass.Gem));
+
+        var manager = new IdleActionManager(host, settings);
+        manager.Start(scheduler);
+        scheduler.Tick(2.0); // first think: walks the pack once
+
+        Assert.Equal(1, host.Automation.Items.CaptureOwnedItemsCalls);
+
+        // A monster spawns nearby -- ObjectChanged fires for it, but it is
+        // not owned by the local player, so it must not invalidate the cache.
+        host.Automation.Objects.Objects.Add(UnownedWorldObject(99u, "Drudge", PluginObjectClass.Monster));
+        host.Events.RaiseObjectChanged(99u, PluginObjectChangeKind.Created);
+
+        scheduler.Tick(2.0);
+
+        Assert.Equal(1, host.Automation.Items.CaptureOwnedItemsCalls);
+    }
+
+    [Fact]
+    public void StopThenStartResetsTheDirtyFlagSoTheFirstThinkAfterStartRebuilds()
+    {
+        (FakeHost host, InventoryManagementSettings settings, TickScheduler scheduler) = Make();
+        host.Automation.Items.Owned.Add(Item(1u, "Aetheria Mana Stone", PluginObjectClass.Gem));
+
+        var manager = new IdleActionManager(host, settings);
+        manager.Start(scheduler);
+        scheduler.Tick(2.0); // first think after Start: one walk
+
+        Assert.Equal(1, host.Automation.Items.CaptureOwnedItemsCalls);
+
+        manager.Stop();
+        manager.Start(scheduler); // a reconnect -- nothing owned has changed
+        scheduler.Tick(2.0); // first think after the new Start must rebuild anyway
+
+        Assert.Equal(2, host.Automation.Items.CaptureOwnedItemsCalls);
+    }
 }

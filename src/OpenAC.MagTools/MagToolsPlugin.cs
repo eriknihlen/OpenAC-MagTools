@@ -355,9 +355,10 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         // rows for a panel a no-window host never shows) -- gate its periodic
         // registration on HasUi at the registration site, the same rule as
         // the panel registrations in Enable(). Without this, a headless host
-        // still paid for a 1 Hz CaptureObjects()/CaptureOwnedItems() full
-        // landscape+inventory scan for rows nobody draws. See
-        // docs/deviations.md.
+        // still paid for a 1 Hz full-landscape IWorldObjectAutomation.
+        // CaptureObjects() scan (the Players/Monsters rows) plus an
+        // ICharacterInfo.MainPackFreeSlots read (the Pack Slots row) every
+        // second, for rows nobody draws. See docs/deviations.md.
         if (_host.HasUi)
             _hudUpdater?.Start(_scheduler);
 

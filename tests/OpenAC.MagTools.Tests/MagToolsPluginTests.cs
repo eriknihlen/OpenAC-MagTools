@@ -468,13 +468,17 @@ public sealed class MagToolsPluginTests
         Assert.Equal(0, host.Automation.Objects.CaptureObjectsCalls);
 
         // CaptureOwnedItemsCalls is NOT asserted at zero here: it legitimately
-        // stays nonzero on headless even with the fix, because two non-UI
-        // data owners each capture it once independent of HasUi --
-        // EquipmentTrackerHost.Start()'s immediate Resync(identifyNewItems:
-        // true) and InventoryTrackerHost's own prime-on-quiet capture once
-        // its PrimeQuietPeriod/PrimeDeadline elapses with no owned-item
-        // activity. Both feed the trackers' file-logger side (which must
-        // keep running headless per the fix's scope), not the HUD.
+        // stays nonzero on headless even with the fix. Measured at 32 for this
+        // exact 60-tick run, all from IdleActionManager.Think's 2 s Every --
+        // InventoryManagementSettings.AetheriaRevealer defaults to true
+        // (SettingsManager.cs), so IdleActionManager scans owned items on its
+        // own headless-legitimate cadence independent of HasUi (a gameplay
+        // macro, not a UI updater -- out of this gate's scope; whether that
+        // default-on scan belongs on headless at all is a separate finding,
+        // not fixed here). The bound below pins the exact count so a
+        // regression that makes some UI-only feature start capturing too is
+        // caught.
+        Assert.Equal(32, host.Automation.Items.CaptureOwnedItemsCalls);
     }
 
     [Fact]
@@ -506,11 +510,13 @@ public sealed class MagToolsPluginTests
         host.Events.RaiseLoginComplete();
 
         // One immediate Refresh() on Start(), plus the 1 s scheduler.Every
-        // registration -- five ticks is enough to prove it keeps running.
+        // registration -- pin the exact cadence (1 immediate + 5 periodic)
+        // so a future change that drops the Every (leaving only the
+        // one-shot Refresh in Start) cannot pass silently.
         for (int second = 0; second < 5; second++)
             host.Events.RaiseTick(1.0d);
 
-        Assert.True(host.Automation.Objects.CaptureObjectsCalls > 0);
+        Assert.Equal(6, host.Automation.Objects.CaptureObjectsCalls);
 
         var hud = (HudViewModel)host.Ui.Panels[1].Binding;
         // PlayersAndMonstersRows subtracts one for the local player, so two

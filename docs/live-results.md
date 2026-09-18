@@ -766,3 +766,29 @@ caveat are covered by the unit tests in `MtCommandRouterTests.cs`
 `ClientMinimizeFallsBackToTheStatusNameWithNoNotice`,
 `QuitAndExitPrintTheHostNoticeWhenRequestCloseIsRefused`) and the deviations
 row in `docs/deviations.md`, not by a live run.
+
+## IdleActionManager event-driven scan -- live measurement (2026-09-18)
+
+Back-to-back pair, same account (`testaccount`/`+Acdream`), same
+`magtools-api-a10` `acdream-headless.exe`, same `idle` bot policy config,
+same isolated-data-dir/plugin-deploy recipe, 15 s warm-up + 45 s
+`dotnet-counters` (`System.Runtime[alloc-rate,gc-heap-size]`) window each,
+graceful `/quit`-on-stdin stop for both (an earlier same-session comparison
+had used a headless built from the main OpenAC checkout instead of the
+`magtools-api-a10` one the BEFORE/AFTER baseline used, and a standalone
+run without a back-to-back partner -- both corrected here):
+
+| Run | Plugin commit | Allocated / 45 s | GC heap delta |
+|---|---|---|---|
+| BEFORE | `106443f` (HUD-gate fix only, `IdleActionManager` still unconditional) | 2,054,920 B | +1.7610 MB |
+| AFTER | `c11a3de` (event-driven `IdleActionManager` scan, this campaign) | 2,054,112 B | +1.7692 MB |
+
+Essentially tied on this apples-to-apples pair -- no regression, and no
+further live-visible win over the 106443f baseline either. That is
+consistent with the fix's actual effect being cut deterministically at the
+unit level (`CaptureOwnedItemsCalls` 32 -> 3 for the pinned 60-tick headless
+case in `MagToolsPluginTests`); a `idle`-policy live session apparently
+doesn't hold enough of the pre-fix per-tick owned-pack walk's allocation
+weight to show as a separate signal once HUD-gate's own much larger fix
+(106443f) is already in the baseline. No second pair was needed since the
+AFTER run was not higher than BEFORE.

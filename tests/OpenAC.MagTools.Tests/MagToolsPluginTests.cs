@@ -434,6 +434,94 @@ public sealed class MagToolsPluginTests
     }
 
     [Fact]
+    public void HudUpdaterNeverRunsOnAHeadlessHost()
+    {
+        // Owner measurement (2026-09-18, dotnet-trace on acdream-headless):
+        // HudUpdater.PlayersAndMonstersRows ran on every tick inside the
+        // headless host, capturing every world object plus every owned item
+        // for HUD rows nobody draws (~10 MB/45s, 3-4 MB standing private
+        // bytes). The fix gates HudUpdater.Start (the scheduler.Every
+        // registration) on IPluginHost.HasUi at the registration site in
+        // MagToolsPlugin.OnSessionLoginComplete.
+        var host = new FakeHost { HasUi = false };
+        var plugin = new MagToolsPlugin();
+
+        plugin.Initialize(host);
+        plugin.Enable();
+
+        host.Automation.IsAvailable = true;
+        host.Automation.Character.IsInWorld = true;
+        host.Events.RaiseLoginComplete();
+
+        // Simulate 60 s of live ticking at a 1 s cadence -- HudUpdater's own
+        // RefreshInterval, so a still-registered updater would fire ~60 times.
+        for (int second = 0; second < 60; second++)
+            host.Events.RaiseTick(1.0d);
+
+        // No HUD (or any other) panel is registered on a no-window host.
+        Assert.Empty(host.Ui.Panels);
+
+        // The HUD updater's Refresh() is the only feature that calls
+        // IWorldObjectAutomation.CaptureObjects() unconditionally on this
+        // host with default settings and no vendor/container/loot activity
+        // in play, so zero calls here proves it never ran.
+        Assert.Equal(0, host.Automation.Objects.CaptureObjectsCalls);
+
+        // CaptureOwnedItemsCalls is NOT asserted at zero here: it legitimately
+        // stays nonzero on headless even with the fix, because two non-UI
+        // data owners each capture it once independent of HasUi --
+        // EquipmentTrackerHost.Start()'s immediate Resync(identifyNewItems:
+        // true) and InventoryTrackerHost's own prime-on-quiet capture once
+        // its PrimeQuietPeriod/PrimeDeadline elapses with no owned-item
+        // activity. Both feed the trackers' file-logger side (which must
+        // keep running headless per the fix's scope), not the HUD.
+    }
+
+    [Fact]
+    public void HudUpdaterRunsAndProducesRowsOnAGraphicalHost()
+    {
+        var host = new FakeHost { HasUi = true };
+        host.Automation.Objects.Objects.Add(new AcDream.Plugin.Abstractions.PluginWorldObject(
+            1u, 0u, "Other Player", AcDream.Plugin.Abstractions.PluginObjectClass.Player, 0u, 0u, 0u)
+        {
+            IsLandscape = true,
+        });
+        host.Automation.Objects.Objects.Add(new AcDream.Plugin.Abstractions.PluginWorldObject(
+            2u, 0u, "Local Player", AcDream.Plugin.Abstractions.PluginObjectClass.Player, 0u, 0u, 0u)
+        {
+            IsLandscape = true,
+        });
+        host.Automation.Objects.Objects.Add(new AcDream.Plugin.Abstractions.PluginWorldObject(
+            3u, 0u, "Drudge", AcDream.Plugin.Abstractions.PluginObjectClass.Monster, 0u, 0u, 0u)
+        {
+            IsLandscape = true,
+        });
+        var plugin = new MagToolsPlugin();
+
+        plugin.Initialize(host);
+        plugin.Enable();
+
+        host.Automation.IsAvailable = true;
+        host.Automation.Character.IsInWorld = true;
+        host.Events.RaiseLoginComplete();
+
+        // One immediate Refresh() on Start(), plus the 1 s scheduler.Every
+        // registration -- five ticks is enough to prove it keeps running.
+        for (int second = 0; second < 5; second++)
+            host.Events.RaiseTick(1.0d);
+
+        Assert.True(host.Automation.Objects.CaptureObjectsCalls > 0);
+
+        var hud = (HudViewModel)host.Ui.Panels[1].Binding;
+        // PlayersAndMonstersRows subtracts one for the local player, so two
+        // Player-class landscape objects read back as "1" other player.
+        Assert.Equal("1", hud.Values[Array.IndexOf(
+            HudViewModel.RowNames.ToArray(), "Players")]);
+        Assert.Equal("1", hud.Values[Array.IndexOf(
+            HudViewModel.RowNames.ToArray(), "Monsters")]);
+    }
+
+    [Fact]
     public void LogOutOnDeathLogsOutWhenEnabled()
     {
         var host = new FakeHost { HasUi = false };

@@ -8,7 +8,7 @@ namespace OpenAC.MagTools.Tests.Fakes;
 /// </summary>
 public sealed class FakeHost : IPluginHost
 {
-    public bool HasUi { get; set; }
+    public bool HasUi { get; set; } = true;
 
     public IPluginLogger Log { get; } = new RecordingLogger();
 

@@ -558,6 +558,9 @@ public sealed class FakeItems : IItemAutomation
     /// </summary>
     public int CaptureCount { get; private set; }
 
+    /// <summary>Same counter as <see cref="CaptureCount"/> under the name the HUD-gate tests use.</summary>
+    public int CaptureOwnedItemsCalls => CaptureCount;
+
     public IReadOnlyList<PluginInventoryItem> CaptureOwnedItems()
     {
         CaptureCount++;
@@ -718,7 +721,19 @@ public sealed class FakeObjects : IWorldObjectAutomation
     /// </summary>
     public Dictionary<uint, int> IdentifyBusyForCalls { get; } = [];
 
-    public IReadOnlyList<PluginWorldObject> CaptureObjects() => Objects;
+    /// <summary>
+    /// How many times <see cref="CaptureObjects"/> has been called — used to
+    /// prove a headless host's HUD updater (a UI-only presenter) never runs
+    /// its 1 Hz full-landscape scan when <see cref="FakeHost.HasUi"/> is
+    /// false.
+    /// </summary>
+    public int CaptureObjectsCalls { get; private set; }
+
+    public IReadOnlyList<PluginWorldObject> CaptureObjects()
+    {
+        CaptureObjectsCalls++;
+        return Objects;
+    }
 
     public bool TryGet(uint objectId, out PluginWorldObject value)
     {

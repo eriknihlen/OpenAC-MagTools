@@ -350,7 +350,17 @@ public sealed class MagToolsPlugin : IAcDreamPlugin
         _idleActionManager?.Start(_scheduler);
         _tinkeringToolsHost?.Attach(_scheduler);
         _autoRecharge?.Start(_scheduler);
-        _hudUpdater?.Start(_scheduler);
+
+        // HUD updater is a UI-only presenter (it exists to fill HudViewModel's
+        // rows for a panel a no-window host never shows) -- gate its periodic
+        // registration on HasUi at the registration site, the same rule as
+        // the panel registrations in Enable(). Without this, a headless host
+        // still paid for a 1 Hz CaptureObjects()/CaptureOwnedItems() full
+        // landscape+inventory scan for rows nobody draws. See
+        // docs/deviations.md.
+        if (_host.HasUi)
+            _hudUpdater?.Start(_scheduler);
+
         _autoBuySell?.Start(_scheduler);
         _autoTradeAdd?.Start(_scheduler);
         _looter?.Start(_scheduler);
